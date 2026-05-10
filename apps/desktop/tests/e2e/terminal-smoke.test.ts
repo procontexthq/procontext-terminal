@@ -30,10 +30,7 @@ describe("desktop terminal smoke", () => {
       [`--remote-debugging-port=${port}`, "out/main/index.cjs"],
       {
         cwd: appCwd,
-        env: {
-          ...process.env,
-          SHELL: "/bin/sh",
-        },
+        env: e2eEnvironment(),
       },
     );
 
@@ -43,18 +40,21 @@ describe("desktop terminal smoke", () => {
 
     const terminal = page.locator(".xterm").first();
     await terminal.click();
-    await page.keyboard.type("printf 'PHASE1_E2E_OK\\n'");
+    await page.keyboard.type(platformPrintCommand("PHASE1_E2E_OK"));
     await page.keyboard.press("Enter");
     await waitForTerminalText(page, "PHASE1_E2E_OK");
 
-    await page.evaluate(() => navigator.clipboard.writeText("printf 'PHASE1_PASTE_OK\\n'"));
-    await page.keyboard.press("Meta+V");
+    await page.evaluate(
+      (command) => navigator.clipboard.writeText(command),
+      platformPrintCommand("PHASE1_PASTE_OK"),
+    );
+    await page.keyboard.press(pasteShortcut());
     await page.keyboard.press("Enter");
     await waitForTerminalText(page, "PHASE1_PASTE_OK");
 
     await page.setViewportSize({ width: 960, height: 640 });
     await page.waitForFunction(() => document.querySelector(".xterm") !== null);
-    await page.keyboard.type("sleep 5");
+    await page.keyboard.type(platformLongRunningCommand());
     await page.keyboard.press("Enter");
     await page.keyboard.press("Control+C");
     await page.keyboard.type("exit");
@@ -107,4 +107,26 @@ async function waitForStatus(page: Page, status: string): Promise<void> {
     status,
     { timeout: 10000 },
   );
+}
+
+function e2eEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  if (process.platform === "win32") {
+    env.ComSpec ??= "C:\\Windows\\System32\\cmd.exe";
+  } else {
+    env.SHELL = "/bin/sh";
+  }
+  return env;
+}
+
+function platformPrintCommand(text: string): string {
+  return process.platform === "win32" ? `echo ${text}` : `printf '${text}\\n'`;
+}
+
+function platformLongRunningCommand(): string {
+  return process.platform === "win32" ? "ping -n 6 127.0.0.1" : "sleep 5";
+}
+
+function pasteShortcut(): string {
+  return process.platform === "darwin" ? "Meta+V" : "Control+V";
 }

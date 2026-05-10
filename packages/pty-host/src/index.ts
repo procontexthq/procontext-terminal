@@ -191,6 +191,11 @@ function tryResolveExecutable(
   env: Record<string, string>,
 ): string | null {
   if (isPathLike(executable, platform)) {
+    if (!isAbsolutePath(executable, platform)) {
+      throw new Error(
+        `Shell executable ${executable} must be an absolute path or a command name resolved through PATH.`,
+      );
+    }
     return canExecute(executable, platform) ? executable : null;
   }
 
@@ -231,6 +236,10 @@ function isPathLike(executable: string, platform: NodeJS.Platform): boolean {
   }
 
   return posix.isAbsolute(executable) || executable.includes("/");
+}
+
+function isAbsolutePath(executable: string, platform: NodeJS.Platform): boolean {
+  return platform === "win32" ? win32.isAbsolute(executable) : posix.isAbsolute(executable);
 }
 
 function getPathValue(env: Record<string, string>, platform: NodeJS.Platform): string | undefined {

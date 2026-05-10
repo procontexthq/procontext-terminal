@@ -25,11 +25,18 @@ export type TerminalSessionShutdownResult = {
   timedOut: number;
 };
 
+export type TerminalSessionManagerOptions = {
+  onEventHandlerError?: (error: unknown, event: RendererSessionEvent) => void;
+};
+
 export class TerminalSessionManager {
   private readonly sessions = new Map<SessionId, SessionRecord>();
   private readonly eventHandlers = new Set<(event: RendererSessionEvent) => void>();
 
-  constructor(private readonly ptyHost: PtyHost) {}
+  constructor(
+    private readonly ptyHost: PtyHost,
+    private readonly options: TerminalSessionManagerOptions = {},
+  ) {}
 
   onSessionEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe {
     this.eventHandlers.add(handler);
@@ -145,12 +152,14 @@ export class TerminalSessionManager {
   kill(request: KillSessionRequest): Promise<void> {
     try {
       const record = this.getRunningRecord(request.sessionId);
-      record.snapshot = {
-        ...record.snapshot,
-        state: "exiting",
-        updatedAt: new Date().toISOString(),
-      };
       record.pty.kill();
+      if (record.snapshot.state === "running") {
+        record.snapshot = {
+          ...record.snapshot,
+          state: "exiting",
+          updatedAt: new Date().toISOString(),
+        };
+      }
       return Promise.resolve();
     } catch (error: unknown) {
       return Promise.reject(
@@ -160,20 +169,41 @@ export class TerminalSessionManager {
   }
 
   async shutdown(options: { timeoutMs: number }): Promise<TerminalSessionShutdownResult> {
-    const waits: Array<Promise<"exited" | "timed_out">> = [];
+    const waits: Array<{
+      record: SessionRecord & { pty: PtySession };
+      result: Promise<"exited" | "timed_out">;
+    }> = [];
+    const recordsToDispose = new Set<SessionRecord>();
 
     for (const record of this.sessions.values()) {
       if (!record.pty || !isActive(record.snapshot.state)) {
+        recordsToDispose.add(record);
         continue;
       }
 
-      waits.push(
-        this.killForShutdown(record as SessionRecord & { pty: PtySession }, options.timeoutMs),
-      );
+      const activeRecord = record as SessionRecord & { pty: PtySession };
+      waits.push({
+        record: activeRecord,
+        result: this.killForShutdown(activeRecord, options.timeoutMs),
+      });
     }
 
-    const results = await Promise.allSettled(waits);
-    this.dispose();
+    const results = await Promise.allSettled(waits.map((wait) => wait.result));
+    results.forEach((result, index) => {
+      const wait = waits[index];
+      if (!wait) {
+        return;
+      }
+      if (result.status === "fulfilled" && result.value === "exited") {
+        recordsToDispose.add(wait.record);
+      }
+    });
+    for (const record of recordsToDispose) {
+      this.disposeRecord(record);
+    }
+    if (this.sessions.size === 0) {
+      this.eventHandlers.clear();
+    }
     return summarizeShutdown(results);
   }
 
@@ -183,6 +213,11 @@ export class TerminalSessionManager {
     }
     this.sessions.clear();
     this.eventHandlers.clear();
+  }
+
+  private disposeRecord(record: SessionRecord): void {
+    for (const cleanup of record.cleanup) cleanup();
+    this.sessions.delete(record.snapshot.sessionId);
   }
 
   private getRecord(sessionId: SessionId): SessionRecord {
@@ -206,7 +241,21 @@ export class TerminalSessionManager {
   }
 
   private emit(event: RendererSessionEvent): void {
-    for (const handler of this.eventHandlers) handler(event);
+    for (const handler of this.eventHandlers) {
+      try {
+        handler(event);
+      } catch (error: unknown) {
+        this.reportEventHandlerError(error, event);
+      }
+    }
+  }
+
+  private reportEventHandlerError(error: unknown, event: RendererSessionEvent): void {
+    try {
+      this.options.onEventHandlerError?.(error, event);
+    } catch {
+      // Keep terminal lifecycle events isolated from observer failures.
+    }
   }
 
   private async killForShutdown(
@@ -214,22 +263,32 @@ export class TerminalSessionManager {
     timeoutMs: number,
   ): Promise<"exited" | "timed_out"> {
     let cleanup: Unsubscribe = () => undefined;
+    let cleanedUp = false;
+    const cleanupOnce = (): void => {
+      if (cleanedUp) {
+        return;
+      }
+      cleanedUp = true;
+      cleanup();
+    };
     const exited = new Promise<"exited">((resolve) => {
       cleanup = record.pty.onExit(() => {
-        cleanup();
+        cleanupOnce();
         resolve("exited");
       });
     });
 
     try {
-      record.snapshot = {
-        ...record.snapshot,
-        state: "exiting",
-        updatedAt: new Date().toISOString(),
-      };
       record.pty.kill();
+      if (record.snapshot.state === "running") {
+        record.snapshot = {
+          ...record.snapshot,
+          state: "exiting",
+          updatedAt: new Date().toISOString(),
+        };
+      }
     } catch (error: unknown) {
-      cleanup();
+      cleanupOnce();
       this.emit({
         type: "session.error",
         payload: normalizeTerminalError(error, record.snapshot.sessionId, "session_kill_failed"),
@@ -238,7 +297,7 @@ export class TerminalSessionManager {
     }
 
     const result = await Promise.race([exited, delay(timeoutMs).then(() => "timed_out" as const)]);
-    cleanup();
+    cleanupOnce();
     return result;
   }
 }

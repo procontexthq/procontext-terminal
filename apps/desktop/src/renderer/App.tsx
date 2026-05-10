@@ -4,14 +4,13 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
-import type { RendererSessionEvent } from "@terminal/protocol";
-
 import { createTerminalSession, type TerminalController } from "./terminal-controller";
+import { nextTerminalStatus, type TerminalUiStatus } from "./terminal-status";
 
 export function App(): ReactElement {
   const terminalElement = useRef<HTMLDivElement | null>(null);
   const controller = useRef<TerminalController | null>(null);
-  const [status, setStatus] = useState("starting");
+  const [status, setStatus] = useState<TerminalUiStatus>("starting");
 
   useEffect(() => {
     let disposed = false;
@@ -20,6 +19,7 @@ export function App(): ReactElement {
     async function start(): Promise<void> {
       if (!terminalElement.current) return;
       const config = await window.terminalApi.getConfig();
+      if (!terminalElement.current || disposed) return;
 
       const nextController = await createTerminalSession({
         api: window.terminalApi,
@@ -40,14 +40,14 @@ export function App(): ReactElement {
       });
 
       if (disposed) {
-        nextController.dispose();
+        void nextController.dispose({ sessionLifecycle: "terminate" });
         return;
       }
 
       controller.current = nextController;
       setStatus("running");
       unsubscribeStatus = window.terminalApi.onSessionEvent(nextController.sessionId, (event) => {
-        setStatus(statusFromEvent(event));
+        setStatus((current) => nextTerminalStatus(current, event));
       });
       await nextController.resize();
     }
@@ -66,7 +66,7 @@ export function App(): ReactElement {
       disposed = true;
       resizeObserver.disconnect();
       unsubscribeStatus?.();
-      controller.current?.dispose();
+      void controller.current?.dispose({ sessionLifecycle: "terminate" });
       controller.current = null;
     };
   }, []);
@@ -84,17 +84,4 @@ export function App(): ReactElement {
       />
     </main>
   );
-}
-
-function statusFromEvent(event: RendererSessionEvent): string {
-  switch (event.type) {
-    case "session.created":
-      return event.payload.state;
-    case "session.exited":
-      return "exited";
-    case "session.error":
-      return "failed";
-    case "session.output":
-      return "running";
-  }
 }

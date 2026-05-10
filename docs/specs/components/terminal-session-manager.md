@@ -69,7 +69,9 @@ Session metadata must be serializable and shared through protocol types. At mini
 
 - Session lifecycle transitions follow the state machine.
 - PTY output, exit, title, bell, resize, and error events are broadcast through public event contracts.
+- A failing event subscriber must not prevent other subscribers from receiving events or change session lifecycle state.
 - Shutdown terminates running or exiting sessions without leaving orphaned PTY handles.
+- Shutdown must not clear still-active session records when termination fails or times out; keeping the PTY handle available lets callers retry, inspect, or escalate cleanup.
 - Policy denials stop sensitive operations before PTY writes or lifecycle changes.
 - Recorder events are emitted in stable order.
 - Query APIs return snapshots without exposing mutable internal state.
