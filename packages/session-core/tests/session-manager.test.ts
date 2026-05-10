@@ -101,6 +101,29 @@ describe("TerminalSessionManager", () => {
     });
   });
 
+  it("isolates failing event subscribers from session lifecycle and other subscribers", async () => {
+    const host = new FakePtyHost();
+    const onEventHandlerError = vi.fn();
+    const manager = new TerminalSessionManager(host, { onEventHandlerError });
+    const events: string[] = [];
+    const expectedError = new Error("subscriber failed");
+    manager.onSessionEvent(() => {
+      throw expectedError;
+    });
+    manager.onSessionEvent((event) => events.push(event.type));
+
+    const snapshot = await manager.createSession(request);
+    host.pty.emitData("hello");
+
+    expect(snapshot.state).toBe("running");
+    expect(events).toContain("session.created");
+    expect(events).toContain("session.output");
+    expect(onEventHandlerError).toHaveBeenCalledWith(
+      expectedError,
+      expect.objectContaining({ type: "session.created" }),
+    );
+  });
+
   it("routes write, resize, and kill to the PTY session", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);
@@ -167,7 +190,7 @@ describe("TerminalSessionManager", () => {
     expect(() => manager.getSession({ sessionId: snapshot.sessionId })).toThrow();
   });
 
-  it("reports a timed out shutdown when killing a session fails", async () => {
+  it("keeps a session running when shutdown kill fails before reaching the PTY", async () => {
     const host = new FakePtyHost();
     host.pty.kill.mockImplementationOnce(() => {
       throw new Error("kill failed");
@@ -175,11 +198,15 @@ describe("TerminalSessionManager", () => {
     const manager = new TerminalSessionManager(host);
     const events: string[] = [];
     manager.onSessionEvent((event) => events.push(event.type));
-    await manager.createSession(request);
+    const snapshot = await manager.createSession(request);
 
     const result = await manager.shutdown({ timeoutMs: 50 });
 
     expect(result).toEqual({ terminated: 0, timedOut: 1 });
     expect(events).toContain("session.error");
+    expect(manager.getSession({ sessionId: snapshot.sessionId }).state).toBe("running");
+    await expect(
+      manager.write({ sessionId: snapshot.sessionId, data: "echo still-running\r" }),
+    ).resolves.toBeUndefined();
   });
 });

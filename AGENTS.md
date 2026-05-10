@@ -168,6 +168,8 @@ Interpret the user's intent from each question and respond accordingly. Although
 
 Contribute beyond direct answers by suggesting improvements, implementation approaches, design considerations, and things to avoid. Only start implementing code when the user explicitly asks you to do so.
 
+When reviewing, do not invent issues just to produce findings. Call out only concrete bugs, realistic failure modes, violated contracts, or meaningful maintainability risks grounded in the code or specs. Do not change code or add complexity for unlikely scenarios, imaginary edge cases, or theoretical concerns unless the user explicitly chooses that tradeoff.
+
 ## Updates to AGENTS.md
 
 Only add what a coding agent cannot infer from reading the code.

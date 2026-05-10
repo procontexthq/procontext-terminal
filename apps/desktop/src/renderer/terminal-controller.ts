@@ -1,6 +1,6 @@
 import type { FitAddon } from "@xterm/addon-fit";
 
-import type { RendererTerminalApi, SessionId } from "@terminal/protocol";
+import type { RendererTerminalApi, SessionId, Unsubscribe } from "@terminal/protocol";
 
 export type TerminalLike = {
   open(element: HTMLElement): void;
@@ -16,6 +16,10 @@ export type TerminalSessionDisposeLifecycle = "detach" | "terminate";
 
 export type TerminalControllerDisposeOptions = {
   sessionLifecycle?: TerminalSessionDisposeLifecycle;
+};
+
+type DataSubscription = {
+  dispose: () => void;
 };
 
 export type TerminalController = {
@@ -41,66 +45,113 @@ export async function createTerminalSession({
 }: CreateTerminalSessionOptions): Promise<TerminalController> {
   const terminal = createTerminal();
   const fitAddon = createFitAddon();
-  terminal.loadAddon?.(fitAddon);
-  terminal.open(element);
-  fitAddon.fit();
+  let dataSubscription: DataSubscription | null = null;
+  let eventSubscription: Unsubscribe | null = null;
 
-  const dimensions = fitAddon.proposeDimensions() ?? { cols: 80, rows: 24 };
-  const snapshot = await api.createSession(dimensions);
-  let sessionAcceptsPtyOperations = true;
-  const dataSubscription = terminal.onData((data) => {
-    if (!sessionAcceptsPtyOperations) {
-      return;
-    }
-    void api.write({ sessionId: snapshot.sessionId, data }).catch((error: unknown) => {
-      onError?.(error);
-    });
-  });
-  const eventSubscription = api.onSessionEvent(snapshot.sessionId, (event) => {
-    switch (event.type) {
-      case "session.output":
-        terminal.write(event.payload.data);
-        break;
-      case "session.exited":
-      case "session.error":
-        sessionAcceptsPtyOperations = false;
-        break;
-      case "session.created":
-        break;
-    }
-  });
-  let disposed = false;
+  try {
+    terminal.loadAddon?.(fitAddon);
+    terminal.open(element);
+    fitAddon.fit();
 
-  return {
-    sessionId: snapshot.sessionId,
-    async resize() {
-      fitAddon.fit();
-      const nextDimensions = fitAddon.proposeDimensions() ?? dimensions;
+    const dimensions = fitAddon.proposeDimensions() ?? { cols: 80, rows: 24 };
+    const snapshot = await api.createSession(dimensions);
+    let sessionAcceptsPtyOperations = true;
+    dataSubscription = terminal.onData((data) => {
       if (!sessionAcceptsPtyOperations) {
         return;
       }
-      try {
-        await api.resize({ sessionId: snapshot.sessionId, ...nextDimensions });
-      } catch (error: unknown) {
+      void api.write({ sessionId: snapshot.sessionId, data }).catch((error: unknown) => {
         onError?.(error);
+      });
+    });
+    eventSubscription = api.onSessionEvent(snapshot.sessionId, (event) => {
+      switch (event.type) {
+        case "session.output":
+          terminal.write(event.payload.data);
+          break;
+        case "session.exited":
+        case "session.error":
+          sessionAcceptsPtyOperations = false;
+          break;
+        case "session.created":
+          break;
       }
-    },
-    async dispose(options = {}) {
-      if (disposed) {
-        return;
-      }
-      disposed = true;
-      dataSubscription.dispose();
-      eventSubscription();
-      terminal.dispose();
-      if (options.sessionLifecycle !== "terminate") {
-        return;
-      }
-      try {
-        await api.kill({ sessionId: snapshot.sessionId });
-      } catch (error: unknown) {
-        onError?.(error);
-      }
-    },
-  };
+    });
+    let disposed = false;
+
+    return {
+      sessionId: snapshot.sessionId,
+      async resize() {
+        if (disposed) {
+          return;
+        }
+        fitAddon.fit();
+        const nextDimensions = fitAddon.proposeDimensions() ?? dimensions;
+        if (!sessionAcceptsPtyOperations) {
+          return;
+        }
+        try {
+          await api.resize({ sessionId: snapshot.sessionId, ...nextDimensions });
+        } catch (error: unknown) {
+          onError?.(error);
+        }
+      },
+      async dispose(options = {}) {
+        if (disposed) {
+          return;
+        }
+        disposed = true;
+        disposeRendererResources({
+          dataSubscription,
+          eventSubscription,
+          terminal,
+          onError,
+        });
+        if (options.sessionLifecycle !== "terminate" || !sessionAcceptsPtyOperations) {
+          return;
+        }
+        try {
+          await api.kill({ sessionId: snapshot.sessionId });
+        } catch (error: unknown) {
+          onError?.(error);
+        }
+      },
+    };
+  } catch (error: unknown) {
+    disposeRendererResources({
+      dataSubscription,
+      eventSubscription,
+      terminal,
+      onError,
+    });
+    throw error;
+  }
+}
+
+function disposeRendererResources({
+  dataSubscription,
+  eventSubscription,
+  terminal,
+  onError,
+}: {
+  dataSubscription: DataSubscription | null;
+  eventSubscription: Unsubscribe | null;
+  terminal: TerminalLike;
+  onError?: (error: unknown) => void;
+}): void {
+  try {
+    dataSubscription?.dispose();
+  } catch (error: unknown) {
+    onError?.(error);
+  }
+  try {
+    eventSubscription?.();
+  } catch (error: unknown) {
+    onError?.(error);
+  }
+  try {
+    terminal.dispose();
+  } catch (error: unknown) {
+    onError?.(error);
+  }
 }

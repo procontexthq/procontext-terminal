@@ -46,6 +46,14 @@ Environment construction must be explicit and testable.
 - Avoid leaking app internals into child process environments.
 - Preserve platform-specific casing and path semantics.
 
+## Shell Path Contract
+
+Explicit shell values must be either absolute executable paths for the current
+platform or bare command names resolved through `PATH`. Relative path-like
+values such as `./shell`, `../bin/shell`, or `tools/shell` are invalid because
+their resolution depends on the app process working directory rather than the
+terminal session working directory.
+
 ## Testing Expectations
 
 - Default shell resolution works for each supported platform.

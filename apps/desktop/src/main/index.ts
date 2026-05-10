@@ -18,7 +18,14 @@ let logger = createAppLogger({
   isDevelopment: !app.isPackaged,
   level: resolveLogLevel(),
 });
-const sessionManager = new TerminalSessionManager(new NodePtyHost());
+const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
+  onEventHandlerError: (error, event) => {
+    logger.warn("session", "event_handler_failed", {
+      eventType: event.type,
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  },
+});
 let unregisterIpc: (() => void) | null = null;
 let terminalConfig: TerminalConfig = defaultTerminalConfig();
 let quitAfterShutdown = false;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dirname } from "node:path";
 
 import { createSessionId } from "@terminal/protocol";
 
@@ -34,13 +35,28 @@ function waitForExit(
 
 describe("NodePtyHost", () => {
   it("resolves an explicit shell without platform-specific leakage", () => {
-    expect(resolveShell({ shell: "/bin/sh" }).executable).toBe("/bin/sh");
+    const shell = platformShell();
+
+    expect(resolveShell({ shell }).executable).toBe(shell);
   });
 
   it("resolves PATH shell names to executable paths", () => {
-    const resolved = resolveShell({ shell: "sh", env: { PATH: "/bin:/usr/bin" } });
+    const { shellName, env } = pathResolutionFixture();
+    const resolved = resolveShell({ shell: shellName, env });
 
-    expect(resolved.executable).toMatch(/\/sh$/);
+    expect(resolved.executable.toLowerCase()).toContain(shellName.toLowerCase());
+  });
+
+  it("rejects relative path-like shell values", () => {
+    expect(() =>
+      resolveShell({ shell: "./local-shell" }, { platform: "linux", processEnv: { PATH: "/bin" } }),
+    ).toThrow(/absolute path/);
+    expect(() =>
+      resolveShell(
+        { shell: ".\\local-shell.exe" },
+        { platform: "win32", processEnv: { PATH: "C:\\Windows\\System32" } },
+      ),
+    ).toThrow(/absolute path/);
   });
 
   it("spawns a PTY, writes input, resizes, and observes exit", async () => {
@@ -49,7 +65,7 @@ describe("NodePtyHost", () => {
     const exits: Array<{ exitCode: number | null; signal: string | null }> = [];
     const pty = await host.spawn({
       sessionId: createSessionId("pty-test"),
-      shell: resolveShell({ shell: "/bin/sh", cwd: process.cwd() }),
+      shell: resolveShell({ shell: platformShell(), cwd: process.cwd() }),
       cols: 80,
       rows: 24,
     });
@@ -57,7 +73,7 @@ describe("NodePtyHost", () => {
     pty.onData((data) => chunks.push(data));
     pty.onExit((event) => exits.push(event));
     pty.resize(100, 30);
-    pty.write("printf 'PHASE1_PTY_OK\\n'\nexit\n");
+    pty.write(platformEchoAndExitCommand("PHASE1_PTY_OK"));
 
     await waitForOutput(chunks, "PHASE1_PTY_OK");
     await waitForExit(exits);
@@ -84,3 +100,31 @@ describe("NodePtyHost", () => {
     ).rejects.toMatchObject({ type: "pty_spawn_failed" });
   });
 });
+
+function platformShell(): string {
+  if (process.platform === "win32") {
+    return process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe";
+  }
+
+  return "/bin/sh";
+}
+
+function pathResolutionFixture(): { shellName: string; env: Record<string, string> } {
+  if (process.platform === "win32") {
+    const comSpec = process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe";
+    return {
+      shellName: "cmd.exe",
+      env: { PATH: dirname(comSpec), PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+    };
+  }
+
+  return { shellName: "sh", env: { PATH: "/bin:/usr/bin" } };
+}
+
+function platformEchoAndExitCommand(text: string): string {
+  if (process.platform === "win32") {
+    return `echo ${text}\r\nexit\r\n`;
+  }
+
+  return `printf '${text}\\n'\nexit\n`;
+}

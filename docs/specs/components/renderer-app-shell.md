@@ -52,6 +52,10 @@ Examples of canonical session state:
 - Exit code and signal.
 - Session owner and creation origin.
 
+Session status shown in the UI should follow session lifecycle events without
+regressing from terminal states. For example, a trailing output event delivered
+after an exit event must not flip an exited session back to running.
+
 ## Testing Expectations
 
 - UI actions call the preload API rather than main-process or PTY modules.

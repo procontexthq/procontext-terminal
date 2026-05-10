@@ -171,6 +171,29 @@ describe("terminal controller", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("disposes renderer resources when session creation fails", async () => {
+    const terminal = new FakeTerminal();
+    const api = fakeApi();
+    const expectedError = new Error("create failed");
+    vi.mocked(api.createSession).mockRejectedValueOnce(expectedError);
+
+    await expect(
+      createTerminalSession({
+        api,
+        element: document.createElement("div"),
+        createTerminal: () => terminal,
+        createFitAddon: () => ({
+          fit: vi.fn(),
+          proposeDimensions: () => ({ cols: 80, rows: 24 }),
+        }),
+      }),
+    ).rejects.toBe(expectedError);
+
+    expect(terminal.dispose).toHaveBeenCalledOnce();
+    expect(terminal.dataSubscriptionDispose).not.toHaveBeenCalled();
+    expect(api.unsubscribeSessionEvent).not.toHaveBeenCalled();
+  });
+
   it("detaches the renderer view by default when disposed", async () => {
     const terminal = new FakeTerminal();
     const api = fakeApi();
@@ -196,6 +219,34 @@ describe("terminal controller", () => {
     expect(terminal.dispose).toHaveBeenCalledOnce();
     expect(terminal.writes).toEqual([]);
     expect(api.kill).not.toHaveBeenCalled();
+  });
+
+  it("ignores resize and skips termination after disposal or session exit", async () => {
+    const terminal = new FakeTerminal();
+    const api = fakeApi();
+    const onError = vi.fn();
+
+    const controller = await createTerminalSession({
+      api,
+      element: document.createElement("div"),
+      createTerminal: () => terminal,
+      createFitAddon: () => ({
+        fit: vi.fn(),
+        proposeDimensions: () => ({ cols: 80, rows: 24 }),
+      }),
+      onError,
+    });
+
+    api.emit({
+      type: "session.exited",
+      payload: { sessionId: controller.sessionId, exitCode: 0, signal: null },
+    });
+    await controller.dispose({ sessionLifecycle: "terminate" });
+    await controller.resize();
+
+    expect(api.kill).not.toHaveBeenCalled();
+    expect(api.resize).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it("terminates the PTY session when disposal requests termination", async () => {
@@ -240,5 +291,31 @@ describe("terminal controller", () => {
 
     expect(onError).toHaveBeenCalledWith(expectedError);
     expect(terminal.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("reports renderer cleanup failures while still terminating the PTY session", async () => {
+    const terminal = new FakeTerminal();
+    const api = fakeApi();
+    const expectedError = new Error("dispose failed");
+    terminal.dispose.mockImplementationOnce(() => {
+      throw expectedError;
+    });
+    const onError = vi.fn();
+
+    const controller = await createTerminalSession({
+      api,
+      element: document.createElement("div"),
+      createTerminal: () => terminal,
+      createFitAddon: () => ({
+        fit: vi.fn(),
+        proposeDimensions: () => ({ cols: 80, rows: 24 }),
+      }),
+      onError,
+    });
+
+    await controller.dispose({ sessionLifecycle: "terminate" });
+
+    expect(onError).toHaveBeenCalledWith(expectedError);
+    expect(api.kill).toHaveBeenCalledWith({ sessionId: controller.sessionId });
   });
 });
