@@ -1,0 +1,8 @@
+node_modules
+dist
+out
+coverage
+pnpm-lock.yaml
+AGENTS.md
+AGENTS.local.md
+docs

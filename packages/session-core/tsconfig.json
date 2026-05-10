@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "composite": true
+  },
+  "references": [{ "path": "../protocol" }, { "path": "../pty-host" }],
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "tests"]
+}

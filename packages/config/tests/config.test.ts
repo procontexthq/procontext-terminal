@@ -1,0 +1,87 @@
+import { describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+import {
+  defaultTerminalConfig,
+  loadTerminalConfig,
+  parseTerminalConfig,
+  resolveTerminalConfigPath,
+  saveTerminalConfig,
+} from "../src/index";
+
+describe("terminal config", () => {
+  it("provides safe Phase 1 defaults", () => {
+    expect(defaultTerminalConfig()).toMatchObject({
+      schemaVersion: 1,
+      terminal: {
+        fontFamily: "Menlo, Monaco, Consolas, monospace",
+        fontSize: 13,
+        scrollback: 5000,
+      },
+    });
+  });
+
+  it("migrates legacy settings without a schema version", () => {
+    const parsed = parseTerminalConfig({
+      terminal: { fontSize: 14 },
+      shell: { defaultProfile: "/bin/zsh" },
+    });
+
+    expect(parsed.warnings).toHaveLength(0);
+    expect(parsed.config).toMatchObject({
+      schemaVersion: 1,
+      terminal: { fontSize: 14 },
+      shell: { defaultProfile: "/bin/zsh" },
+    });
+  });
+
+  it("falls back to defaults for invalid settings", () => {
+    const parsed = parseTerminalConfig({
+      terminal: { fontSize: -1, scrollback: 0 },
+    });
+
+    expect(parsed.config).toEqual(defaultTerminalConfig());
+    expect(parsed.warnings).toHaveLength(1);
+  });
+
+  it("rejects unknown future schema versions without downgrading silently", () => {
+    const parsed = parseTerminalConfig({
+      schemaVersion: 99,
+      terminal: { fontSize: 14 },
+      shell: { defaultProfile: "/bin/zsh" },
+    });
+
+    expect(parsed.config).toEqual(defaultTerminalConfig());
+    expect(parsed.warnings[0]).toContain("Unsupported terminal settings schema version");
+  });
+
+  it("loads missing settings as defaults and writes settings atomically", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "terminal-config-"));
+    try {
+      const settingsPath = resolveTerminalConfigPath(tempDir);
+      expect(settingsPath).toBe(join(tempDir, "settings.json"));
+      await expect(loadTerminalConfig(settingsPath)).resolves.toEqual({
+        config: defaultTerminalConfig(),
+        warnings: [],
+      });
+
+      const config = {
+        ...defaultTerminalConfig(),
+        terminal: {
+          ...defaultTerminalConfig().terminal,
+          fontSize: 16,
+        },
+      };
+      await saveTerminalConfig(settingsPath, config);
+      await expect(loadTerminalConfig(settingsPath)).resolves.toEqual({
+        config,
+        warnings: [],
+      });
+      await expect(readFile(settingsPath, "utf8")).resolves.toContain('"schemaVersion": 1');
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+build/
+release/
+coverage/
+playwright-report/
+test-results/
+
+# TypeScript / Vite / Electron caches
+*.tsbuildinfo
+.vite/
+.vite-electron/
+.cache/
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+AGENTS.local.md
+docs/private/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

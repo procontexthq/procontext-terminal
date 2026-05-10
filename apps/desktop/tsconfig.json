@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "react-jsx",
+    "types": ["vite/client", "vitest/globals"]
+  },
+  "references": [
+    { "path": "../../packages/config" },
+    { "path": "../../packages/protocol" },
+    { "path": "../../packages/pty-host" },
+    { "path": "../../packages/session-core" }
+  ],
+  "include": [
+    "electron.vite.config.ts",
+    "vitest.e2e.config.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts",
+    "../../packages/*/src/**/*.ts"
+  ],
+  "exclude": ["out", "dist"]
+}
