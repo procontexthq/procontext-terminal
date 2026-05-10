@@ -12,7 +12,10 @@ import {
   parseRendererCommand,
   parseRendererCommandResult,
   parseKillSessionRequest,
+  parseReleaseSessionRequest,
   parseResizeSessionRequest,
+  parseSaveWorkspaceRequest,
+  parseTerminalConfig,
   parseWriteInputRequest,
   unwrapRendererCommandResult,
 } from "../src/index";
@@ -43,6 +46,58 @@ describe("protocol schemas", () => {
     expect(() => parseWriteInputRequest({ sessionId: "", data: "x" })).toThrow();
     expect(() => parseResizeSessionRequest({ sessionId: "s", cols: 80, rows: -1 })).toThrow();
     expect(() => parseKillSessionRequest({ sessionId: "" })).toThrow();
+  });
+
+  it("validates terminal config schema version 2 workspace state", () => {
+    expect(
+      parseTerminalConfig({
+        schemaVersion: 2,
+        terminal: {
+          fontFamily: "monospace",
+          fontSize: 13,
+          scrollback: 5000,
+          theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+        },
+        shell: { defaultProfile: null },
+        workspace: {
+          tabs: [{ cwd: "/tmp", shell: null }],
+          activeTabIndex: 0,
+        },
+      }),
+    ).toMatchObject({
+      schemaVersion: 2,
+      workspace: {
+        tabs: [{ cwd: "/tmp", shell: null }],
+        activeTabIndex: 0,
+      },
+    });
+
+    expect(() =>
+      parseTerminalConfig({
+        schemaVersion: 2,
+        terminal: {
+          fontFamily: "monospace",
+          fontSize: 13,
+          scrollback: 5000,
+          theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+        },
+        shell: { defaultProfile: null },
+        workspace: { tabs: [], activeTabIndex: 0 },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseTerminalConfig({
+        schemaVersion: 2,
+        terminal: {
+          fontFamily: "monospace",
+          fontSize: 13,
+          scrollback: 5000,
+          theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+        },
+        shell: { defaultProfile: null },
+        workspace: { tabs: [{ cwd: null, shell: null }], activeTabIndex: 1 },
+      }),
+    ).toThrow();
   });
 
   it("creates branded ids from explicit values", () => {
@@ -91,6 +146,51 @@ describe("protocol schemas", () => {
         payload: { sessionId, cols: 0, rows: 24 },
       }),
     ).toThrow();
+    expect(
+      parseRendererCommand({
+        type: "session.release",
+        requestId,
+        payload: { sessionId },
+      }),
+    ).toMatchObject({
+      type: "session.release",
+      payload: { sessionId },
+    });
+    expect(
+      parseRendererCommand({
+        type: "settings.saveWorkspace",
+        requestId,
+        payload: {
+          workspace: {
+            tabs: [{ cwd: "/tmp", shell: null }],
+            activeTabIndex: 0,
+          },
+        },
+      }),
+    ).toMatchObject({
+      type: "settings.saveWorkspace",
+      payload: {
+        workspace: {
+          tabs: [{ cwd: "/tmp", shell: null }],
+          activeTabIndex: 0,
+        },
+      },
+    });
+    expect(parseReleaseSessionRequest({ sessionId })).toEqual({ sessionId });
+    expect(() => parseReleaseSessionRequest({ sessionId: "" })).toThrow();
+    expect(
+      parseSaveWorkspaceRequest({
+        workspace: {
+          tabs: [{ cwd: null, shell: null }],
+          activeTabIndex: 0,
+        },
+      }),
+    ).toEqual({
+      workspace: {
+        tabs: [{ cwd: null, shell: null }],
+        activeTabIndex: 0,
+      },
+    });
 
     const success = createRendererCommandSuccess(requestId, null);
     expect(parseRendererCommandResult(success)).toEqual(success);

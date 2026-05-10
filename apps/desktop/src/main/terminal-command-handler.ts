@@ -17,9 +17,10 @@ import type { AppLogger } from "./logger";
 export type TerminalCommandServices = {
   sessionManager: Pick<
     TerminalSessionManager,
-    "createSession" | "write" | "resize" | "kill" | "getSession"
+    "createSession" | "write" | "resize" | "kill" | "getSession" | "releaseSession"
   >;
   getConfig(): TerminalConfig;
+  saveConfig(config: TerminalConfig): Promise<TerminalConfig>;
   logger?: AppLogger;
 };
 
@@ -97,6 +98,13 @@ async function handleRendererCommand(
       });
       await services.sessionManager.kill(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
+    case "session.release":
+      services.logger?.info("session", "release_requested", {
+        requestId: command.requestId,
+        sessionId: command.payload.sessionId,
+      });
+      await services.sessionManager.releaseSession(command.payload);
+      return createRendererCommandSuccess(command.requestId, null);
     case "session.get":
       return createRendererCommandSuccess(
         command.requestId,
@@ -104,6 +112,21 @@ async function handleRendererCommand(
       );
     case "settings.get":
       return createRendererCommandSuccess(command.requestId, services.getConfig());
+    case "settings.saveWorkspace": {
+      const current = services.getConfig();
+      try {
+        const saved = await services.saveConfig({
+          ...current,
+          workspace: command.payload.workspace,
+        });
+        return createRendererCommandSuccess(command.requestId, saved);
+      } catch (error: unknown) {
+        throw createTerminalError("settings_save_failed", "Could not save workspace settings.", {
+          operation: "settings.saveWorkspace",
+          cause: errorMessage(error),
+        });
+      }
+    }
   }
 }
 

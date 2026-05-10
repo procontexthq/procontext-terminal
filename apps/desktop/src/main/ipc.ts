@@ -15,11 +15,13 @@ export function registerTerminalIpc(
   sessionManager: TerminalSessionManager,
   logger: AppLogger,
   getConfig: () => TerminalConfig,
+  saveConfig: (config: TerminalConfig) => Promise<TerminalConfig>,
 ): () => void {
   ipcMain.handle(IPC_CHANNELS.command, async (_event, payload: unknown) =>
     handleRendererCommandPayload(payload, {
       sessionManager,
       getConfig,
+      saveConfig,
       logger,
     }),
   );

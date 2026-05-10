@@ -26,8 +26,12 @@ export function createRendererTerminalApi({
     write: (request) => invokeCommand(invoke, createRendererCommand("session.write", request)),
     resize: (request) => invokeCommand(invoke, createRendererCommand("session.resize", request)),
     kill: (request) => invokeCommand(invoke, createRendererCommand("session.kill", request)),
+    releaseSession: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.release", request)),
     getSession: (request) => invokeCommand(invoke, createRendererCommand("session.get", request)),
     getConfig: () => invokeCommand(invoke, createRendererCommand("settings.get", {})),
+    saveWorkspace: (workspace) =>
+      invokeCommand(invoke, createRendererCommand("settings.saveWorkspace", { workspace })),
     onSessionEvent: (sessionId, handler) =>
       subscribe((payload) => {
         if (isRendererSessionEvent(payload) && eventMatchesSession(payload, sessionId)) {

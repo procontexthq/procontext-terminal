@@ -6,6 +6,7 @@ import {
   defaultTerminalConfig,
   loadTerminalConfig,
   resolveTerminalConfigPath,
+  saveTerminalConfig,
 } from "@terminal/config";
 import { NodePtyHost } from "@terminal/pty-host";
 import { TerminalSessionManager } from "@terminal/session-core";
@@ -28,6 +29,7 @@ const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
 });
 let unregisterIpc: (() => void) | null = null;
 let terminalConfig: TerminalConfig = defaultTerminalConfig();
+let terminalConfigPath: string | null = null;
 let quitAfterShutdown = false;
 
 async function createMainWindow(): Promise<BrowserWindow> {
@@ -109,19 +111,19 @@ void app
       logFilePath: resolveMainLogPath(logDirectory),
     });
 
-    const settingsPath = resolveTerminalConfigPath(app.getPath("userData"));
-    logger.info("settings", "load_started", { settingsPath });
-    const loadedConfig = await loadTerminalConfig(settingsPath);
+    terminalConfigPath = resolveTerminalConfigPath(app.getPath("userData"));
+    logger.info("settings", "load_started", { settingsPath: terminalConfigPath });
+    const loadedConfig = await loadTerminalConfig(terminalConfigPath);
     terminalConfig = loadedConfig.config;
     for (const warning of loadedConfig.warnings) {
-      logger.warn("settings", "warning", { settingsPath, warning });
+      logger.warn("settings", "warning", { settingsPath: terminalConfigPath, warning });
     }
     logger.info("settings", "loaded", {
-      settingsPath,
+      settingsPath: terminalConfigPath,
       defaultProfileConfigured: Boolean(terminalConfig.shell.defaultProfile),
     });
 
-    unregisterIpc = registerTerminalIpc(sessionManager, logger, () => terminalConfig);
+    unregisterIpc = registerTerminalIpc(sessionManager, logger, () => terminalConfig, saveConfig);
     await createMainWindow();
     logger.info("app", "ready");
 
@@ -174,6 +176,21 @@ app.on("before-quit", (event) => {
 
 function resolveLogLevel() {
   return parseLogLevel(process.env.PROCONTEXT_LOG_LEVEL, !app.isPackaged ? "debug" : "info");
+}
+
+async function saveConfig(config: TerminalConfig): Promise<TerminalConfig> {
+  if (!terminalConfigPath) {
+    throw new Error("Terminal settings path is not initialized.");
+  }
+
+  await saveTerminalConfig(terminalConfigPath, config);
+  terminalConfig = config;
+  logger.info("settings", "saved", {
+    settingsPath: terminalConfigPath,
+    workspaceTabs: config.workspace.tabs.length,
+    activeTabIndex: config.workspace.activeTabIndex,
+  });
+  return terminalConfig;
 }
 
 function sanitizeUrlForLog(value: string): string {

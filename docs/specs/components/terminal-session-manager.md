@@ -13,6 +13,7 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 ## Responsibilities
 
 - Create, track, and dispose terminal sessions.
+- Release exited or failed session records when no renderer view needs them.
 - Assign stable session IDs.
 - Track lifecycle state.
 - Own canonical session metadata: shell, cwd, env profile, cols, rows, title, createdBy, and timestamps.
@@ -72,6 +73,7 @@ Session metadata must be serializable and shared through protocol types. At mini
 - A failing event subscriber must not prevent other subscribers from receiving events or change session lifecycle state.
 - Shutdown terminates running or exiting sessions without leaving orphaned PTY handles.
 - Shutdown must not clear still-active session records when termination fails or times out; keeping the PTY handle available lets callers retry, inspect, or escalate cleanup.
+- Releasing a session is distinct from killing it. Only exited and failed sessions can be released; running or exiting sessions must first be explicitly terminated or allowed to exit.
 - Policy denials stop sensitive operations before PTY writes or lifecycle changes.
 - Recorder events are emitted in stable order.
 - Query APIs return snapshots without exposing mutable internal state.

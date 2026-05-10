@@ -14,8 +14,18 @@ export type TerminalTheme = {
   cursor: string;
 };
 
+export type TerminalWorkspaceTab = {
+  cwd: string | null;
+  shell: string | null;
+};
+
+export type TerminalWorkspaceState = {
+  tabs: TerminalWorkspaceTab[];
+  activeTabIndex: number;
+};
+
 export type TerminalConfig = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   terminal: {
     fontFamily: string;
     fontSize: number;
@@ -25,6 +35,7 @@ export type TerminalConfig = {
   shell: {
     defaultProfile: string | null;
   };
+  workspace: TerminalWorkspaceState;
 };
 
 export type TerminalErrorType =
@@ -34,7 +45,9 @@ export type TerminalErrorType =
   | "session_not_running"
   | "session_write_failed"
   | "session_resize_failed"
-  | "session_kill_failed";
+  | "session_kill_failed"
+  | "session_release_failed"
+  | "settings_save_failed";
 
 export type TerminalError = {
   type: TerminalErrorType;
@@ -71,6 +84,14 @@ export type GetSessionRequest = {
   sessionId: SessionId;
 };
 
+export type ReleaseSessionRequest = {
+  sessionId: SessionId;
+};
+
+export type SaveWorkspaceRequest = {
+  workspace: TerminalWorkspaceState;
+};
+
 export type TerminalSessionSnapshot = {
   sessionId: SessionId;
   state: SessionState;
@@ -105,8 +126,10 @@ export type RendererCommand =
   | { type: "session.write"; requestId: RequestId; payload: WriteInputRequest }
   | { type: "session.resize"; requestId: RequestId; payload: ResizeSessionRequest }
   | { type: "session.kill"; requestId: RequestId; payload: KillSessionRequest }
+  | { type: "session.release"; requestId: RequestId; payload: ReleaseSessionRequest }
   | { type: "session.get"; requestId: RequestId; payload: GetSessionRequest }
-  | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> };
+  | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> }
+  | { type: "settings.saveWorkspace"; requestId: RequestId; payload: SaveWorkspaceRequest };
 
 export type RendererCommandType = RendererCommand["type"];
 
@@ -126,8 +149,10 @@ export type RendererTerminalApi = {
   write(request: WriteInputRequest): Promise<void>;
   resize(request: ResizeSessionRequest): Promise<void>;
   kill(request: KillSessionRequest): Promise<void>;
+  releaseSession(request: ReleaseSessionRequest): Promise<void>;
   getSession(request: GetSessionRequest): Promise<TerminalSessionSnapshot>;
   getConfig(): Promise<TerminalConfig>;
+  saveWorkspace(workspace: TerminalWorkspaceState): Promise<TerminalConfig>;
   onSessionEvent(sessionId: SessionId, handler: (event: RendererSessionEvent) => void): Unsubscribe;
 };
 
@@ -162,8 +187,28 @@ export const terminalThemeSchema = z.object({
   cursor: z.string().min(1),
 });
 
+export const terminalWorkspaceTabSchema = z.object({
+  cwd: z.string().min(1).nullable(),
+  shell: z.string().min(1).nullable(),
+});
+
+export const terminalWorkspaceStateSchema = z
+  .object({
+    tabs: z.array(terminalWorkspaceTabSchema).min(1),
+    activeTabIndex: z.number().int().min(0),
+  })
+  .superRefine((workspace, context) => {
+    if (workspace.activeTabIndex >= workspace.tabs.length) {
+      context.addIssue({
+        code: "custom",
+        message: "activeTabIndex must point to an existing workspace tab.",
+        path: ["activeTabIndex"],
+      });
+    }
+  });
+
 export const terminalConfigSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   terminal: z.object({
     fontFamily: z.string().min(1),
     fontSize: z.number().int().min(8).max(40),
@@ -173,6 +218,7 @@ export const terminalConfigSchema = z.object({
   shell: z.object({
     defaultProfile: z.string().min(1).nullable(),
   }),
+  workspace: terminalWorkspaceStateSchema,
 });
 
 export const terminalErrorTypeSchema = z.enum([
@@ -183,6 +229,8 @@ export const terminalErrorTypeSchema = z.enum([
   "session_write_failed",
   "session_resize_failed",
   "session_kill_failed",
+  "session_release_failed",
+  "settings_save_failed",
 ]);
 
 export const terminalErrorSchema = z.object({
@@ -216,6 +264,12 @@ export const killSessionRequestSchema = z.object({
 
 export const getSessionRequestSchema = killSessionRequestSchema;
 
+export const releaseSessionRequestSchema = killSessionRequestSchema;
+
+export const saveWorkspaceRequestSchema = z.object({
+  workspace: terminalWorkspaceStateSchema,
+});
+
 export const rendererCommandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("session.create"),
@@ -238,6 +292,11 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     payload: killSessionRequestSchema,
   }),
   z.object({
+    type: z.literal("session.release"),
+    requestId: requestIdSchema,
+    payload: releaseSessionRequestSchema,
+  }),
+  z.object({
     type: z.literal("session.get"),
     requestId: requestIdSchema,
     payload: getSessionRequestSchema,
@@ -246,6 +305,11 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("settings.get"),
     requestId: requestIdSchema,
     payload: z.object({}),
+  }),
+  z.object({
+    type: z.literal("settings.saveWorkspace"),
+    requestId: requestIdSchema,
+    payload: saveWorkspaceRequestSchema,
   }),
 ]);
 
@@ -299,6 +363,14 @@ export function parseKillSessionRequest(value: unknown): KillSessionRequest {
 
 export function parseGetSessionRequest(value: unknown): GetSessionRequest {
   return getSessionRequestSchema.parse(value);
+}
+
+export function parseReleaseSessionRequest(value: unknown): ReleaseSessionRequest {
+  return releaseSessionRequestSchema.parse(value);
+}
+
+export function parseSaveWorkspaceRequest(value: unknown): SaveWorkspaceRequest {
+  return saveWorkspaceRequestSchema.parse(value);
 }
 
 export function parseTerminalConfig(value: unknown): TerminalConfig {

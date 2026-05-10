@@ -1,7 +1,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { terminalConfigSchema, type TerminalConfig, type TerminalTheme } from "@terminal/protocol";
+import {
+  terminalConfigSchema,
+  terminalWorkspaceStateSchema,
+  type TerminalConfig,
+  type TerminalTheme,
+  type TerminalWorkspaceState,
+} from "@terminal/protocol";
 
 export type { TerminalConfig, TerminalTheme };
 
@@ -12,7 +18,7 @@ export type ConfigParseResult = {
 
 export function defaultTerminalConfig(): TerminalConfig {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     terminal: {
       fontFamily: "Menlo, Monaco, Consolas, monospace",
       fontSize: 13,
@@ -26,39 +32,51 @@ export function defaultTerminalConfig(): TerminalConfig {
     shell: {
       defaultProfile: null,
     },
+    workspace: defaultWorkspaceState(),
   };
 }
 
 export function parseTerminalConfig(value: unknown): ConfigParseResult {
   const schemaVersion = readSchemaVersion(value);
-  if (schemaVersion !== undefined && schemaVersion !== 1) {
+  if (schemaVersion !== undefined && schemaVersion !== 1 && schemaVersion !== 2) {
     return {
       config: defaultTerminalConfig(),
       warnings: [`Unsupported terminal settings schema version ${schemaVersion}; using defaults.`],
     };
   }
 
+  const defaults = defaultTerminalConfig();
+  const raw = isObject(value) ? value : {};
+  const workspace = parseWorkspaceState(raw.workspace);
   const merged = {
-    ...defaultTerminalConfig(),
-    ...(isObject(value) ? value : {}),
-    schemaVersion: 1,
+    ...defaults,
+    ...raw,
+    schemaVersion: 2,
     terminal: {
-      ...defaultTerminalConfig().terminal,
-      ...(isObject(value) && isObject(value.terminal) ? value.terminal : {}),
+      ...defaults.terminal,
+      ...(isObject(raw.terminal) ? raw.terminal : {}),
     },
     shell: {
-      ...defaultTerminalConfig().shell,
-      ...(isObject(value) && isObject(value.shell) ? value.shell : {}),
+      ...defaults.shell,
+      ...(isObject(raw.shell) ? raw.shell : {}),
     },
+    workspace: workspace.config,
   };
   const parsed = terminalConfigSchema.safeParse(merged);
   if (parsed.success) {
-    return { config: parsed.data, warnings: [] };
+    return { config: parsed.data, warnings: workspace.warnings };
   }
 
   return {
     config: defaultTerminalConfig(),
     warnings: ["Invalid terminal settings; using defaults."],
+  };
+}
+
+export function defaultWorkspaceState(): TerminalWorkspaceState {
+  return {
+    tabs: [{ cwd: null, shell: null }],
+    activeTabIndex: 0,
   };
 }
 
@@ -108,6 +126,25 @@ function readSchemaVersion(value: unknown): number | undefined {
   }
 
   return typeof value.schemaVersion === "number" ? value.schemaVersion : Number.NaN;
+}
+
+function parseWorkspaceState(value: unknown): {
+  config: TerminalWorkspaceState;
+  warnings: string[];
+} {
+  const parsed = terminalWorkspaceStateSchema.safeParse(value);
+  if (parsed.success) {
+    return { config: parsed.data, warnings: [] };
+  }
+
+  if (value === undefined) {
+    return { config: defaultWorkspaceState(), warnings: [] };
+  }
+
+  return {
+    config: defaultWorkspaceState(),
+    warnings: ["Invalid workspace settings; using default terminal tab."],
+  };
 }
 
 function isNodeError(value: unknown): value is NodeJS.ErrnoException {

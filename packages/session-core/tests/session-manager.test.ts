@@ -139,6 +139,52 @@ describe("TerminalSessionManager", () => {
     expect(manager.getSession({ sessionId: snapshot.sessionId }).state).toBe("exited");
   });
 
+  it("releases exited sessions and disposes their PTY subscriptions", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const snapshot = await manager.createSession(request);
+
+    host.pty.emitExit({ exitCode: 0, signal: null });
+    await manager.releaseSession({ sessionId: snapshot.sessionId });
+
+    expect(() => manager.getSession({ sessionId: snapshot.sessionId })).toThrow();
+    expect(host.pty.onDataHandlers.size).toBe(0);
+    expect(host.pty.onExitHandlers.size).toBe(0);
+  });
+
+  it("releases failed sessions without requiring a PTY handle", async () => {
+    const host = new FakePtyHost();
+    host.spawn.mockRejectedValueOnce(new Error("spawn failed"));
+    const manager = new TerminalSessionManager(host);
+    let failedSessionId = createSessionId("missing");
+    manager.onSessionEvent((event) => {
+      if (event.type === "session.error" && event.payload.sessionId) {
+        failedSessionId = event.payload.sessionId;
+      }
+    });
+
+    await expect(manager.createSession(request)).rejects.toMatchObject({
+      type: "pty_spawn_failed",
+    });
+    await manager.releaseSession({ sessionId: failedSessionId });
+
+    expect(() => manager.getSession({ sessionId: failedSessionId })).toThrow();
+  });
+
+  it("refuses to release active sessions without killing them", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const snapshot = await manager.createSession(request);
+
+    await expect(manager.releaseSession({ sessionId: snapshot.sessionId })).rejects.toMatchObject({
+      type: "session_release_failed",
+      sessionId: snapshot.sessionId,
+    });
+
+    expect(host.pty.kill).not.toHaveBeenCalled();
+    expect(manager.getSession({ sessionId: snapshot.sessionId }).state).toBe("running");
+  });
+
   it("marks a session failed when spawn fails", async () => {
     const host = new FakePtyHost();
     host.spawn.mockRejectedValueOnce(new Error("spawn failed"));

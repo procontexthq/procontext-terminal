@@ -12,18 +12,22 @@ import {
 } from "../src/index";
 
 describe("terminal config", () => {
-  it("provides safe Phase 1 defaults", () => {
+  it("provides safe Phase 2A defaults", () => {
     expect(defaultTerminalConfig()).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       terminal: {
         fontFamily: "Menlo, Monaco, Consolas, monospace",
         fontSize: 13,
         scrollback: 5000,
       },
+      workspace: {
+        tabs: [{ cwd: null, shell: null }],
+        activeTabIndex: 0,
+      },
     });
   });
 
-  it("migrates legacy settings without a schema version", () => {
+  it("migrates legacy v1 settings without a schema version", () => {
     const parsed = parseTerminalConfig({
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh" },
@@ -31,9 +35,52 @@ describe("terminal config", () => {
 
     expect(parsed.warnings).toHaveLength(0);
     expect(parsed.config).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh" },
+      workspace: {
+        tabs: [{ cwd: null, shell: null }],
+        activeTabIndex: 0,
+      },
+    });
+  });
+
+  it("migrates explicit schema version 1 settings to schema version 2", () => {
+    const parsed = parseTerminalConfig({
+      schemaVersion: 1,
+      terminal: { fontSize: 15 },
+      shell: { defaultProfile: "/bin/bash" },
+    });
+
+    expect(parsed.warnings).toHaveLength(0);
+    expect(parsed.config).toMatchObject({
+      schemaVersion: 2,
+      terminal: { fontSize: 15 },
+      shell: { defaultProfile: "/bin/bash" },
+      workspace: {
+        tabs: [{ cwd: null, shell: null }],
+        activeTabIndex: 0,
+      },
+    });
+  });
+
+  it("falls back to a default workspace for invalid or empty workspace state", () => {
+    const parsed = parseTerminalConfig({
+      schemaVersion: 2,
+      terminal: { fontSize: 14 },
+      shell: { defaultProfile: "/bin/zsh" },
+      workspace: { tabs: [], activeTabIndex: 0 },
+    });
+
+    expect(parsed.warnings).toHaveLength(1);
+    expect(parsed.config).toMatchObject({
+      schemaVersion: 2,
+      terminal: { fontSize: 14 },
+      shell: { defaultProfile: "/bin/zsh" },
+      workspace: {
+        tabs: [{ cwd: null, shell: null }],
+        activeTabIndex: 0,
+      },
     });
   });
 
@@ -79,7 +126,7 @@ describe("terminal config", () => {
         config,
         warnings: [],
       });
-      await expect(readFile(settingsPath, "utf8")).resolves.toContain('"schemaVersion": 1');
+      await expect(readFile(settingsPath, "utf8")).resolves.toContain('"schemaVersion": 2');
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

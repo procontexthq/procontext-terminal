@@ -5,6 +5,7 @@ import {
   type GetSessionRequest,
   type KillSessionRequest,
   type RendererSessionEvent,
+  type ReleaseSessionRequest,
   type ResizeSessionRequest,
   type SessionId,
   type TerminalError,
@@ -164,6 +165,27 @@ export class TerminalSessionManager {
     } catch (error: unknown) {
       return Promise.reject(
         normalizeTerminalError(error, request.sessionId, "session_kill_failed"),
+      );
+    }
+  }
+
+  releaseSession(request: ReleaseSessionRequest): Promise<void> {
+    try {
+      const record = this.getRecord(request.sessionId);
+      if (record.snapshot.state !== "exited" && record.snapshot.state !== "failed") {
+        throw createTerminalError(
+          "session_release_failed",
+          `Session ${request.sessionId} cannot be released while ${record.snapshot.state}.`,
+          {
+            sessionId: request.sessionId,
+          },
+        );
+      }
+      this.disposeRecord(record);
+      return Promise.resolve();
+    } catch (error: unknown) {
+      return Promise.reject(
+        normalizeTerminalError(error, request.sessionId, "session_release_failed"),
       );
     }
   }
