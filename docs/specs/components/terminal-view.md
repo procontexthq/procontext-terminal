@@ -44,6 +44,12 @@ The terminal view must preserve xterm.js behavior for:
 - Terminal title and bell events.
 - Raw keyboard and paste input.
 
+When the backing session exits, the terminal view keeps the final buffer visible
+but stops forwarding new keyboard or paste input for that session. Post-exit
+typing is user input against a closed PTY, not an application failure. Renderer
+resizes after exit can still refit the local terminal view, but they must not
+send resize requests to the closed PTY session.
+
 ## Resize Behavior
 
 Resize must update both visible terminal geometry and the PTY session.
@@ -53,10 +59,23 @@ Resize must update both visible terminal geometry and the PTY session.
 - The session manager forwards resize to the PTY host.
 - Resize events are recorded when recording is enabled.
 
+## Disposal Behavior
+
+Disposing a terminal view must distinguish renderer cleanup from terminal
+session termination.
+
+- Detaching a terminal view disposes xterm.js resources and event
+  subscriptions while leaving the PTY session running.
+- Terminating a terminal view disposes renderer resources and sends an explicit
+  kill request through the preload API.
+- Phase 1 uses termination for single-session app unmounts because there is no
+  detach or reattach UI yet.
+
 ## Testing Expectations
 
 - PTY output is rendered through xterm.js.
 - User input flows through the input router and preload API.
 - Resize changes produce stable rows and columns.
 - Alternate-screen content is observable.
+- Dispose behavior covers both detached and terminated sessions.
 - Copy, paste, selection, title, bell, and link behavior are covered through renderer or E2E tests.

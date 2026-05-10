@@ -40,7 +40,7 @@ export function App(): ReactElement {
       });
 
       if (disposed) {
-        nextController.dispose();
+        void nextController.dispose({ sessionLifecycle: "terminate" });
         return;
       }
 
@@ -66,7 +66,7 @@ export function App(): ReactElement {
       disposed = true;
       resizeObserver.disconnect();
       unsubscribeStatus?.();
-      controller.current?.dispose();
+      void controller.current?.dispose({ sessionLifecycle: "terminate" });
       controller.current = null;
     };
   }, []);

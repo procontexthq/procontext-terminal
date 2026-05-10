@@ -136,6 +136,25 @@ describe("TerminalSessionManager", () => {
     });
   });
 
+  it("keeps a session running when a kill request fails before reaching the PTY", async () => {
+    const host = new FakePtyHost();
+    host.pty.kill.mockImplementationOnce(() => {
+      throw new Error("kill failed");
+    });
+    const manager = new TerminalSessionManager(host);
+    const snapshot = await manager.createSession(request);
+
+    await expect(manager.kill({ sessionId: snapshot.sessionId })).rejects.toMatchObject({
+      type: "session_kill_failed",
+      sessionId: snapshot.sessionId,
+    });
+
+    expect(manager.getSession({ sessionId: snapshot.sessionId }).state).toBe("running");
+    await expect(
+      manager.write({ sessionId: snapshot.sessionId, data: "echo still-running\r" }),
+    ).resolves.toBeUndefined();
+  });
+
   it("kills running sessions during bounded shutdown and clears session records", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);

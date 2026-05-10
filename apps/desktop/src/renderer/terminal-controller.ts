@@ -12,10 +12,16 @@ export type TerminalLike = {
 
 export type FitAddonLike = Pick<FitAddon, "fit" | "proposeDimensions">;
 
+export type TerminalSessionDisposeLifecycle = "detach" | "terminate";
+
+export type TerminalControllerDisposeOptions = {
+  sessionLifecycle?: TerminalSessionDisposeLifecycle;
+};
+
 export type TerminalController = {
   sessionId: SessionId;
   resize(): Promise<void>;
-  dispose(): void;
+  dispose(options?: TerminalControllerDisposeOptions): Promise<void>;
 };
 
 export type CreateTerminalSessionOptions = {
@@ -41,32 +47,60 @@ export async function createTerminalSession({
 
   const dimensions = fitAddon.proposeDimensions() ?? { cols: 80, rows: 24 };
   const snapshot = await api.createSession(dimensions);
+  let sessionAcceptsPtyOperations = true;
   const dataSubscription = terminal.onData((data) => {
+    if (!sessionAcceptsPtyOperations) {
+      return;
+    }
     void api.write({ sessionId: snapshot.sessionId, data }).catch((error: unknown) => {
       onError?.(error);
     });
   });
   const eventSubscription = api.onSessionEvent(snapshot.sessionId, (event) => {
-    if (event.type === "session.output") {
-      terminal.write(event.payload.data);
+    switch (event.type) {
+      case "session.output":
+        terminal.write(event.payload.data);
+        break;
+      case "session.exited":
+      case "session.error":
+        sessionAcceptsPtyOperations = false;
+        break;
+      case "session.created":
+        break;
     }
   });
+  let disposed = false;
 
   return {
     sessionId: snapshot.sessionId,
     async resize() {
       fitAddon.fit();
       const nextDimensions = fitAddon.proposeDimensions() ?? dimensions;
+      if (!sessionAcceptsPtyOperations) {
+        return;
+      }
       try {
         await api.resize({ sessionId: snapshot.sessionId, ...nextDimensions });
       } catch (error: unknown) {
         onError?.(error);
       }
     },
-    dispose() {
+    async dispose(options = {}) {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
       dataSubscription.dispose();
       eventSubscription();
       terminal.dispose();
+      if (options.sessionLifecycle !== "terminate") {
+        return;
+      }
+      try {
+        await api.kill({ sessionId: snapshot.sessionId });
+      } catch (error: unknown) {
+        onError?.(error);
+      }
     },
   };
 }

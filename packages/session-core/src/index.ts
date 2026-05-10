@@ -145,12 +145,14 @@ export class TerminalSessionManager {
   kill(request: KillSessionRequest): Promise<void> {
     try {
       const record = this.getRunningRecord(request.sessionId);
-      record.snapshot = {
-        ...record.snapshot,
-        state: "exiting",
-        updatedAt: new Date().toISOString(),
-      };
       record.pty.kill();
+      if (record.snapshot.state === "running") {
+        record.snapshot = {
+          ...record.snapshot,
+          state: "exiting",
+          updatedAt: new Date().toISOString(),
+        };
+      }
       return Promise.resolve();
     } catch (error: unknown) {
       return Promise.reject(
