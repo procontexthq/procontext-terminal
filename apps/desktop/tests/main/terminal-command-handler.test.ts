@@ -9,6 +9,7 @@ import {
 } from "@terminal/protocol";
 
 import { handleRendererCommandPayload } from "../../src/main/terminal-command-handler";
+import { MemoryLogSink, createAppLogger } from "../../src/main/logger";
 
 const snapshot: TerminalSessionSnapshot = {
   sessionId: createSessionId("session-1"),
@@ -48,8 +49,15 @@ describe("terminal command handler", () => {
   });
 
   it("returns typed error results for invalid payloads and thrown domain errors", async () => {
+    const logs = new MemoryLogSink();
+    const logger = createAppLogger({
+      isDevelopment: false,
+      sink: logs,
+      level: "debug",
+      now: () => "2026-05-10T00:00:00.000Z",
+    });
     const invalid = await handleRendererCommandPayload(
-      { type: "wat" },
+      { type: "wat", payload: { token: "do-not-log" } },
       {
         sessionManager: {
           createSession: vi.fn(),
@@ -59,6 +67,7 @@ describe("terminal command handler", () => {
           getSession: vi.fn(),
         },
         getConfig: defaultTerminalConfig,
+        logger,
       },
     );
     expect(invalid).toMatchObject({
@@ -82,6 +91,7 @@ describe("terminal command handler", () => {
           }),
         },
         getConfig: defaultTerminalConfig,
+        logger,
       },
     );
 
@@ -89,5 +99,22 @@ describe("terminal command handler", () => {
       ok: false,
       error: terminalError,
     });
+    expect(logs.records).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        component: "ipc",
+        event: "command.invalid",
+        errorType: "invalid_request",
+      }),
+    );
+    const failedLog = logs.records.find((record) => record.event === "command.failed");
+    expect(failedLog).toMatchObject({
+      level: "warn",
+      component: "ipc",
+      commandType: "session.get",
+      errorType: "session_not_found",
+    });
+    expect(typeof failedLog?.requestId).toBe("string");
+    expect(JSON.stringify(logs.records)).not.toContain("do-not-log");
   });
 });

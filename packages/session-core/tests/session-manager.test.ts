@@ -141,9 +141,26 @@ describe("TerminalSessionManager", () => {
     const manager = new TerminalSessionManager(host);
     const snapshot = await manager.createSession(request);
 
-    await manager.shutdown({ timeoutMs: 50 });
+    const result = await manager.shutdown({ timeoutMs: 50 });
 
+    expect(result).toEqual({ terminated: 1, timedOut: 0 });
     expect(host.pty.kill).toHaveBeenCalledOnce();
     expect(() => manager.getSession({ sessionId: snapshot.sessionId })).toThrow();
+  });
+
+  it("reports a timed out shutdown when killing a session fails", async () => {
+    const host = new FakePtyHost();
+    host.pty.kill.mockImplementationOnce(() => {
+      throw new Error("kill failed");
+    });
+    const manager = new TerminalSessionManager(host);
+    const events: string[] = [];
+    manager.onSessionEvent((event) => events.push(event.type));
+    await manager.createSession(request);
+
+    const result = await manager.shutdown({ timeoutMs: 50 });
+
+    expect(result).toEqual({ terminated: 0, timedOut: 1 });
+    expect(events).toContain("session.error");
   });
 });

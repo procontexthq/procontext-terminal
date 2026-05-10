@@ -117,9 +117,12 @@ If a command is not yet available, inspect `package.json` scripts and use the cl
 
 **Logging**
 
-- Use the project logging abstraction once it exists. Do not write directly to stdout from long-running terminal internals unless the output is intentionally part of a child PTY stream.
-- Logs from the desktop app should go to the app logger or stderr-equivalent development logs, not into the terminal session's PTY stream.
-- Keep terminal transcript data distinct from application logs.
+- Use the project logging abstraction for desktop app diagnostics. Do not write directly to stdout from long-running terminal internals unless the output is intentionally part of a child PTY stream.
+- App logs are structured JSONL diagnostics. In development they also go to stderr for immediate feedback; they persist under Electron's `app.getPath("logs")` path as `main.log`.
+- Include enough structured context to trace failures: component, event, request ID when available, session ID when available, and typed error information. Do not rely on prose-only error strings.
+- Keep logging production-grade and proportional. Log meaningful lifecycle boundaries, policy decisions, and failures; avoid noisy success-path, per-byte, per-keystroke, polling-loop, or high-frequency hot-path logs unless there is a temporary, documented debugging reason.
+- Never log PTY output, terminal input, clipboard contents, full environment values, secrets, tokens, cookies, credentials, or transcript data by default.
+- Keep terminal transcript data, app diagnostics, and agent observations distinct.
 
 **Platform-aware paths**
 

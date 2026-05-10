@@ -20,6 +20,11 @@ type SessionRecord = {
   cleanup: Unsubscribe[];
 };
 
+export type TerminalSessionShutdownResult = {
+  terminated: number;
+  timedOut: number;
+};
+
 export class TerminalSessionManager {
   private readonly sessions = new Map<SessionId, SessionRecord>();
   private readonly eventHandlers = new Set<(event: RendererSessionEvent) => void>();
@@ -154,8 +159,8 @@ export class TerminalSessionManager {
     }
   }
 
-  async shutdown(options: { timeoutMs: number }): Promise<void> {
-    const waits: Array<Promise<void>> = [];
+  async shutdown(options: { timeoutMs: number }): Promise<TerminalSessionShutdownResult> {
+    const waits: Array<Promise<"exited" | "timed_out">> = [];
 
     for (const record of this.sessions.values()) {
       if (!record.pty || !isActive(record.snapshot.state)) {
@@ -167,8 +172,9 @@ export class TerminalSessionManager {
       );
     }
 
-    await Promise.allSettled(waits);
+    const results = await Promise.allSettled(waits);
     this.dispose();
+    return summarizeShutdown(results);
   }
 
   dispose(): void {
@@ -206,12 +212,12 @@ export class TerminalSessionManager {
   private async killForShutdown(
     record: SessionRecord & { pty: PtySession },
     timeoutMs: number,
-  ): Promise<void> {
+  ): Promise<"exited" | "timed_out"> {
     let cleanup: Unsubscribe = () => undefined;
-    const exited = new Promise<void>((resolve) => {
+    const exited = new Promise<"exited">((resolve) => {
       cleanup = record.pty.onExit(() => {
         cleanup();
-        resolve();
+        resolve("exited");
       });
     });
 
@@ -228,12 +234,34 @@ export class TerminalSessionManager {
         type: "session.error",
         payload: normalizeTerminalError(error, record.snapshot.sessionId, "session_kill_failed"),
       });
-      return;
+      return "timed_out";
     }
 
-    await Promise.race([exited, delay(timeoutMs)]);
+    const result = await Promise.race([exited, delay(timeoutMs).then(() => "timed_out" as const)]);
     cleanup();
+    return result;
   }
+}
+
+function summarizeShutdown(
+  results: Array<PromiseSettledResult<"exited" | "timed_out">>,
+): TerminalSessionShutdownResult {
+  let terminated = 0;
+  let timedOut = 0;
+
+  for (const result of results) {
+    if (result.status !== "fulfilled") {
+      continue;
+    }
+
+    if (result.value === "timed_out") {
+      timedOut += 1;
+    } else {
+      terminated += 1;
+    }
+  }
+
+  return { terminated, timedOut };
 }
 
 function isActive(state: TerminalSessionSnapshot["state"]): boolean {

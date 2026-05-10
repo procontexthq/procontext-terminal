@@ -12,6 +12,7 @@ import {
   type TerminalError,
 } from "@terminal/protocol";
 import type { TerminalSessionManager } from "@terminal/session-core";
+import type { AppLogger } from "./logger";
 
 export type TerminalCommandServices = {
   sessionManager: Pick<
@@ -19,6 +20,7 @@ export type TerminalCommandServices = {
     "createSession" | "write" | "resize" | "kill" | "getSession"
   >;
   getConfig(): TerminalConfig;
+  logger?: AppLogger;
 };
 
 export async function handleRendererCommandPayload(
@@ -29,19 +31,39 @@ export async function handleRendererCommandPayload(
   try {
     command = parseRendererCommand(payload);
   } catch (error: unknown) {
-    return createRendererCommandFailure(
-      extractRequestId(payload),
-      createTerminalError("invalid_request", "Invalid renderer command payload.", {
+    const requestId = extractRequestId(payload);
+    const terminalError = createTerminalError(
+      "invalid_request",
+      "Invalid renderer command payload.",
+      {
         operation: "ipc",
         cause: errorMessage(error),
-      }),
+      },
     );
+    services.logger?.warn("ipc", "command.invalid", {
+      requestId,
+      errorType: terminalError.type,
+      cause: terminalError.cause,
+    });
+    return createRendererCommandFailure(requestId, terminalError);
   }
 
   try {
+    services.logger?.debug("ipc", "command.received", {
+      requestId: command.requestId,
+      commandType: command.type,
+    });
     return await handleRendererCommand(command, services);
   } catch (error: unknown) {
-    return createRendererCommandFailure(command.requestId, normalizeTerminalError(error));
+    const terminalError = normalizeTerminalError(error);
+    services.logger?.warn("ipc", "command.failed", {
+      requestId: command.requestId,
+      commandType: command.type,
+      errorType: terminalError.type,
+      sessionId: terminalError.sessionId,
+      cause: terminalError.cause,
+    });
+    return createRendererCommandFailure(command.requestId, terminalError);
   }
 }
 
@@ -51,6 +73,11 @@ async function handleRendererCommand(
 ): Promise<RendererCommandResult<unknown>> {
   switch (command.type) {
     case "session.create":
+      services.logger?.info("session", "create_requested", {
+        requestId: command.requestId,
+        cwd: command.payload.cwd,
+        hasExplicitShell: Boolean(command.payload.shell),
+      });
       return createRendererCommandSuccess(
         command.requestId,
         await services.sessionManager.createSession(
@@ -64,6 +91,10 @@ async function handleRendererCommand(
       await services.sessionManager.resize(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
     case "session.kill":
+      services.logger?.info("session", "kill_requested", {
+        requestId: command.requestId,
+        sessionId: command.payload.sessionId,
+      });
       await services.sessionManager.kill(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
     case "session.get":

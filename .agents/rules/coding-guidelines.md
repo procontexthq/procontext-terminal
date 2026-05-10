@@ -270,3 +270,11 @@ When you inline a small helper instead of adding a dependency, note the source, 
 Terminal output belongs to the PTY stream. Application logs belong to the logger. Agent observations are structured data derived from sessions. Do not mix these channels.
 
 This separation matters because writing app logs into a PTY corrupts the user's terminal session, while treating terminal output as app logs can leak secrets or make replay/debug data impossible to reason about.
+
+### 29. Use structured, redacted app logs
+
+App diagnostics must go through the project logger and use stable component and event names. Include request IDs, session IDs, origins, and typed error fields when they help trace a failure.
+
+Do not log raw payloads across sensitive boundaries. In particular, never log PTY output, terminal input, clipboard contents, full environments, cookies, credentials, tokens, passwords, or transcript data by default.
+
+When catching an error at a top-level boundary, log a structured event before returning a typed failure or shutting down. A useful log record should let another engineer identify where the failure happened, which operation failed, and which structured error type was produced without needing to reproduce it immediately.

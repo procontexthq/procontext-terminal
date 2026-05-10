@@ -20,16 +20,38 @@ export function registerTerminalIpc(
     handleRendererCommandPayload(payload, {
       sessionManager,
       getConfig,
+      logger,
     }),
   );
 
   const unsubscribe = sessionManager.onSessionEvent((event) => {
     broadcastSessionEvent(event);
-    if (event.type === "session.error") {
-      logger.error("session", "session.error", {
-        sessionId: event.payload.sessionId,
-        errorType: event.payload.type,
-      });
+    switch (event.type) {
+      case "session.created":
+        logger.info("session", "running", {
+          sessionId: event.payload.sessionId,
+          shell: event.payload.shell,
+          cwd: event.payload.cwd,
+          cols: event.payload.cols,
+          rows: event.payload.rows,
+        });
+        break;
+      case "session.exited":
+        logger.info("session", "exited", {
+          sessionId: event.payload.sessionId,
+          exitCode: event.payload.exitCode,
+          signal: event.payload.signal,
+        });
+        break;
+      case "session.error":
+        logger.error("session", "error", {
+          sessionId: event.payload.sessionId,
+          errorType: event.payload.type,
+          cause: event.payload.cause,
+        });
+        break;
+      case "session.output":
+        break;
     }
   });
 

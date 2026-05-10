@@ -65,10 +65,15 @@ Implementation:
 - Add typed IPC for create, output, write, resize, kill, and exit.
 - Add persisted versioned settings for shell, font, theme, and scrollback.
 - Add bounded app shutdown that terminates active sessions in Phase 1.
+- Add persistent structured app logging with JSONL file output, development
+  stderr mirroring, redaction, rotation, and lifecycle/session/IPC failure
+  events.
 
 Testing:
 
 - Unit tests for protocol types, validation, and domain errors.
+- Unit tests for logger formatting, level filtering, redaction, truncation,
+  file append, rotation, sink fallback, and memory capture.
 - Integration tests for session lifecycle, PTY input/output, resize, and exit events.
 - Renderer tests for terminal view creation, output rendering, input forwarding, and resize reporting.
 - Electron smoke test that creates a terminal, runs a simple command, and observes output.
@@ -78,6 +83,9 @@ Exit criteria:
 - A user can open the app and interact with a real shell.
 - `Ctrl+C`, Enter, paste, resize, and process exit work through the app surface.
 - Terminal output, app logs, and errors remain separate.
+- App logs persist under Electron's logs path and never include PTY bytes,
+  terminal input, clipboard contents, transcript data, or full environment
+  values by default.
 - Renderer IPC failures return typed terminal errors instead of raw thrown values.
 
 ## Phase 2: Multi-session Human Terminal

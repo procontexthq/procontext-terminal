@@ -509,6 +509,12 @@ Observability has three separate outputs:
 
 These outputs must not be mixed.
 
+Phase 1 app diagnostics use structured JSON Lines. The Electron main process
+writes `main.log` under Electron's `app.getPath("logs")` directory, mirrors logs
+to stderr in development, rotates the file at 5 MB, and keeps 3 rotated files.
+Default level is `debug` in development and `info` when packaged, with
+`PROCONTEXT_LOG_LEVEL` available for local overrides.
+
 Recommended app log fields:
 
 - timestamp
@@ -520,7 +526,10 @@ Recommended app log fields:
 - origin: human, agent, system
 - error type and cause when relevant
 
-Terminal output should not be logged as app diagnostics by default.
+Log context is redacted for sensitive fields such as credentials, cookies,
+environment values, keys, passwords, secrets, and tokens. Terminal output,
+terminal input, clipboard contents, transcript data, and full environment values
+must not be logged as app diagnostics by default.
 
 ## Packaging and Release Architecture
 
