@@ -1,0 +1,67 @@
+# ProContext Terminal
+
+A standalone desktop terminal for human and agent workflows.
+
+ProContext Terminal is a TypeScript-first Electron application built around real
+pseudoterminal sessions. The current foundation focuses on being a reliable,
+plain terminal: secure Electron process separation, xterm.js rendering,
+node-pty-backed shells, typed IPC, persisted settings, and end-to-end smoke
+coverage.
+
+## Status
+
+Phase 1 is complete: a single-session terminal with real PTY behavior and a
+secure main/preload/renderer split.
+
+Upcoming phases add multi-session workflows, agent control APIs, TUI observation
+hardening, recording, replay, and packaging.
+
+## Architecture
+
+- Electron main process owns native capabilities and PTY lifecycle.
+- The renderer stays sandboxed and talks through a minimal preload API.
+- xterm.js owns terminal rendering, input capture, scrollback, and resize.
+- node-pty provides real local shells and interactive process behavior.
+- Shared TypeScript packages define protocol, config, PTY, and session
+  boundaries.
+
+The detailed design lives in [`docs/specs`](docs/specs).
+
+## Development
+
+Requirements:
+
+- Node.js
+- pnpm `10.28.2`
+
+```bash
+pnpm install
+pnpm dev
+```
+
+Useful checks:
+
+```bash
+pnpm lint
+pnpm format
+pnpm typecheck
+pnpm test
+pnpm test:e2e
+pnpm build
+```
+
+## Repository Layout
+
+```text
+apps/desktop        Electron desktop app
+packages/protocol   Shared IPC, event, config, and error contracts
+packages/pty-host   node-pty adapter and shell resolution
+packages/session-core
+                    Terminal session lifecycle and routing
+packages/config     Versioned settings parsing and persistence
+docs/specs          Architecture and implementation specs
+```
+
+## License
+
+License information has not been published yet.
