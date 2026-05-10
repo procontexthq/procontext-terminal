@@ -17,6 +17,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Log policy decisions.
 - Log gateway connections and authentication failures.
 - Log internal errors with structured context.
+- Persist app diagnostics to the platform app log directory.
+- Mirror development logs to stderr for immediate feedback.
 - Respect redaction rules.
 - Provide enough context to debug cross-process issues.
 
@@ -41,6 +43,24 @@ The app logger must not:
 - origin: human, agent, system
 - error type and cause when relevant
 
+## Current Phase 1 Behavior
+
+- Logs are JSON Lines, one record per line.
+- The main-process log file is `main.log` under Electron's `app.getPath("logs")`.
+- Development logging writes to both `main.log` and stderr.
+- Packaged logging writes to `main.log` by default.
+- `PROCONTEXT_LOG_LEVEL` can override the default log level.
+- The default log level is `debug` in development and `info` when packaged.
+- Log rotation is size-based: rotate at 5 MB and keep 3 old files.
+
+## Redaction Rules
+
+Log context is sanitized before it is written.
+
+- Redact keys matching password, secret, token, key, auth, credential, cookie, or env.
+- Truncate long strings to prevent one event from producing an oversized log record.
+- Do not log PTY output, terminal input, clipboard contents, full environment values, transcript data, or agent observations by default.
+
 ## Channel Separation
 
 Observability has three separate outputs:
@@ -54,6 +74,9 @@ These outputs must not be mixed. Terminal output should not be logged as app dia
 ## Testing Expectations
 
 - Logs include component and event names.
+- File logs are written as valid JSONL records.
+- Development logs are mirrored to stderr.
+- File log rotation preserves recent records.
 - Terminal output is excluded from app diagnostics unless explicitly enabled for a scoped debugging scenario.
 - Redaction removes sensitive values before persistence or export.
 - Error logs preserve domain error type and cause context.

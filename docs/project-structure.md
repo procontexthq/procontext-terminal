@@ -152,6 +152,7 @@ Responsibilities:
 - Wire session manager, PTY host, settings, policy, recorder, logger, and agent gateway.
 - Own app lifecycle and graceful shutdown.
 - Own native OS integration.
+- Persist structured app diagnostics through the main-process logger.
 
 Must not:
 
@@ -159,6 +160,7 @@ Must not:
 - Contain xterm.js UI logic.
 - Expose broad native APIs to the renderer.
 - Mix terminal output with application logs.
+- Log PTY bytes, terminal input, clipboard contents, transcript data, or full environment values by default.
 
 Good delegation tasks:
 

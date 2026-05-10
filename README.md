@@ -50,6 +50,10 @@ pnpm test:e2e
 pnpm build
 ```
 
+Development logs are mirrored to stderr and app diagnostics persist as JSONL in
+`main.log` under the platform Electron logs directory. Terminal PTY output and
+input are not written to app logs by default.
+
 ## Repository Layout
 
 ```text
