@@ -18,6 +18,7 @@ import {
   markTabBell,
   renameTabFromTitle,
   selectTerminalTab,
+  setTabSessionId,
   terminalTabLabel,
   terminalTabsToWorkspace,
   updateTabStatus,
@@ -83,9 +84,13 @@ export function App(): ReactElement {
   const registerController = useCallback((tabId: string, controller: TerminalController | null) => {
     if (controller) {
       controllers.current.set(tabId, controller);
+      setTabsState((current) =>
+        current ? setTabSessionId(current, tabId, controller.sessionId) : current,
+      );
       return;
     }
     controllers.current.delete(tabId);
+    setTabsState((current) => (current ? setTabSessionId(current, tabId, null) : current));
   }, []);
 
   const updateStatusFromEvent = useCallback((tabId: string, event: RendererSessionEvent) => {
@@ -275,7 +280,11 @@ async function releaseSessionWhenInactive(
 
 function requiresCloseConfirmation(status: TerminalUiStatus): boolean {
   return (
-    status === "starting" || status === "creating" || status === "running" || status === "exiting"
+    status === "starting" ||
+    status === "creating" ||
+    status === "running" ||
+    status === "exiting" ||
+    status === "detached"
   );
 }
 

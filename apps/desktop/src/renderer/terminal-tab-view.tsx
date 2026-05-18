@@ -49,6 +49,7 @@ export function TerminalTabView({
             cwd: tab.cwd,
             shell: tab.shell,
           },
+          attachSessionId: tab.sessionId ?? undefined,
           createTerminal: () =>
             new Terminal({
               fontFamily: config.terminal.fontFamily,
@@ -123,6 +124,7 @@ export function TerminalTabView({
       ref={terminalElement}
       className={`terminal-host${active ? " is-active" : ""}`}
       data-testid={active && tab.status === "running" ? "terminal-ready" : "terminal-host"}
+      data-session-id={tab.sessionId ?? ""}
       aria-hidden={!active}
     />
   );

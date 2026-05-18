@@ -10,6 +10,7 @@ import { chromium, type Browser, type Page } from "playwright";
 import { afterEach, describe, it } from "vitest";
 
 import { defaultTerminalConfig } from "@terminal/config";
+import type { SessionId, TerminalScreenSnapshot } from "@terminal/protocol";
 
 const require = createRequire(import.meta.url);
 const electronPath = require("electron") as string;
@@ -36,6 +37,7 @@ describe("desktop terminal smoke", () => {
     const page = await firstPage(browser);
     await page.waitForSelector("[data-testid='terminal-ready']");
     await expectTabCount(page, 1);
+    const sessionId = await activeSessionId(page);
 
     const terminal = page.locator(".xterm").first();
     await terminal.click();
@@ -56,6 +58,14 @@ describe("desktop terminal smoke", () => {
     await page.keyboard.type(platformLongRunningCommand());
     await page.keyboard.press("Enter");
     await page.keyboard.press("Control+C");
+    await page.evaluate(
+      (activeSessionId) =>
+        window.terminalApi.waitForPrompt({
+          sessionId: activeSessionId,
+          timeoutMs: 10000,
+        }),
+      sessionId,
+    );
     await page.keyboard.type("exit");
     await page.keyboard.press("Enter");
     await waitForStatus(page, "exited");
@@ -154,6 +164,184 @@ describe("desktop terminal smoke", () => {
         document.querySelector("[data-testid='terminal-tab-0']")?.textContent?.includes(expected),
       expectedCwdLabel,
     );
+  });
+
+  it("supports agent runtime observation, waits, detach/attach, and recording export", async () => {
+    const userDataDir = await createTempUserDataDir();
+    await writeFile(
+      join(userDataDir, "settings.json"),
+      `${JSON.stringify(
+        {
+          ...defaultTerminalConfig(),
+          recording: {
+            state: "disabled",
+            redactedPatterns: ["SECRET_TOKEN"],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    const sessionId = await activeSessionId(page);
+
+    const initialSnapshot = await captureScreen(page, sessionId);
+    if (initialSnapshot.sessionId !== sessionId || initialSnapshot.viewport.length === 0) {
+      throw new Error("Expected captureScreen to return the active terminal viewport.");
+    }
+
+    await page.evaluate(
+      ({ sessionId: activeSessionId, command }) =>
+        window.terminalApi.write({
+          sessionId: activeSessionId,
+          data: `${command}\r`,
+          origin: "agent",
+        }),
+      { sessionId, command: platformPrintCommand("PHASE2_WAIT_TEXT") },
+    );
+    await page.evaluate(
+      (activeSessionId) =>
+        window.terminalApi.waitForText({
+          sessionId: activeSessionId,
+          text: "PHASE2_WAIT_TEXT",
+          timeoutMs: 5000,
+        }),
+      sessionId,
+    );
+    await page.evaluate(
+      (activeSessionId) =>
+        window.terminalApi.waitForQuiet({
+          sessionId: activeSessionId,
+          quietMs: 100,
+          timeoutMs: 5000,
+        }),
+      sessionId,
+    );
+
+    await page.evaluate(
+      (activeSessionId) => window.terminalApi.detachSession({ sessionId: activeSessionId }),
+      sessionId,
+    );
+    await waitForStatus(page, "detached");
+    await page.evaluate(
+      ({ sessionId: activeSessionId, command }) =>
+        window.terminalApi.write({
+          sessionId: activeSessionId,
+          data: `${command}\r`,
+          origin: "agent",
+        }),
+      { sessionId, command: platformPrintCommand("PHASE2_DETACHED_OUTPUT") },
+    );
+    await page.evaluate(
+      (activeSessionId) =>
+        window.terminalApi.waitForText({
+          sessionId: activeSessionId,
+          text: "PHASE2_DETACHED_OUTPUT",
+          timeoutMs: 5000,
+        }),
+      sessionId,
+    );
+    const recentOutput = await page.evaluate(
+      (activeSessionId) =>
+        window.terminalApi.readRecentOutput({
+          sessionId: activeSessionId,
+          maxBytes: 2000,
+        }),
+      sessionId,
+    );
+    if (!recentOutput.data.includes("PHASE2_DETACHED_OUTPUT")) {
+      throw new Error("Expected detached session output to stay available in recent output.");
+    }
+    await page.evaluate(
+      (activeSessionId) => window.terminalApi.attachSession({ sessionId: activeSessionId }),
+      sessionId,
+    );
+    await waitForStatus(page, "running");
+
+    if (process.platform !== "win32") {
+      await page.evaluate(
+        (activeSessionId) =>
+          window.terminalApi.write({
+            sessionId: activeSessionId,
+            data: "printf '\\033[?1049hALTSCREEN\\n'; sleep 1; printf '\\033[?1049l'\r",
+            origin: "agent",
+          }),
+        sessionId,
+      );
+      const alternateSnapshot = await waitForAlternateScreenSnapshot(page, sessionId);
+      if (!alternateSnapshot.viewport.some((row) => row.text.includes("ALTSCREEN"))) {
+        throw new Error("Expected alternate-screen snapshot to include fixture output.");
+      }
+    }
+
+    await page.evaluate(
+      (activeSessionId) => window.terminalApi.startRecording({ sessionId: activeSessionId }),
+      sessionId,
+    );
+    await page.evaluate(
+      ({ sessionId: activeSessionId, command }) =>
+        window.terminalApi.write({
+          sessionId: activeSessionId,
+          data: `${command}\r`,
+          origin: "agent",
+        }),
+      { sessionId, command: platformPrintCommand("BEFORE_SAVE_SECRET_TOKEN") },
+    );
+    await page.evaluate(
+      (activeSessionId) =>
+        window.terminalApi.waitForText({
+          sessionId: activeSessionId,
+          text: "BEFORE_SAVE_SECRET_TOKEN",
+          timeoutMs: 5000,
+        }),
+      sessionId,
+    );
+    await page.evaluate(() =>
+      window.terminalApi.saveWorkspace({
+        tabs: [{ cwd: null, shell: null }],
+        activeTabIndex: 0,
+      }),
+    );
+    await page.evaluate(
+      ({ sessionId: activeSessionId, command }) =>
+        window.terminalApi.write({
+          sessionId: activeSessionId,
+          data: `${command}\r`,
+          origin: "agent",
+        }),
+      { sessionId, command: platformPrintCommand("AFTER_SAVE_SECRET_TOKEN") },
+    );
+    await page.evaluate(
+      (activeSessionId) =>
+        window.terminalApi.waitForText({
+          sessionId: activeSessionId,
+          text: "AFTER_SAVE_SECRET_TOKEN",
+          timeoutMs: 5000,
+        }),
+      sessionId,
+    );
+    await page.evaluate(
+      (activeSessionId) => window.terminalApi.stopRecording({ sessionId: activeSessionId }),
+      sessionId,
+    );
+    const recording = await page.evaluate(
+      (activeSessionId) => window.terminalApi.exportRecording({ sessionId: activeSessionId }),
+      sessionId,
+    );
+    const recordingText = JSON.stringify(recording.events);
+    if (
+      !recordingText.includes("BEFORE_SAVE_[redacted]") ||
+      !recordingText.includes("AFTER_SAVE_[redacted]") ||
+      recordingText.includes("SECRET_TOKEN")
+    ) {
+      throw new Error(
+        "Expected recording export to survive workspace saves and redact configured transcript patterns.",
+      );
+    }
   });
 });
 
@@ -317,6 +505,50 @@ async function waitForActiveTab(page: Page, index: number): Promise<void> {
     index,
     { timeout: 10000 },
   );
+}
+
+async function activeSessionId(page: Page): Promise<SessionId> {
+  await page.waitForFunction(
+    () =>
+      Boolean(
+        document.querySelector("[data-testid='terminal-ready']")?.getAttribute("data-session-id"),
+      ),
+    undefined,
+    { timeout: 10000 },
+  );
+  const sessionId = await page
+    .locator("[data-testid='terminal-ready']")
+    .getAttribute("data-session-id");
+  if (!sessionId) {
+    throw new Error("Active terminal did not expose a session id.");
+  }
+  return sessionId as SessionId;
+}
+
+async function captureScreen(page: Page, sessionId: SessionId): Promise<TerminalScreenSnapshot> {
+  return page.evaluate(
+    (activeSessionId) =>
+      window.terminalApi.captureScreen({
+        sessionId: activeSessionId,
+        timeoutMs: 5000,
+      }),
+    sessionId,
+  );
+}
+
+async function waitForAlternateScreenSnapshot(
+  page: Page,
+  sessionId: SessionId,
+): Promise<TerminalScreenSnapshot> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const snapshot = await captureScreen(page, sessionId);
+    if (snapshot.alternateScreen) {
+      return snapshot;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Timed out waiting for alternate-screen snapshot.");
 }
 
 async function typeCommand(page: Page, command: string): Promise<void> {

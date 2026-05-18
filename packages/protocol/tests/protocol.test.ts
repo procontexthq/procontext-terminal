@@ -9,12 +9,19 @@ import {
   createTerminalError,
   isRendererSessionEvent,
   parseCreateSessionRequest,
+  parseDetachSessionRequest,
   parseRendererCommand,
   parseRendererCommandResult,
   parseKillSessionRequest,
+  parseReadRecentOutputRequest,
   parseReleaseSessionRequest,
   parseResizeSessionRequest,
   parseSaveWorkspaceRequest,
+  parseSendKeyRequest,
+  parseTerminalRecordingExport,
+  parseTerminalScreenSnapshot,
+  parseWaitForQuietRequest,
+  parseWaitForTextRequest,
   parseTerminalConfig,
   parseWriteInputRequest,
   unwrapRendererCommandResult,
@@ -58,11 +65,23 @@ describe("protocol schemas", () => {
           scrollback: 5000,
           theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
         },
-        shell: { defaultProfile: null },
+        shell: {
+          defaultProfile: null,
+          profiles: [
+            {
+              id: "zsh",
+              name: "Zsh",
+              shell: "/bin/zsh",
+              cwd: null,
+              env: { TERM: "xterm-256color" },
+            },
+          ],
+        },
         workspace: {
           tabs: [{ cwd: "/tmp", shell: null }],
           activeTabIndex: 0,
         },
+        recording: { state: "disabled", redactedPatterns: [] },
       }),
     ).toMatchObject({
       schemaVersion: 2,
@@ -81,8 +100,9 @@ describe("protocol schemas", () => {
           scrollback: 5000,
           theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
         },
-        shell: { defaultProfile: null },
+        shell: { defaultProfile: null, profiles: [] },
         workspace: { tabs: [], activeTabIndex: 0 },
+        recording: { state: "disabled", redactedPatterns: [] },
       }),
     ).toThrow();
     expect(() =>
@@ -94,10 +114,70 @@ describe("protocol schemas", () => {
           scrollback: 5000,
           theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
         },
-        shell: { defaultProfile: null },
+        shell: { defaultProfile: null, profiles: [] },
         workspace: { tabs: [{ cwd: null, shell: null }], activeTabIndex: 1 },
+        recording: { state: "disabled", redactedPatterns: [] },
       }),
     ).toThrow();
+  });
+
+  it("validates observation, wait, input, and recording contracts", () => {
+    const requestId = createRequestId("request-2");
+    const sessionId = createSessionId("session-2");
+    const snapshot = {
+      sessionId,
+      cols: 80,
+      rows: 24,
+      cursor: { x: 3, y: 2, visible: true },
+      alternateScreen: false,
+      title: "Terminal",
+      viewport: [{ row: 0, text: "hello", wrapped: false }],
+      capturedAt: "2026-05-11T00:00:00.000Z",
+    };
+
+    expect(parseTerminalScreenSnapshot(snapshot)).toEqual(snapshot);
+    expect(parseReadRecentOutputRequest({ sessionId, maxBytes: 1024 })).toEqual({
+      sessionId,
+      maxBytes: 1024,
+    });
+    expect(parseWaitForTextRequest({ sessionId, text: "ready", timeoutMs: 1000 })).toEqual({
+      sessionId,
+      text: "ready",
+      timeoutMs: 1000,
+    });
+    expect(parseWaitForQuietRequest({ sessionId, quietMs: 200, timeoutMs: 1000 })).toEqual({
+      sessionId,
+      quietMs: 200,
+      timeoutMs: 1000,
+    });
+    expect(parseSendKeyRequest({ sessionId, key: "Ctrl+C", origin: "agent" })).toEqual({
+      sessionId,
+      key: "Ctrl+C",
+      origin: "agent",
+    });
+    expect(parseDetachSessionRequest({ sessionId })).toEqual({ sessionId });
+    expect(
+      parseTerminalRecordingExport({
+        schemaVersion: 1,
+        sessionId,
+        exportedAt: "2026-05-11T00:00:00.000Z",
+        events: [{ type: "pty.output", sessionId, at: "2026-05-11T00:00:00.000Z", data: "x" }],
+      }),
+    ).toMatchObject({ schemaVersion: 1, sessionId });
+    expect(
+      parseRendererCommand({
+        type: "session.snapshot.response",
+        requestId,
+        payload: { requestId, snapshot },
+      }),
+    ).toMatchObject({ type: "session.snapshot.response" });
+    expect(
+      isRendererSessionEvent({
+        type: "session.snapshot.request",
+        requestId,
+        payload: { sessionId },
+      }),
+    ).toBe(true);
   });
 
   it("creates branded ids from explicit values", () => {

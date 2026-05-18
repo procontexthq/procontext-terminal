@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { TerminalWorkspaceState } from "@terminal/protocol";
+import { createSessionId, type TerminalWorkspaceState } from "@terminal/protocol";
 
 import {
   addTerminalTab,
@@ -9,6 +9,7 @@ import {
   markTabBell,
   renameTabFromTitle,
   selectTerminalTab,
+  setTabSessionId,
   terminalTabsToWorkspace,
 } from "../../src/renderer/terminal-tabs";
 
@@ -70,5 +71,20 @@ describe("terminal tabs model", () => {
 
     state = selectTerminalTab(state, inactiveTabId);
     expect(state.tabs[1]?.hasUnreadBell).toBe(false);
+  });
+
+  it("tracks runtime session ids without persisting them to workspace state", () => {
+    const state = createInitialTerminalTabs({
+      tabs: [{ cwd: "/work/a", shell: null }],
+      activeTabIndex: 0,
+    });
+    const tabId = state.tabs[0]?.id ?? "";
+    const next = setTabSessionId(state, tabId, createSessionId("session-1"));
+
+    expect(next.tabs[0]?.sessionId).toBe("session-1");
+    expect(terminalTabsToWorkspace(next)).toEqual({
+      tabs: [{ cwd: "/work/a", shell: null }],
+      activeTabIndex: 0,
+    });
   });
 });

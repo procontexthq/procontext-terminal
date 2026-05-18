@@ -33,6 +33,8 @@ function services(
     createSession?: TerminalCommandServices["sessionManager"]["createSession"];
     releaseSession?: TerminalCommandServices["sessionManager"]["releaseSession"];
     getSession?: TerminalCommandServices["sessionManager"]["getSession"];
+    readRecentOutput?: TerminalCommandServices["sessionManager"]["readRecentOutput"];
+    requestScreenSnapshot?: TerminalCommandServices["requestScreenSnapshot"];
     getConfig?: () => TerminalConfig;
     saveConfig?: (config: TerminalConfig) => Promise<TerminalConfig>;
   } = {},
@@ -45,13 +47,69 @@ function services(
           Promise.resolve(snapshot),
         ),
       write: vi.fn<TerminalCommandServices["sessionManager"]["write"]>(() => Promise.resolve()),
+      sendKey: vi.fn<TerminalCommandServices["sessionManager"]["sendKey"]>(() => Promise.resolve()),
+      paste: vi.fn<TerminalCommandServices["sessionManager"]["paste"]>(() => Promise.resolve()),
+      sendMouse: vi.fn<TerminalCommandServices["sessionManager"]["sendMouse"]>(() =>
+        Promise.resolve(),
+      ),
+      interrupt: vi.fn<TerminalCommandServices["sessionManager"]["interrupt"]>(() =>
+        Promise.resolve(),
+      ),
       resize: vi.fn<TerminalCommandServices["sessionManager"]["resize"]>(() => Promise.resolve()),
       kill: vi.fn<TerminalCommandServices["sessionManager"]["kill"]>(() => Promise.resolve()),
+      detachSession: vi.fn<TerminalCommandServices["sessionManager"]["detachSession"]>(() => ({
+        ...snapshot,
+        state: "detached",
+      })),
+      attachSession: vi.fn<TerminalCommandServices["sessionManager"]["attachSession"]>(() => ({
+        ...snapshot,
+        state: "running",
+      })),
       getSession: overrides.getSession ?? vi.fn(() => snapshot),
       releaseSession:
         overrides.releaseSession ??
         vi.fn<TerminalCommandServices["sessionManager"]["releaseSession"]>(() => Promise.resolve()),
+      readRecentOutput:
+        overrides.readRecentOutput ??
+        vi.fn<TerminalCommandServices["sessionManager"]["readRecentOutput"]>(() => ({
+          sessionId: snapshot.sessionId,
+          data: "",
+          maxBytes: 100_000,
+          capturedAt: "2026-05-10T00:00:00.000Z",
+        })),
+      getLastActivityAt: vi.fn<TerminalCommandServices["sessionManager"]["getLastActivityAt"]>(() =>
+        Date.now(),
+      ),
+      startRecording: vi.fn<TerminalCommandServices["sessionManager"]["startRecording"]>(() =>
+        Promise.resolve(),
+      ),
+      stopRecording: vi.fn<TerminalCommandServices["sessionManager"]["stopRecording"]>(() =>
+        Promise.resolve(),
+      ),
+      exportRecording: vi.fn<TerminalCommandServices["sessionManager"]["exportRecording"]>(() =>
+        Promise.resolve({
+          schemaVersion: 1,
+          sessionId: snapshot.sessionId,
+          exportedAt: "2026-05-10T00:00:00.000Z",
+          events: [],
+        }),
+      ),
     },
+    requestScreenSnapshot:
+      overrides.requestScreenSnapshot ??
+      vi.fn<TerminalCommandServices["requestScreenSnapshot"]>(() =>
+        Promise.resolve({
+          sessionId: snapshot.sessionId,
+          cols: 80,
+          rows: 24,
+          cursor: { x: 0, y: 0, visible: true },
+          alternateScreen: false,
+          title: null,
+          viewport: [],
+          capturedAt: "2026-05-10T00:00:00.000Z",
+        }),
+      ),
+    resolveSnapshotResponse: vi.fn(),
     getConfig: overrides.getConfig ?? defaultTerminalConfig,
     saveConfig:
       overrides.saveConfig ??
@@ -70,13 +128,94 @@ describe("terminal command handler", () => {
         createSession,
         getConfig: () => ({
           ...defaultTerminalConfig(),
-          shell: { defaultProfile: "/bin/zsh" },
+          shell: { ...defaultTerminalConfig().shell, defaultProfile: "/bin/zsh" },
         }),
       }),
     );
 
     expect(result.ok).toBe(true);
     expect(createSession).toHaveBeenCalledWith({ cols: 80, rows: 24, shell: "/bin/zsh" });
+  });
+
+  it("applies named shell profile launch metadata before creating sessions", async () => {
+    const createSession = vi.fn(() => Promise.resolve(snapshot));
+    await handleRendererCommandPayload(
+      createRendererCommand("session.create", { cols: 80, rows: 24 }),
+      services({
+        createSession,
+        getConfig: () => ({
+          ...defaultTerminalConfig(),
+          shell: {
+            defaultProfile: "agent-profile",
+            profiles: [
+              {
+                id: "agent-profile",
+                name: "Agent profile",
+                shell: "/bin/zsh",
+                cwd: "/workspace",
+                env: { TERM_PROGRAM: "procontext" },
+              },
+            ],
+          },
+        }),
+      }),
+    );
+
+    expect(createSession).toHaveBeenCalledWith({
+      cols: 80,
+      rows: 24,
+      shell: "/bin/zsh",
+      cwd: "/workspace",
+      env: { TERM_PROGRAM: "procontext" },
+    });
+  });
+
+  it("handles observation and recording commands", async () => {
+    const sessionId = createSessionId("session-1");
+    const requestScreenSnapshot = vi.fn<TerminalCommandServices["requestScreenSnapshot"]>(() =>
+      Promise.resolve({
+        sessionId,
+        cols: 80,
+        rows: 24,
+        cursor: { x: 0, y: 0, visible: true },
+        alternateScreen: false,
+        title: null,
+        viewport: [{ row: 0, text: "hello agent", wrapped: false }],
+        capturedAt: "2026-05-10T00:00:00.000Z",
+      }),
+    );
+    const base = services({ requestScreenSnapshot });
+    const startRecording = vi.mocked(base.sessionManager.startRecording);
+    const exportRecording = vi.mocked(base.sessionManager.exportRecording);
+
+    const snapshotResult = await handleRendererCommandPayload(
+      createRendererCommand("session.captureScreen", { sessionId, timeoutMs: 1000 }),
+      base,
+    );
+    const waitResult = await handleRendererCommandPayload(
+      createRendererCommand("session.waitForText", {
+        sessionId,
+        text: "hello agent",
+        timeoutMs: 1000,
+      }),
+      base,
+    );
+    await handleRendererCommandPayload(
+      createRendererCommand("recording.start", { sessionId }),
+      base,
+    );
+    await handleRendererCommandPayload(
+      createRendererCommand("recording.export", { sessionId }),
+      base,
+    );
+
+    expect(snapshotResult).toMatchObject({
+      ok: true,
+      value: { viewport: [{ text: "hello agent" }] },
+    });
+    expect(waitResult).toMatchObject({ ok: true, value: { sessionId } });
+    expect(startRecording).toHaveBeenCalledWith({ sessionId });
+    expect(exportRecording).toHaveBeenCalledWith({ sessionId });
   });
 
   it("handles session release and workspace persistence commands", async () => {

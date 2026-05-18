@@ -1,9 +1,10 @@
-import type { TerminalWorkspaceState, TerminalWorkspaceTab } from "@terminal/protocol";
+import type { SessionId, TerminalWorkspaceState, TerminalWorkspaceTab } from "@terminal/protocol";
 
 import type { TerminalUiStatus } from "./terminal-status";
 
 export type TerminalTab = TerminalWorkspaceTab & {
   id: string;
+  sessionId: SessionId | null;
   title: string | null;
   status: TerminalUiStatus;
   hasUnreadBell: boolean;
@@ -128,6 +129,17 @@ export function updateTabStatus(
   };
 }
 
+export function setTabSessionId(
+  state: TerminalTabsState,
+  tabId: string,
+  sessionId: SessionId | null,
+): TerminalTabsState {
+  return {
+    ...state,
+    tabs: state.tabs.map((tab) => (tab.id === tabId ? { ...tab, sessionId } : tab)),
+  };
+}
+
 export function terminalTabLabel(tab: TerminalTab, index: number): string {
   if (tab.title) {
     return tab.title;
@@ -151,6 +163,7 @@ export function defaultTab(): TerminalWorkspaceTab {
 function createTerminalTab(tab: TerminalWorkspaceTab): TerminalTab {
   return {
     id: `tab-${nextTabIndex++}`,
+    sessionId: null,
     cwd: tab.cwd,
     shell: tab.shell,
     title: null,

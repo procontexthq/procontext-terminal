@@ -8,6 +8,8 @@ import type {
   Unsubscribe,
 } from "@terminal/protocol";
 
+import { captureTerminalScreen, isObservableTerminal } from "./screen-observer";
+
 export type TerminalLike = {
   open(element: HTMLElement): void;
   write(data: string): void;
@@ -42,6 +44,7 @@ export type CreateTerminalSessionOptions = {
   api: RendererTerminalApi;
   element: HTMLElement;
   session?: TerminalWorkspaceTab;
+  attachSessionId?: SessionId;
   createTerminal: () => TerminalLike;
   createFitAddon: () => FitAddonLike;
   onTitleChange?: (title: string) => void;
@@ -54,6 +57,7 @@ export async function createTerminalSession({
   api,
   element,
   session,
+  attachSessionId,
   createTerminal,
   createFitAddon,
   onTitleChange,
@@ -67,6 +71,7 @@ export async function createTerminalSession({
   let titleSubscription: DataSubscription | null = null;
   let bellSubscription: DataSubscription | null = null;
   let eventSubscription: Unsubscribe | null = null;
+  let currentTitle: string | null = null;
 
   try {
     terminal.loadAddon?.(fitAddon);
@@ -74,14 +79,18 @@ export async function createTerminalSession({
     fitAddon.fit();
 
     const dimensions = fitAddon.proposeDimensions() ?? { cols: 80, rows: 24 };
-    const snapshot = await api.createSession({
-      ...dimensions,
-      ...(session?.cwd ? { cwd: session.cwd } : {}),
-      ...(session?.shell ? { shell: session.shell } : {}),
-    });
-    let sessionAcceptsPtyOperations = true;
+    const snapshot = attachSessionId
+      ? await api.attachSession({ sessionId: attachSessionId })
+      : await api.createSession({
+          ...dimensions,
+          ...(session?.cwd ? { cwd: session.cwd } : {}),
+          ...(session?.shell ? { shell: session.shell } : {}),
+        });
+    let rendererInputEnabled = snapshot.state !== "detached";
+    let sessionCanAcceptPtyOperations =
+      snapshot.state === "running" || snapshot.state === "detached";
     dataSubscription = terminal.onData((data) => {
-      if (!sessionAcceptsPtyOperations) {
+      if (!rendererInputEnabled) {
         return;
       }
       void api.write({ sessionId: snapshot.sessionId, data }).catch((error: unknown) => {
@@ -94,16 +103,53 @@ export async function createTerminalSession({
         case "session.output":
           terminal.write(event.payload.data);
           break;
+        case "session.attached":
+          rendererInputEnabled = true;
+          sessionCanAcceptPtyOperations = true;
+          break;
+        case "session.detached":
+          rendererInputEnabled = false;
+          sessionCanAcceptPtyOperations = true;
+          break;
         case "session.exited":
         case "session.error":
-          sessionAcceptsPtyOperations = false;
+          rendererInputEnabled = false;
+          sessionCanAcceptPtyOperations = false;
+          break;
+        case "session.snapshot.request":
+          if (!isObservableTerminal(terminal)) {
+            onError?.(new Error("Terminal screen snapshot is not supported by this terminal."));
+            break;
+          }
+          void api
+            .respondToSnapshot({
+              requestId: event.requestId,
+              snapshot: captureTerminalScreen({
+                terminal,
+                sessionId: snapshot.sessionId,
+                title: currentTitle,
+              }),
+            })
+            .catch((error: unknown) => {
+              onError?.(error);
+            });
           break;
         case "session.created":
           break;
       }
     });
+    if (attachSessionId) {
+      const recentOutput = await api.readRecentOutput({
+        sessionId: snapshot.sessionId,
+        maxBytes: 100_000,
+      });
+      if (recentOutput.data) {
+        terminal.write(recentOutput.data);
+      }
+    }
     titleSubscription =
       terminal.onTitleChange?.((title) => {
+        currentTitle = title;
         onTitleChange?.(title);
       }) ?? null;
     bellSubscription =
@@ -123,7 +169,7 @@ export async function createTerminalSession({
         }
         fitAddon.fit();
         const nextDimensions = fitAddon.proposeDimensions() ?? dimensions;
-        if (!sessionAcceptsPtyOperations) {
+        if (!rendererInputEnabled) {
           return;
         }
         try {
@@ -136,10 +182,24 @@ export async function createTerminalSession({
         if (disposed) {
           return true;
         }
-        if (options.sessionLifecycle === "terminate" && sessionAcceptsPtyOperations) {
+        if (options.sessionLifecycle === "terminate" && sessionCanAcceptPtyOperations) {
           try {
             await api.kill({ sessionId: snapshot.sessionId });
-            sessionAcceptsPtyOperations = false;
+            rendererInputEnabled = false;
+            sessionCanAcceptPtyOperations = false;
+          } catch (error: unknown) {
+            onError?.(error);
+            return false;
+          }
+        }
+        if (
+          options.sessionLifecycle !== "terminate" &&
+          rendererInputEnabled &&
+          sessionCanAcceptPtyOperations
+        ) {
+          try {
+            await api.detachSession({ sessionId: snapshot.sessionId });
+            rendererInputEnabled = false;
           } catch (error: unknown) {
             onError?.(error);
             return false;

@@ -1,24 +1,39 @@
 import {
   createSessionId,
   createTerminalError,
+  type AttachSessionRequest,
   type CreateSessionRequest,
+  type DetachSessionRequest,
   type GetSessionRequest,
+  type InputOrigin,
   type KillSessionRequest,
+  type MouseInputRequest,
+  type PasteInputRequest,
+  type ReadRecentOutputRequest,
+  type RecentOutputSnapshot,
   type RendererSessionEvent,
   type ReleaseSessionRequest,
+  type SendKeyRequest,
   type ResizeSessionRequest,
   type SessionId,
   type TerminalError,
+  type TerminalRecordingExport,
+  type TerminalRecordingEvent,
   type TerminalSessionSnapshot,
   type Unsubscribe,
   type WriteInputRequest,
 } from "@terminal/protocol";
 import { resolveShell, type PtyHost, type PtySession } from "@terminal/pty-host";
+import { encodeTerminalKey, normalizeTerminalInput } from "./input-router.js";
+
+export { encodeTerminalKey, normalizeTerminalInput } from "./input-router.js";
 
 type SessionRecord = {
   snapshot: TerminalSessionSnapshot;
   pty: PtySession | null;
   cleanup: Unsubscribe[];
+  recentOutput: string;
+  lastOutputAt: number;
 };
 
 export type TerminalSessionShutdownResult = {
@@ -28,6 +43,14 @@ export type TerminalSessionShutdownResult = {
 
 export type TerminalSessionManagerOptions = {
   onEventHandlerError?: (error: unknown, event: RendererSessionEvent) => void;
+  recorder?: TerminalRecorder;
+};
+
+export type TerminalRecorder = {
+  record(event: TerminalRecordingEvent): void | Promise<void>;
+  start(session: TerminalSessionSnapshot): void | Promise<void>;
+  stop(sessionId: SessionId): void | Promise<void>;
+  export(sessionId: SessionId): Promise<TerminalRecordingExport>;
 };
 
 export class TerminalSessionManager {
@@ -67,7 +90,7 @@ export class TerminalSessionManager {
         createdAt: now,
         updatedAt: now,
       };
-      record = { snapshot, pty: null, cleanup: [] };
+      record = { snapshot, pty: null, cleanup: [], recentOutput: "", lastOutputAt: Date.now() };
       const activeRecord = record;
       this.sessions.set(sessionId, record);
 
@@ -80,17 +103,33 @@ export class TerminalSessionManager {
       activeRecord.pty = pty;
       activeRecord.cleanup.push(
         pty.onData((data) => {
+          activeRecord.recentOutput = appendRecentOutput(activeRecord.recentOutput, data);
+          activeRecord.lastOutputAt = Date.now();
+          void this.record({
+            type: "pty.output",
+            sessionId,
+            at: new Date().toISOString(),
+            data,
+          });
           this.emit({ type: "session.output", payload: { sessionId, data } });
         }),
         pty.onExit((event) => {
+          const exitedAt = new Date().toISOString();
           activeRecord.snapshot = {
             ...activeRecord.snapshot,
             state: "exited",
-            updatedAt: new Date().toISOString(),
-            exitedAt: new Date().toISOString(),
+            updatedAt: exitedAt,
+            exitedAt,
             exitCode: event.exitCode,
             signal: event.signal,
           };
+          void this.record({
+            type: "session.exited",
+            sessionId,
+            at: exitedAt,
+            exitCode: event.exitCode,
+            signal: event.signal,
+          });
           this.emit({ type: "session.exited", payload: { sessionId, ...event } });
         }),
       );
@@ -99,6 +138,12 @@ export class TerminalSessionManager {
         state: "running",
         updatedAt: new Date().toISOString(),
       };
+      void this.record({
+        type: "session.created",
+        sessionId,
+        at: activeRecord.snapshot.updatedAt,
+        metadata: activeRecord.snapshot,
+      });
       this.emit({ type: "session.created", payload: activeRecord.snapshot });
       return activeRecord.snapshot;
     } catch (error: unknown) {
@@ -122,8 +167,8 @@ export class TerminalSessionManager {
 
   write(request: WriteInputRequest): Promise<void> {
     try {
-      const record = this.getRunningRecord(request.sessionId);
-      record.pty.write(request.data);
+      const input = normalizeTerminalInput(request.data, request.origin);
+      this.writeToActivePty(request.sessionId, input.data, input.origin);
       return Promise.resolve();
     } catch (error: unknown) {
       return Promise.reject(
@@ -132,9 +177,41 @@ export class TerminalSessionManager {
     }
   }
 
+  sendKey(request: SendKeyRequest): Promise<void> {
+    return this.write({
+      sessionId: request.sessionId,
+      data: encodeTerminalKey(request.key),
+      origin: request.origin,
+    });
+  }
+
+  paste(request: PasteInputRequest): Promise<void> {
+    return this.write({
+      sessionId: request.sessionId,
+      data: request.text,
+      origin: request.origin,
+    });
+  }
+
+  sendMouse(request: MouseInputRequest): Promise<void> {
+    return this.write({
+      sessionId: request.sessionId,
+      data: request.data,
+      origin: request.origin,
+    });
+  }
+
+  interrupt(request: KillSessionRequest): Promise<void> {
+    return this.write({
+      sessionId: request.sessionId,
+      data: encodeTerminalKey("Ctrl+C"),
+      origin: "agent",
+    });
+  }
+
   resize(request: ResizeSessionRequest): Promise<void> {
     try {
-      const record = this.getRunningRecord(request.sessionId);
+      const record = this.getActivePtyRecord(request.sessionId);
       record.pty.resize(request.cols, request.rows);
       record.snapshot = {
         ...record.snapshot,
@@ -142,6 +219,13 @@ export class TerminalSessionManager {
         rows: request.rows,
         updatedAt: new Date().toISOString(),
       };
+      void this.record({
+        type: "terminal.resize",
+        sessionId: request.sessionId,
+        at: record.snapshot.updatedAt,
+        cols: request.cols,
+        rows: request.rows,
+      });
       return Promise.resolve();
     } catch (error: unknown) {
       return Promise.reject(
@@ -152,9 +236,9 @@ export class TerminalSessionManager {
 
   kill(request: KillSessionRequest): Promise<void> {
     try {
-      const record = this.getRunningRecord(request.sessionId);
+      const record = this.getActivePtyRecord(request.sessionId);
       record.pty.kill();
-      if (record.snapshot.state === "running") {
+      if (record.snapshot.state === "running" || record.snapshot.state === "detached") {
         record.snapshot = {
           ...record.snapshot,
           state: "exiting",
@@ -166,6 +250,98 @@ export class TerminalSessionManager {
       return Promise.reject(
         normalizeTerminalError(error, request.sessionId, "session_kill_failed"),
       );
+    }
+  }
+
+  detachSession(request: DetachSessionRequest): TerminalSessionSnapshot {
+    try {
+      const record = this.getRecord(request.sessionId);
+      if (!record.pty || record.snapshot.state !== "running") {
+        throw createTerminalError(
+          "session_detach_failed",
+          `Session ${request.sessionId} cannot be detached while ${record.snapshot.state}.`,
+          { sessionId: request.sessionId },
+        );
+      }
+      record.snapshot = {
+        ...record.snapshot,
+        state: "detached",
+        updatedAt: new Date().toISOString(),
+      };
+      this.emit({ type: "session.detached", payload: record.snapshot });
+      return { ...record.snapshot };
+    } catch (error: unknown) {
+      throw normalizeTerminalError(error, request.sessionId, "session_detach_failed");
+    }
+  }
+
+  attachSession(request: AttachSessionRequest): TerminalSessionSnapshot {
+    try {
+      const record = this.getRecord(request.sessionId);
+      if (!record.pty || record.snapshot.state !== "detached") {
+        throw createTerminalError(
+          "session_attach_failed",
+          `Session ${request.sessionId} cannot be attached while ${record.snapshot.state}.`,
+          { sessionId: request.sessionId },
+        );
+      }
+      record.snapshot = {
+        ...record.snapshot,
+        state: "running",
+        updatedAt: new Date().toISOString(),
+      };
+      this.emit({ type: "session.attached", payload: record.snapshot });
+      return { ...record.snapshot };
+    } catch (error: unknown) {
+      throw normalizeTerminalError(error, request.sessionId, "session_attach_failed");
+    }
+  }
+
+  readRecentOutput(request: ReadRecentOutputRequest): RecentOutputSnapshot {
+    const record = this.getRecord(request.sessionId);
+    return {
+      sessionId: request.sessionId,
+      data: sliceRecentOutput(record.recentOutput, request.maxBytes),
+      maxBytes: request.maxBytes,
+      capturedAt: new Date().toISOString(),
+    };
+  }
+
+  getLastActivityAt(sessionId: SessionId): number {
+    return this.getRecord(sessionId).lastOutputAt;
+  }
+
+  async startRecording(request: { sessionId: SessionId }): Promise<void> {
+    try {
+      await this.options.recorder?.start(this.getRecord(request.sessionId).snapshot);
+    } catch (error: unknown) {
+      throw normalizeTerminalError(error, request.sessionId, "recording_failed");
+    }
+  }
+
+  async stopRecording(request: { sessionId: SessionId }): Promise<void> {
+    try {
+      this.getRecord(request.sessionId);
+      await this.options.recorder?.stop(request.sessionId);
+    } catch (error: unknown) {
+      throw normalizeTerminalError(error, request.sessionId, "recording_failed");
+    }
+  }
+
+  async exportRecording(request: { sessionId: SessionId }): Promise<TerminalRecordingExport> {
+    try {
+      this.getRecord(request.sessionId);
+      if (!this.options.recorder) {
+        return {
+          schemaVersion: 1,
+          sessionId: request.sessionId,
+          exportedAt: new Date().toISOString(),
+          events: [],
+        };
+      }
+      return await this.options.recorder.export(request.sessionId);
+    } catch (error: unknown) {
+      throw normalizeTerminalError(error, request.sessionId, "recording_failed");
     }
   }
 
@@ -252,14 +428,37 @@ export class TerminalSessionManager {
     return record;
   }
 
-  private getRunningRecord(sessionId: SessionId): SessionRecord & { pty: PtySession } {
+  private getActivePtyRecord(sessionId: SessionId): SessionRecord & { pty: PtySession } {
     const record = this.getRecord(sessionId);
-    if (!record.pty || record.snapshot.state !== "running") {
+    if (!record.pty || !acceptsPtyOperations(record.snapshot.state)) {
       throw createTerminalError("session_not_running", `Session ${sessionId} is not running.`, {
         sessionId,
       });
     }
     return record as SessionRecord & { pty: PtySession };
+  }
+
+  private writeToActivePty(sessionId: SessionId, data: string, origin: InputOrigin): void {
+    const record = this.getActivePtyRecord(sessionId);
+    record.pty.write(data);
+    void this.record({
+      type: "terminal.input",
+      sessionId,
+      at: new Date().toISOString(),
+      origin,
+      data,
+    });
+  }
+
+  private async record(event: TerminalRecordingEvent): Promise<void> {
+    try {
+      await this.options.recorder?.record(event);
+    } catch (error: unknown) {
+      this.emit({
+        type: "session.error",
+        payload: normalizeTerminalError(error, event.sessionId, "recording_failed"),
+      });
+    }
   }
 
   private emit(event: RendererSessionEvent): void {
@@ -302,7 +501,7 @@ export class TerminalSessionManager {
 
     try {
       record.pty.kill();
-      if (record.snapshot.state === "running") {
+      if (record.snapshot.state === "running" || record.snapshot.state === "detached") {
         record.snapshot = {
           ...record.snapshot,
           state: "exiting",
@@ -346,7 +545,11 @@ function summarizeShutdown(
 }
 
 function isActive(state: TerminalSessionSnapshot["state"]): boolean {
-  return state === "running" || state === "exiting";
+  return state === "running" || state === "detached" || state === "exiting";
+}
+
+function acceptsPtyOperations(state: TerminalSessionSnapshot["state"]): boolean {
+  return state === "running" || state === "detached";
 }
 
 function delay(ms: number): Promise<void> {
@@ -377,4 +580,17 @@ function isTerminalError(value: unknown): value is TerminalError {
     typeof value.type === "string" &&
     typeof value.message === "string"
   );
+}
+
+const maxRecentOutputBytes = 100_000;
+
+function appendRecentOutput(current: string, data: string): string {
+  return sliceRecentOutput(`${current}${data}`, maxRecentOutputBytes);
+}
+
+function sliceRecentOutput(value: string, maxBytes: number): string {
+  if (value.length <= maxBytes) {
+    return value;
+  }
+  return value.slice(value.length - maxBytes);
 }

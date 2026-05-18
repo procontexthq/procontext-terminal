@@ -9,12 +9,18 @@ export function nextTerminalStatus(
   switch (event.type) {
     case "session.created":
       return event.payload.state;
+    case "session.attached":
+      return "running";
+    case "session.detached":
+      return "detached";
     case "session.exited":
       return "exited";
     case "session.error":
       return "failed";
     case "session.output":
       return outputStatus(current);
+    case "session.snapshot.request":
+      return current;
   }
 }
 

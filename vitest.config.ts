@@ -12,6 +12,9 @@ export default defineConfig({
       "@terminal/pty-host": fileURLToPath(
         new URL("./packages/pty-host/src/index.ts", import.meta.url),
       ),
+      "@terminal/recorder": fileURLToPath(
+        new URL("./packages/recorder/src/index.ts", import.meta.url),
+      ),
       "@terminal/session-core": fileURLToPath(
         new URL("./packages/session-core/src/index.ts", import.meta.url),
       ),

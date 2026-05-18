@@ -5,8 +5,9 @@ type Brand<TValue, TBrand extends string> = TValue & { readonly __brand: TBrand 
 export type SessionId = Brand<string, "SessionId">;
 export type RequestId = Brand<string, "RequestId">;
 
-export type SessionState = "creating" | "running" | "exiting" | "exited" | "failed";
+export type SessionState = "creating" | "running" | "detached" | "exiting" | "exited" | "failed";
 export type InputOrigin = "human" | "agent" | "system";
+export type RecordingState = "disabled" | "enabled";
 
 export type TerminalTheme = {
   background: string;
@@ -24,6 +25,19 @@ export type TerminalWorkspaceState = {
   activeTabIndex: number;
 };
 
+export type TerminalShellProfile = {
+  id: string;
+  name: string;
+  shell: string;
+  cwd: string | null;
+  env: Record<string, string>;
+};
+
+export type RecordingConfig = {
+  state: RecordingState;
+  redactedPatterns: string[];
+};
+
 export type TerminalConfig = {
   schemaVersion: 2;
   terminal: {
@@ -34,8 +48,10 @@ export type TerminalConfig = {
   };
   shell: {
     defaultProfile: string | null;
+    profiles: TerminalShellProfile[];
   };
   workspace: TerminalWorkspaceState;
+  recording: RecordingConfig;
 };
 
 export type TerminalErrorType =
@@ -47,6 +63,11 @@ export type TerminalErrorType =
   | "session_resize_failed"
   | "session_kill_failed"
   | "session_release_failed"
+  | "session_detach_failed"
+  | "session_attach_failed"
+  | "session_snapshot_failed"
+  | "wait_timeout"
+  | "recording_failed"
   | "settings_save_failed";
 
 export type TerminalError = {
@@ -68,6 +89,25 @@ export type CreateSessionRequest = {
 export type WriteInputRequest = {
   sessionId: SessionId;
   data: string;
+  origin?: InputOrigin;
+};
+
+export type SendKeyRequest = {
+  sessionId: SessionId;
+  key: TerminalKey;
+  origin?: InputOrigin;
+};
+
+export type PasteInputRequest = {
+  sessionId: SessionId;
+  text: string;
+  origin?: InputOrigin;
+};
+
+export type MouseInputRequest = {
+  sessionId: SessionId;
+  data: string;
+  origin?: InputOrigin;
 };
 
 export type ResizeSessionRequest = {
@@ -86,6 +126,129 @@ export type GetSessionRequest = {
 
 export type ReleaseSessionRequest = {
   sessionId: SessionId;
+};
+
+export type DetachSessionRequest = {
+  sessionId: SessionId;
+};
+
+export type AttachSessionRequest = {
+  sessionId: SessionId;
+};
+
+export type ReadRecentOutputRequest = {
+  sessionId: SessionId;
+  maxBytes: number;
+};
+
+export type RecentOutputSnapshot = {
+  sessionId: SessionId;
+  data: string;
+  maxBytes: number;
+  capturedAt: string;
+};
+
+export type TerminalScreenRow = {
+  row: number;
+  text: string;
+  wrapped: boolean;
+};
+
+export type TerminalScreenSnapshot = {
+  sessionId: SessionId;
+  cols: number;
+  rows: number;
+  cursor: { x: number; y: number; visible: boolean };
+  alternateScreen: boolean;
+  title: string | null;
+  viewport: TerminalScreenRow[];
+  capturedAt: string;
+};
+
+export type CaptureScreenRequest = {
+  sessionId: SessionId;
+  timeoutMs: number;
+};
+
+export type SnapshotResponseRequest = {
+  requestId: RequestId;
+  snapshot: TerminalScreenSnapshot;
+};
+
+export type WaitForTextRequest = {
+  sessionId: SessionId;
+  text: string;
+  timeoutMs: number;
+  includeRecentOutput?: boolean;
+};
+
+export type WaitForScreenChangeRequest = {
+  sessionId: SessionId;
+  timeoutMs: number;
+  baselineHash?: string;
+};
+
+export type WaitForQuietRequest = {
+  sessionId: SessionId;
+  quietMs: number;
+  timeoutMs: number;
+};
+
+export type WaitForPromptRequest = {
+  sessionId: SessionId;
+  timeoutMs: number;
+};
+
+export type TerminalWaitResult = {
+  sessionId: SessionId;
+  matchedAt: string;
+  snapshot?: TerminalScreenSnapshot;
+};
+
+export type TerminalKey =
+  | "Enter"
+  | "Tab"
+  | "Backspace"
+  | "Escape"
+  | "ArrowUp"
+  | "ArrowDown"
+  | "ArrowLeft"
+  | "ArrowRight"
+  | "Home"
+  | "End"
+  | "PageUp"
+  | "PageDown"
+  | "Delete"
+  | "Ctrl+C"
+  | "Ctrl+D"
+  | "Ctrl+Z";
+
+export type TerminalRecordingEvent =
+  | { type: "session.created"; sessionId: SessionId; at: string; metadata: TerminalSessionSnapshot }
+  | { type: "pty.output"; sessionId: SessionId; at: string; data: string }
+  | { type: "terminal.input"; sessionId: SessionId; at: string; origin: InputOrigin; data: string }
+  | { type: "terminal.resize"; sessionId: SessionId; at: string; cols: number; rows: number }
+  | {
+      type: "session.exited";
+      sessionId: SessionId;
+      at: string;
+      exitCode: number | null;
+      signal: string | null;
+    };
+
+export type RecordingControlRequest = {
+  sessionId: SessionId;
+};
+
+export type RecordingExportRequest = {
+  sessionId: SessionId;
+};
+
+export type TerminalRecordingExport = {
+  schemaVersion: 1;
+  sessionId: SessionId;
+  exportedAt: string;
+  events: TerminalRecordingEvent[];
 };
 
 export type SaveWorkspaceRequest = {
@@ -118,16 +281,43 @@ export type SessionExitEvent = {
 export type RendererSessionEvent =
   | { type: "session.created"; payload: TerminalSessionSnapshot }
   | { type: "session.output"; payload: { sessionId: SessionId; data: string } }
+  | { type: "session.detached"; payload: TerminalSessionSnapshot }
+  | { type: "session.attached"; payload: TerminalSessionSnapshot }
   | { type: "session.exited"; payload: SessionExitEvent }
-  | { type: "session.error"; payload: TerminalError };
+  | { type: "session.error"; payload: TerminalError }
+  | {
+      type: "session.snapshot.request";
+      requestId: RequestId;
+      payload: { sessionId: SessionId };
+    };
 
 export type RendererCommand =
   | { type: "session.create"; requestId: RequestId; payload: CreateSessionRequest }
   | { type: "session.write"; requestId: RequestId; payload: WriteInputRequest }
+  | { type: "session.sendKey"; requestId: RequestId; payload: SendKeyRequest }
+  | { type: "session.paste"; requestId: RequestId; payload: PasteInputRequest }
+  | { type: "session.mouse"; requestId: RequestId; payload: MouseInputRequest }
+  | { type: "session.interrupt"; requestId: RequestId; payload: KillSessionRequest }
   | { type: "session.resize"; requestId: RequestId; payload: ResizeSessionRequest }
   | { type: "session.kill"; requestId: RequestId; payload: KillSessionRequest }
+  | { type: "session.detach"; requestId: RequestId; payload: DetachSessionRequest }
+  | { type: "session.attach"; requestId: RequestId; payload: AttachSessionRequest }
   | { type: "session.release"; requestId: RequestId; payload: ReleaseSessionRequest }
   | { type: "session.get"; requestId: RequestId; payload: GetSessionRequest }
+  | { type: "session.readRecentOutput"; requestId: RequestId; payload: ReadRecentOutputRequest }
+  | { type: "session.captureScreen"; requestId: RequestId; payload: CaptureScreenRequest }
+  | { type: "session.snapshot.response"; requestId: RequestId; payload: SnapshotResponseRequest }
+  | { type: "session.waitForText"; requestId: RequestId; payload: WaitForTextRequest }
+  | {
+      type: "session.waitForScreenChange";
+      requestId: RequestId;
+      payload: WaitForScreenChangeRequest;
+    }
+  | { type: "session.waitForQuiet"; requestId: RequestId; payload: WaitForQuietRequest }
+  | { type: "session.waitForPrompt"; requestId: RequestId; payload: WaitForPromptRequest }
+  | { type: "recording.start"; requestId: RequestId; payload: RecordingControlRequest }
+  | { type: "recording.stop"; requestId: RequestId; payload: RecordingControlRequest }
+  | { type: "recording.export"; requestId: RequestId; payload: RecordingExportRequest }
   | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> }
   | { type: "settings.saveWorkspace"; requestId: RequestId; payload: SaveWorkspaceRequest };
 
@@ -147,10 +337,26 @@ export type Unsubscribe = () => void;
 export type RendererTerminalApi = {
   createSession(request: CreateSessionRequest): Promise<TerminalSessionSnapshot>;
   write(request: WriteInputRequest): Promise<void>;
+  sendKey(request: SendKeyRequest): Promise<void>;
+  paste(request: PasteInputRequest): Promise<void>;
+  sendMouse(request: MouseInputRequest): Promise<void>;
+  interrupt(request: KillSessionRequest): Promise<void>;
   resize(request: ResizeSessionRequest): Promise<void>;
   kill(request: KillSessionRequest): Promise<void>;
+  detachSession(request: DetachSessionRequest): Promise<TerminalSessionSnapshot>;
+  attachSession(request: AttachSessionRequest): Promise<TerminalSessionSnapshot>;
   releaseSession(request: ReleaseSessionRequest): Promise<void>;
   getSession(request: GetSessionRequest): Promise<TerminalSessionSnapshot>;
+  readRecentOutput(request: ReadRecentOutputRequest): Promise<RecentOutputSnapshot>;
+  captureScreen(request: CaptureScreenRequest): Promise<TerminalScreenSnapshot>;
+  respondToSnapshot(request: SnapshotResponseRequest): Promise<void>;
+  waitForText(request: WaitForTextRequest): Promise<TerminalWaitResult>;
+  waitForScreenChange(request: WaitForScreenChangeRequest): Promise<TerminalWaitResult>;
+  waitForQuiet(request: WaitForQuietRequest): Promise<TerminalWaitResult>;
+  waitForPrompt(request: WaitForPromptRequest): Promise<TerminalWaitResult>;
+  startRecording(request: RecordingControlRequest): Promise<void>;
+  stopRecording(request: RecordingControlRequest): Promise<void>;
+  exportRecording(request: RecordingExportRequest): Promise<TerminalRecordingExport>;
   getConfig(): Promise<TerminalConfig>;
   saveWorkspace(workspace: TerminalWorkspaceState): Promise<TerminalConfig>;
   onSessionEvent(sessionId: SessionId, handler: (event: RendererSessionEvent) => void): Unsubscribe;
@@ -207,6 +413,19 @@ export const terminalWorkspaceStateSchema = z
     }
   });
 
+export const terminalShellProfileSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  shell: z.string().min(1),
+  cwd: z.string().min(1).nullable(),
+  env: z.record(z.string(), z.string()),
+});
+
+export const recordingConfigSchema = z.object({
+  state: z.enum(["disabled", "enabled"]),
+  redactedPatterns: z.array(z.string()),
+});
+
 export const terminalConfigSchema = z.object({
   schemaVersion: z.literal(2),
   terminal: z.object({
@@ -217,8 +436,10 @@ export const terminalConfigSchema = z.object({
   }),
   shell: z.object({
     defaultProfile: z.string().min(1).nullable(),
+    profiles: z.array(terminalShellProfileSchema),
   }),
   workspace: terminalWorkspaceStateSchema,
+  recording: recordingConfigSchema,
 });
 
 export const terminalErrorTypeSchema = z.enum([
@@ -230,6 +451,11 @@ export const terminalErrorTypeSchema = z.enum([
   "session_resize_failed",
   "session_kill_failed",
   "session_release_failed",
+  "session_detach_failed",
+  "session_attach_failed",
+  "session_snapshot_failed",
+  "wait_timeout",
+  "recording_failed",
   "settings_save_failed",
 ]);
 
@@ -239,6 +465,22 @@ export const terminalErrorSchema = z.object({
   sessionId: sessionIdSchema.optional(),
   operation: z.string().min(1).optional(),
   cause: z.string().optional(),
+});
+
+export const terminalSessionSnapshotSchema = z.object({
+  sessionId: sessionIdSchema,
+  state: z.enum(["creating", "running", "detached", "exiting", "exited", "failed"]),
+  shell: z.string().min(1),
+  cwd: z.string().min(1),
+  ...terminalDimensions,
+  title: z.string().nullable(),
+  createdBy: z.enum(["human", "agent", "system"]),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  exitedAt: z.string().min(1).optional(),
+  exitCode: z.number().int().nullable().optional(),
+  signal: z.string().nullable().optional(),
+  error: terminalErrorSchema.optional(),
 });
 
 export const createSessionRequestSchema = z.object({
@@ -251,6 +493,44 @@ export const createSessionRequestSchema = z.object({
 export const writeInputRequestSchema = z.object({
   sessionId: sessionIdSchema,
   data: z.string(),
+  origin: z.enum(["human", "agent", "system"]).optional(),
+});
+
+export const terminalKeySchema = z.enum([
+  "Enter",
+  "Tab",
+  "Backspace",
+  "Escape",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+  "Delete",
+  "Ctrl+C",
+  "Ctrl+D",
+  "Ctrl+Z",
+]);
+
+export const sendKeyRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  key: terminalKeySchema,
+  origin: z.enum(["human", "agent", "system"]).optional(),
+});
+
+export const pasteInputRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  text: z.string(),
+  origin: z.enum(["human", "agent", "system"]).optional(),
+});
+
+export const mouseInputRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  data: z.string(),
+  origin: z.enum(["human", "agent", "system"]).optional(),
 });
 
 export const resizeSessionRequestSchema = z.object({
@@ -265,6 +545,117 @@ export const killSessionRequestSchema = z.object({
 export const getSessionRequestSchema = killSessionRequestSchema;
 
 export const releaseSessionRequestSchema = killSessionRequestSchema;
+
+export const detachSessionRequestSchema = killSessionRequestSchema;
+
+export const attachSessionRequestSchema = killSessionRequestSchema;
+
+export const readRecentOutputRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  maxBytes: z.number().int().min(1).max(1_000_000),
+});
+
+export const terminalScreenRowSchema = z.object({
+  row: z.number().int().min(0),
+  text: z.string(),
+  wrapped: z.boolean(),
+});
+
+export const terminalScreenSnapshotSchema = z.object({
+  sessionId: sessionIdSchema,
+  cols: z.number().int().min(1).max(1000),
+  rows: z.number().int().min(1).max(1000),
+  cursor: z.object({
+    x: z.number().int().min(0),
+    y: z.number().int().min(0),
+    visible: z.boolean(),
+  }),
+  alternateScreen: z.boolean(),
+  title: z.string().nullable(),
+  viewport: z.array(terminalScreenRowSchema),
+  capturedAt: z.string().min(1),
+});
+
+export const captureScreenRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  timeoutMs: z.number().int().min(1).max(120_000),
+});
+
+export const snapshotResponseRequestSchema = z.object({
+  requestId: requestIdSchema,
+  snapshot: terminalScreenSnapshotSchema,
+});
+
+export const waitForTextRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  text: z.string().min(1),
+  timeoutMs: z.number().int().min(1).max(120_000),
+  includeRecentOutput: z.boolean().optional(),
+});
+
+export const waitForScreenChangeRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  timeoutMs: z.number().int().min(1).max(120_000),
+  baselineHash: z.string().min(1).optional(),
+});
+
+export const waitForQuietRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  quietMs: z.number().int().min(1).max(120_000),
+  timeoutMs: z.number().int().min(1).max(120_000),
+});
+
+export const waitForPromptRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  timeoutMs: z.number().int().min(1).max(120_000),
+});
+
+export const terminalRecordingEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("session.created"),
+    sessionId: sessionIdSchema,
+    at: z.string().min(1),
+    metadata: terminalSessionSnapshotSchema,
+  }),
+  z.object({
+    type: z.literal("pty.output"),
+    sessionId: sessionIdSchema,
+    at: z.string().min(1),
+    data: z.string(),
+  }),
+  z.object({
+    type: z.literal("terminal.input"),
+    sessionId: sessionIdSchema,
+    at: z.string().min(1),
+    origin: z.enum(["human", "agent", "system"]),
+    data: z.string(),
+  }),
+  z.object({
+    type: z.literal("terminal.resize"),
+    sessionId: sessionIdSchema,
+    at: z.string().min(1),
+    cols: z.number().int().min(1).max(1000),
+    rows: z.number().int().min(1).max(1000),
+  }),
+  z.object({
+    type: z.literal("session.exited"),
+    sessionId: sessionIdSchema,
+    at: z.string().min(1),
+    exitCode: z.number().int().nullable(),
+    signal: z.string().nullable(),
+  }),
+]);
+
+export const recordingControlRequestSchema = killSessionRequestSchema;
+
+export const recordingExportRequestSchema = killSessionRequestSchema;
+
+export const terminalRecordingExportSchema = z.object({
+  schemaVersion: z.literal(1),
+  sessionId: sessionIdSchema,
+  exportedAt: z.string().min(1),
+  events: z.array(terminalRecordingEventSchema),
+});
 
 export const saveWorkspaceRequestSchema = z.object({
   workspace: terminalWorkspaceStateSchema,
@@ -282,6 +673,26 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     payload: writeInputRequestSchema,
   }),
   z.object({
+    type: z.literal("session.sendKey"),
+    requestId: requestIdSchema,
+    payload: sendKeyRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.paste"),
+    requestId: requestIdSchema,
+    payload: pasteInputRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.mouse"),
+    requestId: requestIdSchema,
+    payload: mouseInputRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.interrupt"),
+    requestId: requestIdSchema,
+    payload: killSessionRequestSchema,
+  }),
+  z.object({
     type: z.literal("session.resize"),
     requestId: requestIdSchema,
     payload: resizeSessionRequestSchema,
@@ -292,6 +703,16 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     payload: killSessionRequestSchema,
   }),
   z.object({
+    type: z.literal("session.detach"),
+    requestId: requestIdSchema,
+    payload: detachSessionRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.attach"),
+    requestId: requestIdSchema,
+    payload: attachSessionRequestSchema,
+  }),
+  z.object({
     type: z.literal("session.release"),
     requestId: requestIdSchema,
     payload: releaseSessionRequestSchema,
@@ -300,6 +721,56 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("session.get"),
     requestId: requestIdSchema,
     payload: getSessionRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.readRecentOutput"),
+    requestId: requestIdSchema,
+    payload: readRecentOutputRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.captureScreen"),
+    requestId: requestIdSchema,
+    payload: captureScreenRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.snapshot.response"),
+    requestId: requestIdSchema,
+    payload: snapshotResponseRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.waitForText"),
+    requestId: requestIdSchema,
+    payload: waitForTextRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.waitForScreenChange"),
+    requestId: requestIdSchema,
+    payload: waitForScreenChangeRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.waitForQuiet"),
+    requestId: requestIdSchema,
+    payload: waitForQuietRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.waitForPrompt"),
+    requestId: requestIdSchema,
+    payload: waitForPromptRequestSchema,
+  }),
+  z.object({
+    type: z.literal("recording.start"),
+    requestId: requestIdSchema,
+    payload: recordingControlRequestSchema,
+  }),
+  z.object({
+    type: z.literal("recording.stop"),
+    requestId: requestIdSchema,
+    payload: recordingControlRequestSchema,
+  }),
+  z.object({
+    type: z.literal("recording.export"),
+    requestId: requestIdSchema,
+    payload: recordingExportRequestSchema,
   }),
   z.object({
     type: z.literal("settings.get"),
@@ -353,6 +824,18 @@ export function parseWriteInputRequest(value: unknown): WriteInputRequest {
   return writeInputRequestSchema.parse(value);
 }
 
+export function parseSendKeyRequest(value: unknown): SendKeyRequest {
+  return sendKeyRequestSchema.parse(value);
+}
+
+export function parsePasteInputRequest(value: unknown): PasteInputRequest {
+  return pasteInputRequestSchema.parse(value);
+}
+
+export function parseMouseInputRequest(value: unknown): MouseInputRequest {
+  return mouseInputRequestSchema.parse(value);
+}
+
 export function parseResizeSessionRequest(value: unknown): ResizeSessionRequest {
   return resizeSessionRequestSchema.parse(value);
 }
@@ -367,6 +850,42 @@ export function parseGetSessionRequest(value: unknown): GetSessionRequest {
 
 export function parseReleaseSessionRequest(value: unknown): ReleaseSessionRequest {
   return releaseSessionRequestSchema.parse(value);
+}
+
+export function parseDetachSessionRequest(value: unknown): DetachSessionRequest {
+  return detachSessionRequestSchema.parse(value);
+}
+
+export function parseAttachSessionRequest(value: unknown): AttachSessionRequest {
+  return attachSessionRequestSchema.parse(value);
+}
+
+export function parseReadRecentOutputRequest(value: unknown): ReadRecentOutputRequest {
+  return readRecentOutputRequestSchema.parse(value);
+}
+
+export function parseTerminalScreenSnapshot(value: unknown): TerminalScreenSnapshot {
+  return terminalScreenSnapshotSchema.parse(value);
+}
+
+export function parseCaptureScreenRequest(value: unknown): CaptureScreenRequest {
+  return captureScreenRequestSchema.parse(value);
+}
+
+export function parseWaitForTextRequest(value: unknown): WaitForTextRequest {
+  return waitForTextRequestSchema.parse(value);
+}
+
+export function parseWaitForScreenChangeRequest(value: unknown): WaitForScreenChangeRequest {
+  return waitForScreenChangeRequestSchema.parse(value);
+}
+
+export function parseWaitForQuietRequest(value: unknown): WaitForQuietRequest {
+  return waitForQuietRequestSchema.parse(value);
+}
+
+export function parseTerminalRecordingExport(value: unknown): TerminalRecordingExport {
+  return terminalRecordingExportSchema.parse(value);
 }
 
 export function parseSaveWorkspaceRequest(value: unknown): SaveWorkspaceRequest {
@@ -422,6 +941,8 @@ export function isRendererSessionEvent(value: unknown): value is RendererSession
 
   switch (value.type) {
     case "session.created":
+    case "session.detached":
+    case "session.attached":
       return typeof value.payload.sessionId === "string";
     case "session.output":
       return typeof value.payload.sessionId === "string" && typeof value.payload.data === "string";
@@ -429,6 +950,8 @@ export function isRendererSessionEvent(value: unknown): value is RendererSession
       return typeof value.payload.sessionId === "string";
     case "session.error":
       return typeof value.payload.type === "string" && typeof value.payload.message === "string";
+    case "session.snapshot.request":
+      return typeof value.requestId === "string" && typeof value.payload.sessionId === "string";
     default:
       return false;
   }

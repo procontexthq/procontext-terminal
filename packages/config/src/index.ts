@@ -31,8 +31,13 @@ export function defaultTerminalConfig(): TerminalConfig {
     },
     shell: {
       defaultProfile: null,
+      profiles: [],
     },
     workspace: defaultWorkspaceState(),
+    recording: {
+      state: "disabled",
+      redactedPatterns: [],
+    },
   };
 }
 
@@ -48,6 +53,7 @@ export function parseTerminalConfig(value: unknown): ConfigParseResult {
   const defaults = defaultTerminalConfig();
   const raw = isObject(value) ? value : {};
   const workspace = parseWorkspaceState(raw.workspace);
+  const recording = parseRecordingConfig(raw.recording, defaults.recording);
   const merged = {
     ...defaults,
     ...raw,
@@ -61,10 +67,11 @@ export function parseTerminalConfig(value: unknown): ConfigParseResult {
       ...(isObject(raw.shell) ? raw.shell : {}),
     },
     workspace: workspace.config,
+    recording: recording.config,
   };
   const parsed = terminalConfigSchema.safeParse(merged);
   if (parsed.success) {
-    return { config: parsed.data, warnings: workspace.warnings };
+    return { config: parsed.data, warnings: [...workspace.warnings, ...recording.warnings] };
   }
 
   return {
@@ -145,6 +152,43 @@ function parseWorkspaceState(value: unknown): {
     config: defaultWorkspaceState(),
     warnings: ["Invalid workspace settings; using default terminal tab."],
   };
+}
+
+function parseRecordingConfig(
+  value: unknown,
+  defaults: TerminalConfig["recording"],
+): {
+  config: TerminalConfig["recording"];
+  warnings: string[];
+} {
+  const raw = isObject(value) ? value : {};
+  const merged = { ...defaults, ...raw };
+  if (!Array.isArray(merged.redactedPatterns)) {
+    return { config: merged, warnings: [] };
+  }
+
+  const warnings: string[] = [];
+  const redactedPatterns = merged.redactedPatterns.filter((pattern): pattern is string => {
+    if (typeof pattern !== "string" || !isValidRegexPattern(pattern)) {
+      warnings.push(`Invalid recording redaction pattern ignored: ${String(pattern)}`);
+      return false;
+    }
+    return true;
+  });
+
+  return {
+    config: { ...merged, redactedPatterns },
+    warnings,
+  };
+}
+
+function isValidRegexPattern(pattern: string): boolean {
+  try {
+    new RegExp(pattern, "gu");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isNodeError(value: unknown): value is NodeJS.ErrnoException {

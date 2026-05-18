@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createSessionId, type CreateSessionRequest } from "@terminal/protocol";
 import type { PtyHost, PtySession, PtySpawnRequest } from "@terminal/pty-host";
 
-import { TerminalSessionManager } from "../src/index";
+import { TerminalSessionManager, encodeTerminalKey, type TerminalRecorder } from "../src/index";
 
 class FakePtySession implements PtySession {
   readonly onDataHandlers = new Set<(data: string) => void>();
@@ -139,6 +139,76 @@ describe("TerminalSessionManager", () => {
     expect(manager.getSession({ sessionId: snapshot.sessionId }).state).toBe("exited");
   });
 
+  it("routes key, paste, interrupt, and mouse input with origin metadata", async () => {
+    const host = new FakePtyHost();
+    const recorder: TerminalRecorder = {
+      record: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+      export: vi.fn<TerminalRecorder["export"]>((sessionId) =>
+        Promise.resolve({
+          schemaVersion: 1,
+          sessionId,
+          exportedAt: "2026-05-11T00:00:00.000Z",
+          events: [],
+        }),
+      ),
+    };
+    const manager = new TerminalSessionManager(host, { recorder });
+    const snapshot = await manager.createSession(request);
+
+    await manager.sendKey({ sessionId: snapshot.sessionId, key: "ArrowUp", origin: "agent" });
+    await manager.paste({ sessionId: snapshot.sessionId, text: "pasted", origin: "agent" });
+    await manager.interrupt({ sessionId: snapshot.sessionId });
+    await manager.sendMouse({ sessionId: snapshot.sessionId, data: "\x1b[M", origin: "agent" });
+
+    expect(host.pty.write).toHaveBeenCalledWith(encodeTerminalKey("ArrowUp"));
+    expect(host.pty.write).toHaveBeenCalledWith("pasted");
+    expect(host.pty.write).toHaveBeenCalledWith(encodeTerminalKey("Ctrl+C"));
+    expect(host.pty.write).toHaveBeenCalledWith("\x1b[M");
+    expect(recorder.record).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "terminal.input", origin: "agent", data: "pasted" }),
+    );
+  });
+
+  it("detaches, continues buffering output, and reattaches active PTY sessions", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const events: string[] = [];
+    manager.onSessionEvent((event) => events.push(event.type));
+    const snapshot = await manager.createSession(request);
+
+    expect(manager.detachSession({ sessionId: snapshot.sessionId }).state).toBe("detached");
+    await manager.write({
+      sessionId: snapshot.sessionId,
+      data: "echo detached\r",
+      origin: "agent",
+    });
+    host.pty.emitData("detached output");
+    expect(manager.readRecentOutput({ sessionId: snapshot.sessionId, maxBytes: 100 }).data).toBe(
+      "detached output",
+    );
+
+    expect(manager.attachSession({ sessionId: snapshot.sessionId }).state).toBe("running");
+    expect(events).toContain("session.detached");
+    expect(events).toContain("session.attached");
+    expect(host.pty.write).toHaveBeenCalledWith("echo detached\r");
+  });
+
+  it("refuses detach and attach requests for invalid lifecycle states", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const snapshot = await manager.createSession(request);
+
+    expect(() => manager.attachSession({ sessionId: snapshot.sessionId })).toThrow(
+      expect.objectContaining({ type: "session_attach_failed" }),
+    );
+    host.pty.emitExit({ exitCode: 0, signal: null });
+    expect(() => manager.detachSession({ sessionId: snapshot.sessionId })).toThrow(
+      expect.objectContaining({ type: "session_detach_failed" }),
+    );
+  });
+
   it("releases exited sessions and disposes their PTY subscriptions", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);
@@ -202,6 +272,44 @@ describe("TerminalSessionManager", () => {
     await expect(manager.write({ sessionId, data: "x" })).rejects.toMatchObject({
       type: "session_not_found",
       sessionId,
+    });
+  });
+
+  it("wraps recorder control failures as recording errors and preserves missing-session errors", async () => {
+    const host = new FakePtyHost();
+    const recorder: TerminalRecorder = {
+      record: vi.fn(),
+      start: vi.fn(() => {
+        throw new Error("start failed");
+      }),
+      stop: vi.fn(() => {
+        throw new Error("stop failed");
+      }),
+      export: vi.fn(() => Promise.reject(new Error("export failed"))),
+    };
+    const manager = new TerminalSessionManager(host, { recorder });
+    const snapshot = await manager.createSession(request);
+
+    await expect(manager.startRecording({ sessionId: snapshot.sessionId })).rejects.toMatchObject({
+      type: "recording_failed",
+      sessionId: snapshot.sessionId,
+      cause: "start failed",
+    });
+    await expect(manager.stopRecording({ sessionId: snapshot.sessionId })).rejects.toMatchObject({
+      type: "recording_failed",
+      sessionId: snapshot.sessionId,
+      cause: "stop failed",
+    });
+    await expect(manager.exportRecording({ sessionId: snapshot.sessionId })).rejects.toMatchObject({
+      type: "recording_failed",
+      sessionId: snapshot.sessionId,
+      cause: "export failed",
+    });
+    await expect(
+      manager.startRecording({ sessionId: createSessionId("missing") }),
+    ).rejects.toMatchObject({
+      type: "session_not_found",
+      sessionId: createSessionId("missing"),
     });
   });
 

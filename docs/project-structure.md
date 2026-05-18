@@ -75,13 +75,13 @@ The architecture specs describe components. The repository structure groups some
 | Preload bridge | `apps/desktop/src/preload` |
 | Renderer app shell | `apps/desktop/src/renderer` |
 | Terminal view | `apps/desktop/src/renderer` |
-| Input router | `apps/desktop/src/renderer`, with shared key/input protocol types in `packages/protocol` |
+| Input router | `packages/session-core/src/input-router.ts`, with shared key/input protocol types in `packages/protocol` |
 | Terminal session manager | `packages/session-core` |
 | PTY host | `packages/pty-host` |
 | Shell resolver | `packages/pty-host` |
 | Agent gateway | `packages/agent-gateway` |
 | Policy engine | `packages/session-core` unless it grows into a dedicated package |
-| Screen observer | `packages/terminal-observer`, integrated by `apps/desktop/src/renderer` |
+| Screen observer | `apps/desktop/src/renderer/screen-observer.ts`; split into `packages/terminal-observer` only if it grows beyond renderer-owned xterm snapshot helpers |
 | Recorder and transcript store | `packages/recorder` |
 | Settings store | `packages/config` |
 | App logger | `apps/desktop/src/main` unless shared logging warrants a dedicated package |

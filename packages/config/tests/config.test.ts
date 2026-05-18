@@ -20,9 +20,17 @@ describe("terminal config", () => {
         fontSize: 13,
         scrollback: 5000,
       },
+      shell: {
+        defaultProfile: null,
+        profiles: [],
+      },
       workspace: {
         tabs: [{ cwd: null, shell: null }],
         activeTabIndex: 0,
+      },
+      recording: {
+        state: "disabled",
+        redactedPatterns: [],
       },
     });
   });
@@ -31,18 +39,36 @@ describe("terminal config", () => {
     const parsed = parseTerminalConfig({
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh" },
+      recording: { redactedPatterns: ["token"] },
     });
 
     expect(parsed.warnings).toHaveLength(0);
     expect(parsed.config).toMatchObject({
       schemaVersion: 2,
       terminal: { fontSize: 14 },
-      shell: { defaultProfile: "/bin/zsh" },
+      shell: { defaultProfile: "/bin/zsh", profiles: [] },
+      recording: { redactedPatterns: ["token"] },
       workspace: {
         tabs: [{ cwd: null, shell: null }],
         activeTabIndex: 0,
       },
     });
+  });
+
+  it("drops invalid recording redaction patterns without discarding valid settings", () => {
+    const parsed = parseTerminalConfig({
+      terminal: { fontSize: 14 },
+      shell: { defaultProfile: "/bin/zsh" },
+      recording: { redactedPatterns: ["token", "("] },
+    });
+
+    expect(parsed.config).toMatchObject({
+      schemaVersion: 2,
+      terminal: { fontSize: 14 },
+      shell: { defaultProfile: "/bin/zsh", profiles: [] },
+      recording: { redactedPatterns: ["token"] },
+    });
+    expect(parsed.warnings).toEqual(["Invalid recording redaction pattern ignored: ("]);
   });
 
   it("migrates explicit schema version 1 settings to schema version 2", () => {

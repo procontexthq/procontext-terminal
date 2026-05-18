@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted baseline plan.
+Phase 2 internal agent runtime implemented. Phase 3 external agent API remains
+deferred until the internal contracts have more usage.
 
 ## Purpose
 
@@ -99,6 +100,11 @@ Goal: keep the app usable for humans while prioritizing the runtime capabilities
 agents need: durable sessions, observable terminal state, faithful input, wait
 helpers, and replayable diagnostics. Defer human-only conveniences until the
 agent-useful substrate is stable.
+
+Implementation status: the tabs baseline, internal observation contracts, wait
+helpers, shared input routing, detach/attach lifecycle, shell launch profiles,
+and off-by-default recording/export runtime are implemented. The external agent
+gateway/API is intentionally not part of Phase 2.
 
 Phase 2A starts with a tabs-only multi-session milestone. Each tab owns one
 real PTY session. Inactive tabs remain mounted so their output and scrollback
