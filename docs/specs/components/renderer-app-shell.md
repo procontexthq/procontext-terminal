@@ -56,6 +56,24 @@ Session status shown in the UI should follow session lifecycle events without
 regressing from terminal states. For example, a trailing output event delivered
 after an exit event must not flip an exited session back to running.
 
+## Phase 2A Tabs
+
+The first multi-session milestone supports tabs only.
+
+- Each tab owns one terminal controller and one PTY session.
+- Inactive tab terminals stay mounted and hidden so output, scrollback, and
+  terminal renderer state continue to exist while the user views another tab.
+- Closing a running tab requires user confirmation before termination.
+- Closing an exited or failed tab releases the session record immediately.
+- Closing the final tab creates a new default terminal tab.
+- Tab labels prefer terminal title events and fall back to cwd, shell, or a
+  numbered terminal label. Shell-provided titles are not restored after app
+  restart.
+- Bell events mark inactive tabs unread; activating the tab clears the unread
+  indicator.
+- Workspace restore persists tab order, active tab, shell, and launch cwd, then
+  starts fresh PTY sessions on restart.
+
 ## Testing Expectations
 
 - UI actions call the preload API rather than main-process or PTY modules.

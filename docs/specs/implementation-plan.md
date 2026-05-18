@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted baseline plan.
+Phase 2 internal agent runtime implemented. Phase 3 external agent API remains
+deferred until the internal contracts have more usage.
 
 ## Purpose
 
@@ -12,6 +13,11 @@ This document defines the implementation sequence and testing plan for the termi
 
 - Build the plain terminal foundation before agent-specific features.
 - Keep every phase shippable enough to validate real terminal behavior.
+- After the plain terminal and tabs baseline, prioritize capabilities that make
+  terminal sessions observable, controllable, and durable for agents. Human-only
+  terminal conveniences can be added after the agent-useful substrate is solid.
+- Defer external agent gateway/API design until the internal observation,
+  lifecycle, input, and recording contracts are stable.
 - Add tests before implementation code for new features and bug fixes.
 - Test observable behavior through public package, IPC, renderer, or agent APIs.
 - Avoid fixed sleeps in async tests; use events, retrying assertions, polling helpers with timeouts, or stream reads.
@@ -42,12 +48,12 @@ flowchart TB
 - Resize propagation.
 - Exit events.
 - IPC request/response validation.
-- Agent authorization and denial.
 - Screen snapshot shape.
 - Alternate-screen behavior.
 - Recording event order.
 - Settings migration.
 - App restart and session cleanup behavior.
+- Agent authorization and denial once the external agent API is designed.
 
 ## Phase 1: Plain Terminal Foundation
 
@@ -88,35 +94,79 @@ Exit criteria:
   values by default.
 - Renderer IPC failures return typed terminal errors instead of raw thrown values.
 
-## Phase 2: Multi-session Human Terminal
+## Phase 2: Tabs Baseline and Agent-Useful Terminal Runtime
 
-Goal: make the app useful as a human terminal with multiple sessions and expected desktop terminal workflows.
+Goal: keep the app usable for humans while prioritizing the runtime capabilities
+agents need: durable sessions, observable terminal state, faithful input, wait
+helpers, and replayable diagnostics. Defer human-only conveniences until the
+agent-useful substrate is stable.
+
+Implementation status: the tabs baseline, internal observation contracts, wait
+helpers, shared input routing, detach/attach lifecycle, shell launch profiles,
+and off-by-default recording/export runtime are implemented. The external agent
+gateway/API is intentionally not part of Phase 2.
+
+Phase 2A starts with a tabs-only multi-session milestone. Each tab owns one
+real PTY session. Inactive tabs remain mounted so their output and scrollback
+continue to update while the user works elsewhere. Restart restore recreates
+fresh PTY sessions from saved tab order, active tab, shell, and launch cwd; it
+does not restore process state or terminal output.
 
 Implementation:
 
-- Add tabs and panes.
-- Add shell profiles.
-- Add copy, paste, search, links, title, bell, and status UI.
-- Add window/session restore policy.
-- Add renderer-driven screen snapshots.
-- Add settings persistence and migrations.
+- Phase 2A: add terminal tabs, tab focus, tab close, running-tab close
+  confirmation, shell title labels, bell/unread indicators, and workspace
+  restore as fresh sessions.
+- Phase 2A: add session release so exited and failed sessions can be removed
+  after their final view closes without conflating release with kill.
+- Add a screen observer that can snapshot visible rows, cursor position,
+  viewport dimensions, title, lifecycle state, and alternate-screen state.
+- Add recent-output and visible-viewport observation buffers without mixing them
+  with app logs or transcript recording.
+- Add wait primitives over observed terminal state: `waitForText`,
+  `waitForPrompt`, `waitForScreenChange`, and `waitForQuiet`, each with an
+  explicit timeout.
+- Add robust key, paste, interrupt, resize, and mouse input routing so future
+  agent control can use the same PTY path as human input.
+- Add detached and reattachable session behavior so a PTY can outlive a
+  renderer view without being confused with a killed session.
+- Add shell launch profiles as typed launch metadata for sessions. A human
+  profile picker can come later.
+- Add transcript recording, redaction policy, replay metadata, and export
+  primitives needed for debugging and replaying agent terminal work.
+- Defer panes, search UI, clickable links, copy/paste polish, window geometry
+  restore, app log viewer, and other human-only UX.
 
 Testing:
 
-- Unit tests for shell profile resolution and settings migration.
-- Integration tests for multiple session lifecycle behavior.
-- Renderer tests for tab, pane, focus, copy, paste, search, title, and bell behavior.
-- Electron E2E tests for creating, switching, resizing, closing, detaching, and restoring sessions.
+- Unit tests for settings migration, shell launch metadata, key encoding, wait
+  conditions, snapshot normalization, and recorder event schema.
+- Integration tests for multiple session lifecycle behavior, detach/reattach,
+  observation buffers, alternate-screen snapshots, mouse forwarding, recording
+  event order, redaction, and replay metadata.
+- Renderer tests for mounted tabs, focus, title, bell, screen snapshots, and
+  snapshot request/response behavior.
+- Electron E2E tests for creating, switching, resizing, closing, detaching,
+  reattaching, restoring fresh sessions, snapshotting normal and alternate
+  screens, and wait helper timeouts.
 
 Exit criteria:
 
 - Multiple sessions can run independently.
 - Closing a view is distinct from terminating a session.
-- Settings and window state restore safely after restart.
+- Sessions can be detached from and reattached to renderer views.
+- Agents can observe normal-buffer and alternate-screen state through internal
+  observation contracts.
+- Wait helpers resolve on matching state and fail predictably on timeout.
+- Common TUI navigation works through keyboard and mouse primitives.
+- Recording can be enabled, disabled, redacted, exported, and replayed according
+  to policy.
+- Settings and session workspace state restore safely after restart.
 
-## Phase 3: Agent Control Plane
+## Phase 3: External Agent Control Plane
 
-Goal: expose terminal control to local authenticated agents without bypassing the real terminal/session path.
+Goal: design and expose the local authenticated external API after the internal
+terminal observation, lifecycle, input, wait, and recording contracts are proven.
 
 Implementation:
 
@@ -140,56 +190,51 @@ Exit criteria:
 - Unauthorized or denied operations produce structured errors without side effects.
 - Agent activity is visible and auditable.
 
-## Phase 4: TUI and Observation Hardening
+## Phase 4: Human Terminal UX Completion
 
-Goal: make terminal observation and input robust enough for curses-style apps, pagers, editors, and test watchers.
+Goal: add the remaining human-facing desktop terminal conveniences after the
+agent-useful terminal runtime and external agent API are stable.
 
 Implementation:
 
-- Add robust key encoder.
-- Add mouse event support.
-- Add alternate-screen snapshot support.
-- Add prompt detection helpers.
-- Add `waitForText`, `waitForPrompt`, `waitForScreenChange`, and `waitForQuiet`.
-- Add deterministic TUI fixtures.
+- Add panes and split-layout controls.
+- Add profile picker and shell profile management UI.
+- Add copy, paste, search, clickable links, title, bell, status, and command
+  palette polish beyond the tabs baseline.
+- Add full window size, position, display, and geometry restore.
+- Add app log viewer or diagnostic export UI.
 
 Testing:
 
-- Unit tests for key encoding, wait conditions, and snapshot normalization.
-- Integration tests for alternate screen, mouse mode forwarding, and prompt/wait helpers.
-- E2E tests against deterministic TUI-like fixtures.
-- Timeout tests for every wait helper.
+- Renderer tests for pane layout, pane focus, pane close, copy, paste, search,
+  links, and human profile selection behavior.
+- Electron E2E tests for split panes, window restore, search, copy/paste, link
+  opening policy, and desktop workflow polish.
 
 Exit criteria:
 
-- Agents can observe normal-buffer and alternate-screen state.
-- Wait helpers resolve on matching state and fail predictably on timeout.
-- Common TUI navigation works through keyboard and mouse primitives.
+- Human terminal workflows match expected desktop terminal behavior beyond the
+  agent-first baseline.
+- Window state restores safely and validates display bounds.
+- Human-facing profile and search/link workflows are covered by UI tests.
 
-## Phase 5: Recording, Replay, and Packaging
+## Phase 5: Packaging and Release Hardening
 
-Goal: add replayable session records, redaction controls, diagnostics, and platform-specific distributable builds.
+Goal: produce platform-specific distributable builds and release verification
+after the terminal runtime and priority feature set are stable.
 
 Implementation:
 
-- Add transcript recorder.
-- Add replay metadata and export.
-- Add redaction and recording policy.
-- Add app log viewer or export path.
 - Add cross-platform packaging.
 - Add release CI and provenance.
 
 Testing:
 
-- Unit tests for recording event schema, redaction, and migrations.
-- Integration tests for recording event order across create, input, output, resize, and exit.
-- Replay validation tests for exported session files.
 - Packaging smoke tests on macOS, Windows, and Linux.
 - Release verification that native PTY modules are packaged correctly.
 
 Exit criteria:
 
-- Recording can be enabled, disabled, redacted, exported, and replayed according to policy.
 - Packaged app artifacts launch and can create a PTY-backed terminal on each target OS.
 - Release artifacts include provenance attestations.
 

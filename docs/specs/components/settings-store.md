@@ -19,7 +19,12 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Store recording defaults.
 - Migrate settings between schema versions.
 - Resolve app data, logs, recordings, and settings paths through platform-aware APIs.
-- In Phase 1, persist settings as versioned JSON at the Electron `userData` settings path.
+- Phase 1 persists settings as versioned JSON at the Electron `userData`
+  settings path.
+- Phase 2A uses settings schema version 2. The schema adds a `workspace`
+  section containing tab launch cwd, shell, and active tab index. Workspace
+  restore creates fresh PTY sessions; it does not persist process state,
+  terminal output, or shell-generated titles.
 
 ## Boundaries
 
@@ -41,6 +46,8 @@ Settings must be validated at load time.
 - Migrations must be versioned and deterministic.
 - Unknown future schema versions must not be silently downgraded.
 - Writes must use a safe temporary-file then rename flow.
+- Invalid or empty workspace tab state must fall back to one default tab while
+  preserving otherwise valid terminal and shell settings.
 
 ## Persisted Data
 

@@ -227,6 +227,10 @@ flowchart BT
 ```
 
 Shared packages must not import app-specific renderer or Electron window code.
+In the Phase 2 implementation, xterm screen snapshot helpers live in
+`apps/desktop/src/renderer/screen-observer.ts` because they are tightly coupled
+to renderer-owned xterm buffer state. Move them to `packages/terminal-observer`
+only if they grow into renderer-independent observation logic.
 
 ## Core Data Flow
 

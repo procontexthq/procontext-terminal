@@ -21,6 +21,7 @@
       "@terminal/config": ["packages/config/src/index.ts"],
       "@terminal/protocol": ["packages/protocol/src/index.ts"],
       "@terminal/pty-host": ["packages/pty-host/src/index.ts"],
+      "@terminal/recorder": ["packages/recorder/src/index.ts"],
       "@terminal/session-core": ["packages/session-core/src/index.ts"],
       "@terminal/test-fixtures": ["packages/test-fixtures/src/index.ts"]
     }

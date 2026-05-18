@@ -9,6 +9,7 @@
     { "path": "../../packages/config" },
     { "path": "../../packages/protocol" },
     { "path": "../../packages/pty-host" },
+    { "path": "../../packages/recorder" },
     { "path": "../../packages/session-core" }
   ],
   "include": [

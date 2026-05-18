@@ -47,6 +47,18 @@ describe("terminal status", () => {
     ).toBe("exited");
     expect(
       nextTerminalStatus("running", {
+        type: "session.detached",
+        payload: { ...snapshot, state: "detached" },
+      }),
+    ).toBe("detached");
+    expect(
+      nextTerminalStatus("detached", {
+        type: "session.attached",
+        payload: snapshot,
+      }),
+    ).toBe("running");
+    expect(
+      nextTerminalStatus("running", {
         type: "session.error",
         payload: { type: "session_kill_failed", message: "kill failed", sessionId },
       }),

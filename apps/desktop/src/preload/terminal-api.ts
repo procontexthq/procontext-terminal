@@ -24,10 +24,43 @@ export function createRendererTerminalApi({
     createSession: (request) =>
       invokeCommand(invoke, createRendererCommand("session.create", request)),
     write: (request) => invokeCommand(invoke, createRendererCommand("session.write", request)),
+    sendKey: (request) => invokeCommand(invoke, createRendererCommand("session.sendKey", request)),
+    paste: (request) => invokeCommand(invoke, createRendererCommand("session.paste", request)),
+    sendMouse: (request) => invokeCommand(invoke, createRendererCommand("session.mouse", request)),
+    interrupt: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.interrupt", request)),
     resize: (request) => invokeCommand(invoke, createRendererCommand("session.resize", request)),
     kill: (request) => invokeCommand(invoke, createRendererCommand("session.kill", request)),
+    detachSession: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.detach", request)),
+    attachSession: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.attach", request)),
+    releaseSession: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.release", request)),
     getSession: (request) => invokeCommand(invoke, createRendererCommand("session.get", request)),
+    readRecentOutput: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.readRecentOutput", request)),
+    captureScreen: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.captureScreen", request)),
+    respondToSnapshot: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.snapshot.response", request)),
+    waitForText: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.waitForText", request)),
+    waitForScreenChange: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.waitForScreenChange", request)),
+    waitForQuiet: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.waitForQuiet", request)),
+    waitForPrompt: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.waitForPrompt", request)),
+    startRecording: (request) =>
+      invokeCommand(invoke, createRendererCommand("recording.start", request)),
+    stopRecording: (request) =>
+      invokeCommand(invoke, createRendererCommand("recording.stop", request)),
+    exportRecording: (request) =>
+      invokeCommand(invoke, createRendererCommand("recording.export", request)),
     getConfig: () => invokeCommand(invoke, createRendererCommand("settings.get", {})),
+    saveWorkspace: (workspace) =>
+      invokeCommand(invoke, createRendererCommand("settings.saveWorkspace", { workspace })),
     onSessionEvent: (sessionId, handler) =>
       subscribe((payload) => {
         if (isRendererSessionEvent(payload) && eventMatchesSession(payload, sessionId)) {
@@ -117,10 +150,14 @@ class PreloadTerminalApiError extends Error {
 function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId): boolean {
   switch (event.type) {
     case "session.created":
+    case "session.attached":
+    case "session.detached":
     case "session.error":
     case "session.exited":
       return event.payload.sessionId === sessionId;
     case "session.output":
+      return event.payload.sessionId === sessionId;
+    case "session.snapshot.request":
       return event.payload.sessionId === sessionId;
   }
 }
@@ -132,12 +169,16 @@ function isRendererSessionEvent(value: unknown): value is RendererSessionEvent {
 
   switch (value.type) {
     case "session.created":
+    case "session.attached":
+    case "session.detached":
     case "session.exited":
       return typeof value.payload.sessionId === "string";
     case "session.output":
       return typeof value.payload.sessionId === "string" && typeof value.payload.data === "string";
     case "session.error":
       return typeof value.payload.type === "string" && typeof value.payload.message === "string";
+    case "session.snapshot.request":
+      return typeof value.requestId === "string" && typeof value.payload.sessionId === "string";
     default:
       return false;
   }
