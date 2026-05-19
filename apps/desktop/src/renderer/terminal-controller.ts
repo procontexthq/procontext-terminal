@@ -4,6 +4,7 @@ import type {
   RendererSessionEvent,
   RendererTerminalApi,
   SessionId,
+  TerminalError,
   TerminalWorkspaceTab,
   Unsubscribe,
 } from "@terminal/protocol";
@@ -218,6 +219,7 @@ export async function createTerminalSession({
       },
     };
   } catch (error: unknown) {
+    await releaseFailedSession(api, error);
     disposeRendererResources({
       dataSubscription,
       titleSubscription,
@@ -228,6 +230,41 @@ export async function createTerminalSession({
     });
     throw error;
   }
+}
+
+async function releaseFailedSession(api: RendererTerminalApi, error: unknown): Promise<void> {
+  const terminalError = extractTerminalError(error);
+  if (!terminalError?.sessionId || terminalError.type !== "pty_spawn_failed") {
+    return;
+  }
+
+  try {
+    await api.releaseSession({ sessionId: terminalError.sessionId });
+  } catch {
+    // Session creation can fail before a session record exists; cleanup is best-effort.
+  }
+}
+
+function extractTerminalError(error: unknown): TerminalError | null {
+  if (!isObject(error)) {
+    return null;
+  }
+
+  if (isTerminalError(error)) {
+    return error;
+  }
+
+  const maybeTerminalError = error.terminalError;
+  return isTerminalError(maybeTerminalError) ? maybeTerminalError : null;
+}
+
+function isTerminalError(value: unknown): value is TerminalError {
+  return (
+    isObject(value) &&
+    typeof value.type === "string" &&
+    typeof value.message === "string" &&
+    (!("sessionId" in value) || typeof value.sessionId === "string")
+  );
 }
 
 function disposeRendererResources({
@@ -270,4 +307,8 @@ function disposeRendererResources({
   } catch (error: unknown) {
     onError?.(error);
   }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

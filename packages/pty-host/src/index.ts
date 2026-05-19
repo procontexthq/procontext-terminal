@@ -27,6 +27,8 @@ export type ShellResolutionRequest = {
   env?: Record<string, string>;
 };
 
+type ExecutableAccessCheck = (executable: string, platform: NodeJS.Platform) => boolean;
+
 export type ResolvedShell = {
   executable: string;
   args: string[];
@@ -52,11 +54,18 @@ export function resolveShell(
     platform?: NodeJS.Platform;
     processEnv?: NodeJS.ProcessEnv;
     cwd?: string;
+    canExecute?: ExecutableAccessCheck;
   } = {},
 ): ResolvedShell {
   const platform = options.platform ?? process.platform;
-  const env = buildEnvironment(request.env, options.processEnv ?? process.env);
-  const executable = resolveExecutable(request.shell ?? defaultShell(platform, env), platform, env);
+  const env = buildEnvironment(request.env, options.processEnv ?? process.env, platform);
+  const canExecuteExecutable = options.canExecute ?? canExecute;
+  const executable = resolveExecutable(
+    request.shell ?? defaultShell(platform, env, canExecuteExecutable),
+    platform,
+    env,
+    canExecuteExecutable,
+  );
   return {
     executable,
     args: [],
@@ -117,12 +126,17 @@ class NodePtySession implements PtySession {
   }
 }
 
-function defaultShell(platform: NodeJS.Platform, env: Record<string, string>): string {
+function defaultShell(
+  platform: NodeJS.Platform,
+  env: Record<string, string>,
+  canExecuteExecutable: ExecutableAccessCheck,
+): string {
   if (platform === "win32") {
     const candidate = firstAvailableShell(
       ["pwsh.exe", "powershell.exe", env.ComSpec, "cmd.exe"],
       platform,
       env,
+      canExecuteExecutable,
     );
     return candidate ?? env.ComSpec ?? "powershell.exe";
   }
@@ -137,6 +151,7 @@ function defaultShell(platform: NodeJS.Platform, env: Record<string, string>): s
 function buildEnvironment(
   overrides: Record<string, string> | undefined,
   baseEnv: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -144,7 +159,24 @@ function buildEnvironment(
       env[key] = value;
     }
   }
-  return { ...env, ...overrides };
+
+  if (!overrides) {
+    return env;
+  }
+
+  for (const [key, value] of Object.entries(overrides)) {
+    if (platform !== "win32") {
+      env[key] = value;
+      continue;
+    }
+
+    const existingKey = Object.keys(env).find(
+      (candidate) => candidate.toLowerCase() === key.toLowerCase(),
+    );
+    env[existingKey ?? key] = value;
+  }
+
+  return env;
 }
 
 function ensureNodePtySpawnHelperExecutable(): void {
@@ -166,10 +198,11 @@ function firstAvailableShell(
   candidates: Array<string | undefined>,
   platform: NodeJS.Platform,
   env: Record<string, string>,
+  canExecuteExecutable: ExecutableAccessCheck,
 ): string | null {
   for (const candidate of candidates) {
     if (!candidate) continue;
-    const resolved = tryResolveExecutable(candidate, platform, env);
+    const resolved = tryResolveExecutable(candidate, platform, env, canExecuteExecutable);
     if (resolved) return resolved;
   }
   return null;
@@ -179,8 +212,9 @@ function resolveExecutable(
   executable: string,
   platform: NodeJS.Platform,
   env: Record<string, string>,
+  canExecuteExecutable: ExecutableAccessCheck,
 ): string {
-  const resolved = tryResolveExecutable(executable, platform, env);
+  const resolved = tryResolveExecutable(executable, platform, env, canExecuteExecutable);
   if (resolved) return resolved;
   throw new Error(`Shell executable ${executable} was not found or is not executable.`);
 }
@@ -189,6 +223,7 @@ function tryResolveExecutable(
   executable: string,
   platform: NodeJS.Platform,
   env: Record<string, string>,
+  canExecuteExecutable: ExecutableAccessCheck,
 ): string | null {
   if (isPathLike(executable, platform)) {
     if (!isAbsolutePath(executable, platform)) {
@@ -196,7 +231,7 @@ function tryResolveExecutable(
         `Shell executable ${executable} must be an absolute path or a command name resolved through PATH.`,
       );
     }
-    return canExecute(executable, platform) ? executable : null;
+    return canExecuteExecutable(executable, platform) ? executable : null;
   }
 
   const pathValue = getPathValue(env, platform);
@@ -208,7 +243,7 @@ function tryResolveExecutable(
     for (const candidate of executableCandidates(executable, platform, env)) {
       const resolved =
         platform === "win32" ? win32.join(directory, candidate) : posix.join(directory, candidate);
-      if (canExecute(resolved, platform)) {
+      if (canExecuteExecutable(resolved, platform)) {
         return resolved;
       }
     }
