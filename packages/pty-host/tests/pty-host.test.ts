@@ -47,6 +47,44 @@ describe("NodePtyHost", () => {
     expect(resolved.executable.toLowerCase()).toContain(shellName.toLowerCase());
   });
 
+  it("applies Windows environment overrides case-insensitively", () => {
+    const resolved = resolveShell(
+      {
+        shell: "custom-shell",
+        env: { PATH: "C:\\Tools\\Bin" },
+      },
+      {
+        platform: "win32",
+        processEnv: {
+          Path: "C:\\Windows\\System32",
+          PATHEXT: ".EXE",
+        },
+        canExecute: (candidate) => candidate.toLowerCase() === "c:\\tools\\bin\\custom-shell.exe",
+      },
+    );
+
+    expect(resolved.executable).toBe("C:\\Tools\\Bin\\custom-shell.exe");
+    expect(resolved.env.Path).toBe("C:\\Tools\\Bin");
+    expect("PATH" in resolved.env).toBe(false);
+  });
+
+  it("prefers Windows PowerShell from PATH before ComSpec defaults", () => {
+    const resolved = resolveShell(
+      {},
+      {
+        platform: "win32",
+        processEnv: {
+          Path: "C:\\Program Files\\PowerShell\\7;C:\\Windows\\System32",
+          ComSpec: "C:\\Windows\\System32\\cmd.exe",
+          PATHEXT: ".EXE",
+        },
+        canExecute: (candidate) => candidate.toLowerCase().endsWith("\\pwsh.exe"),
+      },
+    );
+
+    expect(resolved.executable).toBe("C:\\Program Files\\PowerShell\\7\\pwsh.exe");
+  });
+
   it("rejects relative path-like shell values", () => {
     expect(() =>
       resolveShell({ shell: "./local-shell" }, { platform: "linux", processEnv: { PATH: "/bin" } }),

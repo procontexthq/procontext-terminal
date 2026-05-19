@@ -241,6 +241,28 @@ describe("TerminalSessionManager", () => {
     expect(() => manager.getSession({ sessionId: failedSessionId })).toThrow();
   });
 
+  it("releases failed sessions created by shell resolution errors", async () => {
+    const manager = new TerminalSessionManager(new FakePtyHost());
+    let failedSessionId = createSessionId("missing");
+    let thrownError: unknown = null;
+
+    try {
+      await manager.createSession({ shell: "./relative-shell", cols: 80, rows: 24 });
+    } catch (error: unknown) {
+      thrownError = error;
+      if (typeof error === "object" && error !== null && "sessionId" in error) {
+        failedSessionId = error.sessionId as typeof failedSessionId;
+      }
+    }
+
+    expect(thrownError).toMatchObject({
+      type: "pty_spawn_failed",
+      sessionId: failedSessionId,
+    });
+    await manager.releaseSession({ sessionId: failedSessionId });
+    expect(() => manager.getSession({ sessionId: failedSessionId })).toThrow();
+  });
+
   it("refuses to release active sessions without killing them", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);
@@ -362,5 +384,19 @@ describe("TerminalSessionManager", () => {
     await expect(
       manager.write({ sessionId: snapshot.sessionId, data: "echo still-running\r" }),
     ).resolves.toBeUndefined();
+  });
+
+  it("keeps timed-out shutdown sessions available for a later kill retry", async () => {
+    const host = new FakePtyHost();
+    host.pty.kill.mockImplementation(() => undefined);
+    const manager = new TerminalSessionManager(host);
+    const snapshot = await manager.createSession(request);
+
+    const result = await manager.shutdown({ timeoutMs: 1 });
+
+    expect(result).toEqual({ terminated: 0, timedOut: 1 });
+    expect(manager.getSession({ sessionId: snapshot.sessionId }).state).toBe("exiting");
+    await expect(manager.kill({ sessionId: snapshot.sessionId })).resolves.toBeUndefined();
+    expect(host.pty.kill).toHaveBeenCalledTimes(2);
   });
 });

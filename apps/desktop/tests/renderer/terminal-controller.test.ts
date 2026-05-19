@@ -486,6 +486,35 @@ describe("terminal controller", () => {
     expect(api.unsubscribeSessionEvent).not.toHaveBeenCalled();
   });
 
+  it("releases failed session records when PTY creation fails before a controller exists", async () => {
+    const terminal = new FakeTerminal();
+    const api = fakeApi();
+    const sessionId = "failed-session" as SessionId;
+    const expectedError = Object.assign(new Error("spawn failed"), {
+      terminalError: {
+        type: "pty_spawn_failed",
+        message: "spawn failed",
+        sessionId,
+      },
+    });
+    vi.mocked(api.createSession).mockRejectedValueOnce(expectedError);
+
+    await expect(
+      createTerminalSession({
+        api,
+        element: document.createElement("div"),
+        createTerminal: () => terminal,
+        createFitAddon: () => ({
+          fit: vi.fn(),
+          proposeDimensions: () => ({ cols: 80, rows: 24 }),
+        }),
+      }),
+    ).rejects.toBe(expectedError);
+
+    expect(api.releaseSession).toHaveBeenCalledWith({ sessionId });
+    expect(terminal.dispose).toHaveBeenCalledOnce();
+  });
+
   it("detaches the renderer view by default when disposed", async () => {
     const terminal = new FakeTerminal();
     const api = fakeApi();

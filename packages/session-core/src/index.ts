@@ -70,7 +70,25 @@ export class TerminalSessionManager {
   async createSession(request: CreateSessionRequest): Promise<TerminalSessionSnapshot> {
     const sessionId = createSessionId();
     const now = new Date().toISOString();
-    let record: SessionRecord | null = null;
+    const record: SessionRecord = {
+      snapshot: {
+        sessionId,
+        state: "creating",
+        shell: request.shell ?? "default",
+        cwd: request.cwd ?? process.cwd(),
+        cols: request.cols,
+        rows: request.rows,
+        title: null,
+        createdBy: "human",
+        createdAt: now,
+        updatedAt: now,
+      },
+      pty: null,
+      cleanup: [],
+      recentOutput: "",
+      lastOutputAt: Date.now(),
+    };
+    this.sessions.set(sessionId, record);
 
     try {
       const shell = resolveShell({
@@ -78,21 +96,12 @@ export class TerminalSessionManager {
         cwd: request.cwd,
         env: request.env,
       });
-      const snapshot: TerminalSessionSnapshot = {
-        sessionId,
-        state: "creating",
+      record.snapshot = {
+        ...record.snapshot,
         shell: shell.executable,
         cwd: shell.cwd,
-        cols: request.cols,
-        rows: request.rows,
-        title: null,
-        createdBy: "human",
-        createdAt: now,
-        updatedAt: now,
       };
-      record = { snapshot, pty: null, cleanup: [], recentOutput: "", lastOutputAt: Date.now() };
       const activeRecord = record;
-      this.sessions.set(sessionId, record);
 
       const pty = await this.ptyHost.spawn({
         sessionId,
@@ -148,14 +157,12 @@ export class TerminalSessionManager {
       return activeRecord.snapshot;
     } catch (error: unknown) {
       const terminalError = normalizeTerminalError(error, sessionId, "pty_spawn_failed");
-      if (record) {
-        record.snapshot = {
-          ...record.snapshot,
-          state: "failed",
-          updatedAt: new Date().toISOString(),
-          error: terminalError,
-        };
-      }
+      record.snapshot = {
+        ...record.snapshot,
+        state: "failed",
+        updatedAt: new Date().toISOString(),
+        error: terminalError,
+      };
       this.emit({ type: "session.error", payload: terminalError });
       throw terminalError;
     }
@@ -236,7 +243,7 @@ export class TerminalSessionManager {
 
   kill(request: KillSessionRequest): Promise<void> {
     try {
-      const record = this.getActivePtyRecord(request.sessionId);
+      const record = this.getKillablePtyRecord(request.sessionId);
       record.pty.kill();
       if (record.snapshot.state === "running" || record.snapshot.state === "detached") {
         record.snapshot = {
@@ -438,6 +445,16 @@ export class TerminalSessionManager {
     return record as SessionRecord & { pty: PtySession };
   }
 
+  private getKillablePtyRecord(sessionId: SessionId): SessionRecord & { pty: PtySession } {
+    const record = this.getRecord(sessionId);
+    if (!record.pty || !canRequestKill(record.snapshot.state)) {
+      throw createTerminalError("session_not_running", `Session ${sessionId} is not running.`, {
+        sessionId,
+      });
+    }
+    return record as SessionRecord & { pty: PtySession };
+  }
+
   private writeToActivePty(sessionId: SessionId, data: string, origin: InputOrigin): void {
     const record = this.getActivePtyRecord(sessionId);
     record.pty.write(data);
@@ -550,6 +567,10 @@ function isActive(state: TerminalSessionSnapshot["state"]): boolean {
 
 function acceptsPtyOperations(state: TerminalSessionSnapshot["state"]): boolean {
   return state === "running" || state === "detached";
+}
+
+function canRequestKill(state: TerminalSessionSnapshot["state"]): boolean {
+  return state === "running" || state === "detached" || state === "exiting";
 }
 
 function delay(ms: number): Promise<void> {
