@@ -2,8 +2,9 @@
 
 ## Status
 
-Phase 2 internal agent runtime implemented. Phase 3 external agent API remains
-deferred until the internal contracts have more usage.
+Phase 3 external agent control plane implemented and verified locally and in
+GitHub Actions on macOS, Windows, and Linux. Phase 4 human terminal UX polish
+and Phase 5 packaging remain pending.
 
 ## Purpose
 
@@ -16,8 +17,8 @@ This document defines the implementation sequence and testing plan for the termi
 - After the plain terminal and tabs baseline, prioritize capabilities that make
   terminal sessions observable, controllable, and durable for agents. Human-only
   terminal conveniences can be added after the agent-useful substrate is solid.
-- Defer external agent gateway/API design until the internal observation,
-  lifecycle, input, and recording contracts are stable.
+- Preserve the implemented external agent gateway/API contract while later
+  phases build human terminal polish and packaging on top of it.
 - Add tests before implementation code for new features and bug fixes.
 - Test observable behavior through public package, IPC, renderer, or agent APIs.
 - Avoid fixed sleeps in async tests; use events, retrying assertions, polling helpers with timeouts, or stream reads.
@@ -167,6 +168,11 @@ Exit criteria:
 
 Goal: design and expose the local authenticated external API after the internal
 terminal observation, lifecycle, input, wait, and recording contracts are proven.
+
+Status: complete. The gateway, policy layer, protocol contracts, descriptor
+discovery, audit events, UI activity indicator, and regression coverage are
+implemented on the Phase 3 branch and have passed the local verification set and
+GitHub Actions matrix on macOS, Windows, and Linux.
 
 Implementation:
 

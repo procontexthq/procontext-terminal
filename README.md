@@ -14,9 +14,10 @@ Phase 2 is complete: tabs, workspace restore, internal agent-useful terminal
 observation, waits, detach/attach, recording export, and cross-platform CI are
 implemented on top of the PTY-backed desktop terminal.
 
-Phase 3 is adding the external local agent control plane: authenticated
-loopback WebSocket access, explicit policy decisions, audit events, and visible
-agent activity. Later phases add human terminal UX polish and packaging.
+Phase 3 is complete: authenticated loopback WebSocket access, explicit policy
+decisions, audit events, descriptor discovery, and visible agent activity are
+implemented and covered by local and CI checks. Later phases add human terminal
+UX polish and packaging.
 
 ## Architecture
 
