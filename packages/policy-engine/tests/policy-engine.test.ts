@@ -1,0 +1,114 @@
+import { describe, expect, it } from "vitest";
+
+import { createSessionId } from "@terminal/protocol";
+
+import { createDefaultAgentPolicy } from "../src/index";
+
+describe("default agent policy", () => {
+  it("allows authenticated local agent list, create, and attach operations", () => {
+    const policy = createDefaultAgentPolicy({ createDecisionId: () => "decision-1" });
+    const actor = {
+      kind: "agent" as const,
+      authenticated: true,
+      local: true,
+      ownedSessionIds: new Set<string>(),
+    };
+    const sessionId = createSessionId("session-policy-1");
+
+    expect(policy.authorize({ actor, operation: { type: "terminal.list" } })).toMatchObject({
+      type: "allow",
+      decisionId: "decision-1",
+    });
+    expect(policy.authorize({ actor, operation: { type: "terminal.create" } })).toMatchObject({
+      type: "allow",
+    });
+    expect(
+      policy.authorize({ actor, operation: { type: "terminal.attach", sessionId } }),
+    ).toMatchObject({
+      type: "allow",
+    });
+  });
+
+  it("denies unauthenticated and non-local agent operations with stable reasons", () => {
+    const policy = createDefaultAgentPolicy({ createDecisionId: () => "decision-deny" });
+    const sessionId = createSessionId("session-policy-2");
+
+    expect(
+      policy.authorize({
+        actor: {
+          kind: "agent",
+          authenticated: false,
+          local: true,
+          ownedSessionIds: new Set(),
+        },
+        operation: { type: "terminal.sendText", sessionId },
+      }),
+    ).toEqual({
+      type: "deny",
+      decisionId: "decision-deny",
+      reason: {
+        decisionId: "decision-deny",
+        code: "auth_required",
+        message: "Agent authentication is required.",
+        operation: "terminal.sendText",
+        sessionId,
+      },
+    });
+
+    expect(
+      policy.authorize({
+        actor: {
+          kind: "agent",
+          authenticated: true,
+          local: false,
+          ownedSessionIds: new Set([sessionId]),
+        },
+        operation: { type: "terminal.sendText", sessionId },
+      }),
+    ).toMatchObject({
+      type: "deny",
+      reason: {
+        code: "remote_control_disabled",
+        operation: "terminal.sendText",
+        sessionId,
+      },
+    });
+  });
+
+  it("requires ownership before controlling an attached or created session", () => {
+    const policy = createDefaultAgentPolicy({ createDecisionId: () => "decision-owner" });
+    const sessionId = createSessionId("session-owned");
+    const otherSessionId = createSessionId("session-other");
+
+    expect(
+      policy.authorize({
+        actor: {
+          kind: "agent",
+          authenticated: true,
+          local: true,
+          ownedSessionIds: new Set([sessionId]),
+        },
+        operation: { type: "terminal.kill", sessionId: otherSessionId },
+      }),
+    ).toMatchObject({
+      type: "deny",
+      reason: {
+        code: "session_not_owned",
+        operation: "terminal.kill",
+        sessionId: otherSessionId,
+      },
+    });
+
+    expect(
+      policy.authorize({
+        actor: {
+          kind: "agent",
+          authenticated: true,
+          local: true,
+          ownedSessionIds: new Set([sessionId]),
+        },
+        operation: { type: "terminal.kill", sessionId },
+      }),
+    ).toMatchObject({ type: "allow" });
+  });
+});

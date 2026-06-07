@@ -3,18 +3,37 @@ import { join } from "node:path";
 import { app, BrowserWindow } from "electron";
 
 import {
+  resolveAgentGatewayDescriptorPath,
+  startAgentGateway,
+  type AgentGateway,
+  type AgentGatewayTerminalServices,
+} from "@terminal/agent-gateway";
+import {
   defaultTerminalConfig,
   loadTerminalConfig,
   resolveTerminalConfigPath,
   saveTerminalConfig,
 } from "@terminal/config";
+import { createDefaultAgentPolicy } from "@terminal/policy-engine";
 import { NodePtyHost } from "@terminal/pty-host";
 import { FileTerminalRecorder, createPatternRedactor } from "@terminal/recorder";
 import { TerminalSessionManager } from "@terminal/session-core";
 import type { TerminalConfig } from "@terminal/protocol";
 
-import { registerTerminalIpc } from "./ipc";
+import {
+  broadcastRendererEvent,
+  createScreenSnapshotService,
+  registerTerminalIpc,
+  type ScreenSnapshotService,
+} from "./ipc";
 import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
+import {
+  waitForPrompt,
+  waitForQuiet,
+  waitForScreenChange,
+  waitForText,
+  type TerminalCommandServices,
+} from "./terminal-command-handler";
 
 let logger = createAppLogger({
   isDevelopment: !app.isPackaged,
@@ -42,7 +61,9 @@ const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
     });
   },
 });
+const screenSnapshotService = createScreenSnapshotService();
 let unregisterIpc: (() => void) | null = null;
+let agentGateway: AgentGateway | null = null;
 let terminalConfig: TerminalConfig = defaultTerminalConfig();
 let terminalConfigPath: string | null = null;
 let quitAfterShutdown = false;
@@ -142,8 +163,38 @@ void app
       redactors: [createPatternRedactor(terminalConfig.recording.redactedPatterns)],
     });
 
-    unregisterIpc = registerTerminalIpc(sessionManager, logger, () => terminalConfig, saveConfig);
+    unregisterIpc = registerTerminalIpc(
+      sessionManager,
+      logger,
+      () => terminalConfig,
+      saveConfig,
+      screenSnapshotService,
+    );
     await createMainWindow();
+    agentGateway = await startAgentGateway({
+      descriptorPath: resolveAgentGatewayDescriptorPath(app.getPath("userData")),
+      services: createAgentGatewayServices(sessionManager, screenSnapshotService),
+      policy: createDefaultAgentPolicy(),
+      audit: (event) => {
+        logger.info("agent", "audit", {
+          connectionId: event.connectionId,
+          action: event.action,
+          outcome: event.outcome,
+          requestId: event.requestId,
+          sessionId: event.sessionId,
+          errorType: event.errorType,
+          denialCode: event.denialCode,
+        });
+      },
+      onActivity: (payload) => {
+        broadcastRendererEvent({ type: "agent.activity", payload });
+      },
+    });
+    logger.info("agent", "gateway_started", {
+      descriptorPath: agentGateway.descriptorPath,
+      url: sanitizeUrlForLog(agentGateway.descriptor.url),
+      tokenExpiresAt: agentGateway.descriptor.tokenExpiresAt,
+    });
     logger.info("app", "ready");
 
     app.on("activate", () => {
@@ -172,11 +223,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   quitAfterShutdown = true;
   logger.info("app", "quit_requested");
-  unregisterIpc?.();
-  unregisterIpc = null;
-  logger.info("session", "shutdown_started", { timeoutMs: 1500 });
-  void sessionManager
-    .shutdown({ timeoutMs: 1500 })
+  void shutdownApp()
     .then((result) => {
       logger.info("session", "shutdown_completed", result);
       if (result.timedOut > 0) {
@@ -219,6 +266,53 @@ async function saveConfig(config: TerminalConfig): Promise<TerminalConfig> {
     activeTabIndex: config.workspace.activeTabIndex,
   });
   return terminalConfig;
+}
+
+async function shutdownApp() {
+  if (agentGateway) {
+    logger.info("agent", "gateway_shutdown_started");
+    await agentGateway.stop();
+    agentGateway = null;
+    logger.info("agent", "gateway_shutdown_completed");
+  }
+  unregisterIpc?.();
+  unregisterIpc = null;
+  logger.info("session", "shutdown_started", { timeoutMs: 1500 });
+  return sessionManager.shutdown({ timeoutMs: 1500 });
+}
+
+function createAgentGatewayServices(
+  manager: TerminalSessionManager,
+  snapshotService: ScreenSnapshotService,
+): AgentGatewayTerminalServices {
+  const waitServices: TerminalCommandServices = {
+    sessionManager: manager,
+    requestScreenSnapshot: (sessionId, timeoutMs) =>
+      snapshotService.requestScreenSnapshot(sessionId, timeoutMs),
+    resolveSnapshotResponse: (requestId, snapshot) =>
+      snapshotService.resolveSnapshotResponse(requestId, snapshot),
+    getConfig: () => terminalConfig,
+    saveConfig,
+    logger,
+  };
+
+  return {
+    listSessions: () => manager.listSessions(),
+    createSession: (request) => manager.createSession(request),
+    getSession: (request) => manager.getSession(request),
+    write: (request) => manager.write(request),
+    sendKey: (request) => manager.sendKey(request),
+    resize: (request) => manager.resize(request),
+    readRecentOutput: (request) => manager.readRecentOutput(request),
+    captureScreen: (request) =>
+      snapshotService.requestScreenSnapshot(request.sessionId, request.timeoutMs),
+    waitForText: (request) => waitForText(request, waitServices),
+    waitForQuiet: (request) => waitForQuiet(request, waitServices),
+    waitForScreenChange: (request) => waitForScreenChange(request, waitServices),
+    waitForPrompt: (request) => waitForPrompt(request, waitServices),
+    kill: (request) => manager.kill(request),
+    onSessionEvent: (handler) => manager.onSessionEvent(handler),
+  };
 }
 
 function sanitizeUrlForLog(value: string): string {

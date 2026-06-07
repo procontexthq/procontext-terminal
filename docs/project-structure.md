@@ -349,8 +349,8 @@ Good delegation tasks:
 
 - Add one agent command handler.
 - Add local WebSocket connection lifecycle.
-- Add gateway authentication tests.
-- Add denial-path tests.
+- Add a new gateway command category.
+- Add transport-level regression tests.
 
 ## `packages/recorder`
 

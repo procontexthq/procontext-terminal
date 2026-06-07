@@ -25,6 +25,9 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 Primary transport:
 
 - Local WebSocket over loopback with a short-lived auth token.
+- The gateway writes an ephemeral JSON descriptor under the Electron `userData`
+  directory. The descriptor contains only `{ url, token, tokenExpiresAt, pid }`
+  and is removed during app shutdown.
 
 Not allowed by default:
 
@@ -40,6 +43,27 @@ Not allowed by default:
 - Synchronization: wait for text, wait for prompt, wait for quiet, wait for screen change.
 - Recording: start, stop, export, replay metadata.
 
+Phase 3 exposes the first external command set:
+
+- `agent.authenticate`
+- `terminal.list`
+- `terminal.create`
+- `terminal.attach`
+- `terminal.sendText`
+- `terminal.sendKey`
+- `terminal.resize`
+- `terminal.readRecentOutput`
+- `terminal.captureScreen`
+- `terminal.waitForText`
+- `terminal.waitForQuiet`
+- `terminal.waitForScreenChange`
+- `terminal.waitForPrompt`
+- `terminal.kill`
+
+`terminal.attach` attaches an agent connection to an existing session for
+ownership, event filtering, and subsequent control. It does not change the
+renderer lifecycle state of that terminal.
+
 ## Boundaries
 
 The agent gateway must not:
@@ -49,6 +73,14 @@ The agent gateway must not:
 - Trust external messages without validation.
 - Bind unauthenticated network control by default.
 - Treat agent observations as application logs.
+- Log descriptor tokens, terminal input, PTY output, or transcript data.
+
+## Renderer-Dependent Observation
+
+The gateway can always read recent output from session-core for existing
+sessions. Screen snapshots and screen-based waits depend on a renderer window
+responding with xterm.js buffer state. If no renderer can provide that state,
+the gateway returns a structured `observation_unavailable` terminal error.
 
 ## Testing Expectations
 

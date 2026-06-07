@@ -8,6 +8,7 @@ import {
   type CreateSessionRequest,
   type RendererCommand,
   type RendererCommandResult,
+  type RequestId,
   type TerminalConfig,
   type TerminalError,
   type TerminalScreenSnapshot,
@@ -40,7 +41,7 @@ export type TerminalCommandServices = {
     sessionId: TerminalScreenSnapshot["sessionId"],
     timeoutMs: number,
   ): Promise<TerminalScreenSnapshot>;
-  resolveSnapshotResponse(requestId: string, snapshot: TerminalScreenSnapshot): void;
+  resolveSnapshotResponse(requestId: RequestId, snapshot: TerminalScreenSnapshot): void;
   getConfig(): TerminalConfig;
   saveConfig(config: TerminalConfig): Promise<TerminalConfig>;
   logger?: AppLogger;
@@ -244,7 +245,7 @@ function applyConfiguredShell(
   return { ...request, shell: config.shell.defaultProfile };
 }
 
-async function waitForText(
+export async function waitForText(
   request: Extract<RendererCommand, { type: "session.waitForText" }>["payload"],
   services: TerminalCommandServices,
 ) {
@@ -288,7 +289,7 @@ async function waitForText(
   });
 }
 
-async function waitForScreenChange(
+export async function waitForScreenChange(
   request: Extract<RendererCommand, { type: "session.waitForScreenChange" }>["payload"],
   services: TerminalCommandServices,
 ) {
@@ -315,7 +316,7 @@ async function waitForScreenChange(
   });
 }
 
-async function waitForQuiet(
+export async function waitForQuiet(
   request: Extract<RendererCommand, { type: "session.waitForQuiet" }>["payload"],
   services: TerminalCommandServices,
 ) {
@@ -334,7 +335,7 @@ async function waitForQuiet(
   });
 }
 
-async function waitForPrompt(
+export async function waitForPrompt(
   request: Extract<RendererCommand, { type: "session.waitForPrompt" }>["payload"],
   services: TerminalCommandServices,
 ) {

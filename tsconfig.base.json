@@ -18,7 +18,9 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
+      "@terminal/agent-gateway": ["packages/agent-gateway/src/index.ts"],
       "@terminal/config": ["packages/config/src/index.ts"],
+      "@terminal/policy-engine": ["packages/policy-engine/src/index.ts"],
       "@terminal/protocol": ["packages/protocol/src/index.ts"],
       "@terminal/pty-host": ["packages/pty-host/src/index.ts"],
       "@terminal/recorder": ["packages/recorder/src/index.ts"],

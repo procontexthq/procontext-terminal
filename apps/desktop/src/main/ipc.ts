@@ -19,35 +19,26 @@ export const IPC_CHANNELS = {
   event: "session.event",
 } as const;
 
+export type ScreenSnapshotService = {
+  requestScreenSnapshot(sessionId: SessionId, timeoutMs: number): Promise<TerminalScreenSnapshot>;
+  resolveSnapshotResponse(requestId: RequestId, snapshot: TerminalScreenSnapshot): void;
+  dispose(): void;
+};
+
 export function registerTerminalIpc(
   sessionManager: TerminalSessionManager,
   logger: AppLogger,
   getConfig: () => TerminalConfig,
   saveConfig: (config: TerminalConfig) => Promise<TerminalConfig>,
+  screenSnapshotService: ScreenSnapshotService = createScreenSnapshotService(),
 ): () => void {
-  const snapshotRequests = new Map<
-    RequestId,
-    {
-      resolve: (snapshot: TerminalScreenSnapshot) => void;
-      reject: (error: unknown) => void;
-      timeout: ReturnType<typeof setTimeout>;
-    }
-  >();
-
   ipcMain.handle(IPC_CHANNELS.command, async (_event, payload: unknown) =>
     handleRendererCommandPayload(payload, {
       sessionManager,
       requestScreenSnapshot: (sessionId, timeoutMs) =>
-        requestScreenSnapshot(snapshotRequests, sessionId, timeoutMs),
-      resolveSnapshotResponse: (requestId, snapshot) => {
-        const pending = snapshotRequests.get(requestId as RequestId);
-        if (!pending) {
-          return;
-        }
-        clearTimeout(pending.timeout);
-        snapshotRequests.delete(requestId as RequestId);
-        pending.resolve(snapshot);
-      },
+        screenSnapshotService.requestScreenSnapshot(sessionId, timeoutMs),
+      resolveSnapshotResponse: (requestId, snapshot) =>
+        screenSnapshotService.resolveSnapshotResponse(requestId, snapshot),
       getConfig,
       saveConfig,
       logger,
@@ -55,7 +46,7 @@ export function registerTerminalIpc(
   );
 
   const unsubscribe = sessionManager.onSessionEvent((event) => {
-    broadcastSessionEvent(event);
+    broadcastRendererEvent(event);
     switch (event.type) {
       case "session.created":
       case "session.attached":
@@ -94,19 +85,48 @@ export function registerTerminalIpc(
 
   return () => {
     unsubscribe();
-    for (const [requestId, pending] of snapshotRequests) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error(`Snapshot request ${requestId} was cancelled.`));
-    }
-    snapshotRequests.clear();
+    screenSnapshotService.dispose();
     ipcMain.removeHandler(IPC_CHANNELS.command);
   };
 }
 
-function broadcastSessionEvent(event: RendererSessionEvent): void {
+export function broadcastRendererEvent(event: RendererSessionEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send(IPC_CHANNELS.event, event);
   }
+}
+
+export function createScreenSnapshotService(): ScreenSnapshotService {
+  const snapshotRequests = new Map<
+    RequestId,
+    {
+      resolve: (snapshot: TerminalScreenSnapshot) => void;
+      reject: (error: unknown) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
+
+  return {
+    requestScreenSnapshot(sessionId, timeoutMs) {
+      return requestScreenSnapshot(snapshotRequests, sessionId, timeoutMs);
+    },
+    resolveSnapshotResponse(requestId, snapshot) {
+      const pending = snapshotRequests.get(requestId);
+      if (!pending) {
+        return;
+      }
+      clearTimeout(pending.timeout);
+      snapshotRequests.delete(requestId);
+      pending.resolve(snapshot);
+    },
+    dispose() {
+      for (const [requestId, pending] of snapshotRequests) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error(`Snapshot request ${requestId} was cancelled.`));
+      }
+      snapshotRequests.clear();
+    },
+  };
 }
 
 function requestScreenSnapshot(
@@ -124,7 +144,7 @@ function requestScreenSnapshot(
   const windows = BrowserWindow.getAllWindows();
   if (windows.length === 0) {
     return Promise.reject(
-      createTerminalError("session_snapshot_failed", "No renderer window is available.", {
+      createTerminalError("observation_unavailable", "No renderer window is available.", {
         sessionId,
         operation: "session.captureScreen",
       }),
@@ -143,7 +163,7 @@ function requestScreenSnapshot(
       );
     }, timeoutMs);
     snapshotRequests.set(requestId, { resolve, reject, timeout });
-    broadcastSessionEvent({
+    broadcastRendererEvent({
       type: "session.snapshot.request",
       requestId,
       payload: { sessionId },

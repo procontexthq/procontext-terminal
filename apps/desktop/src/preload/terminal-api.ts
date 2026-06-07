@@ -61,6 +61,12 @@ export function createRendererTerminalApi({
     getConfig: () => invokeCommand(invoke, createRendererCommand("settings.get", {})),
     saveWorkspace: (workspace) =>
       invokeCommand(invoke, createRendererCommand("settings.saveWorkspace", { workspace })),
+    onTerminalEvent: (handler) =>
+      subscribe((payload) => {
+        if (isRendererSessionEvent(payload)) {
+          handler(payload);
+        }
+      }),
     onSessionEvent: (sessionId, handler) =>
       subscribe((payload) => {
         if (isRendererSessionEvent(payload) && eventMatchesSession(payload, sessionId)) {
@@ -159,6 +165,8 @@ function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId):
       return event.payload.sessionId === sessionId;
     case "session.snapshot.request":
       return event.payload.sessionId === sessionId;
+    case "agent.activity":
+      return false;
   }
 }
 
@@ -179,6 +187,14 @@ function isRendererSessionEvent(value: unknown): value is RendererSessionEvent {
       return typeof value.payload.type === "string" && typeof value.payload.message === "string";
     case "session.snapshot.request":
       return typeof value.requestId === "string" && typeof value.payload.sessionId === "string";
+    case "agent.activity":
+      return (
+        typeof value.payload.activeConnections === "number" &&
+        typeof value.payload.authenticatedConnections === "number" &&
+        (!("lastActiveAt" in value.payload) ||
+          typeof value.payload.lastActiveAt === "string" ||
+          value.payload.lastActiveAt === null)
+      );
     default:
       return false;
   }

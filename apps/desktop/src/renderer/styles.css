@@ -99,6 +99,22 @@ body {
   font-size: 10px;
 }
 
+.titlebar-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.agent-activity {
+  color: #818a94;
+}
+
+.agent-activity.is-active {
+  color: #7bd88f;
+}
+
 .tab-bell {
   width: 7px;
   height: 7px;
