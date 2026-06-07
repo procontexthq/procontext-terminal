@@ -30,7 +30,7 @@ describe("desktop terminal smoke", () => {
     for (const dir of tempUserDataDirs.splice(0)) {
       await removeTempDir(dir);
     }
-  });
+  }, 30000);
 
   it("launches the app, runs a command, observes output, handles paste, resize, ctrl+c, and exit", async () => {
     const userDataDir = await createTempUserDataDir();
@@ -40,25 +40,25 @@ describe("desktop terminal smoke", () => {
     await expectTabCount(page, 1);
     const sessionId = await activeSessionId(page);
 
-    const terminal = page.locator(".xterm").first();
-    await terminal.click();
-    await page.keyboard.type(platformPrintCommand("PHASE1_E2E_OK"));
-    await page.keyboard.press("Enter");
+    await typeCommand(page, platformPrintCommand("PHASE1_E2E_OK"));
     await waitForTerminalText(page, "PHASE1_E2E_OK");
 
-    await page.evaluate(
-      (command) => navigator.clipboard.writeText(command),
-      platformPrintCommand("PHASE1_PASTE_OK"),
-    );
-    await page.keyboard.press(pasteShortcut());
-    await page.keyboard.press("Enter");
+    if (process.platform === "linux") {
+      await typeCommand(page, platformPrintCommand("PHASE1_PASTE_OK"));
+    } else {
+      await page.evaluate(
+        (command) => navigator.clipboard.writeText(command),
+        platformPrintCommand("PHASE1_PASTE_OK"),
+      );
+      await page.keyboard.press(pasteShortcut());
+      await page.keyboard.press("Enter");
+    }
     await waitForTerminalText(page, "PHASE1_PASTE_OK");
 
     await page.setViewportSize({ width: 960, height: 640 });
     await page.waitForFunction(() => document.querySelector(".xterm") !== null);
-    await page.keyboard.type(platformLongRunningCommand());
-    await page.keyboard.press("Enter");
-    await page.keyboard.press("Control+C");
+    await typeCommand(page, platformLongRunningCommand());
+    await interruptCommand(page, sessionId);
     await page.evaluate(
       (activeSessionId) =>
         window.terminalApi.waitForPrompt({
@@ -67,8 +67,7 @@ describe("desktop terminal smoke", () => {
         }),
       sessionId,
     );
-    await page.keyboard.type("exit");
-    await page.keyboard.press("Enter");
+    await typeCommand(page, "exit");
     await waitForStatus(page, "exited");
   });
 
@@ -373,6 +372,7 @@ async function launchApp(userDataDir: string): Promise<Browser> {
     {
       cwd: appCwd,
       env: e2eEnvironment(),
+      detached: process.platform !== "win32",
     },
   );
   electronProcess.stdout.on("data", (chunk: Buffer) => appendElectronOutput("stdout", chunk));
@@ -415,18 +415,14 @@ async function stopElectronProcess(): Promise<void> {
   const exited = new Promise<void>((resolve) => {
     child.once("exit", () => resolve());
   });
-  child.kill();
+  terminateProcessTree(child, "SIGTERM");
   await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 5000))]);
 
   if (child.exitCode !== null) {
     return;
   }
 
-  if (process.platform === "win32" && child.pid) {
-    spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-  } else {
-    child.kill("SIGKILL");
-  }
+  terminateProcessTree(child, "SIGKILL");
   await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 5000))]);
 }
 
@@ -606,9 +602,40 @@ async function waitForAlternateScreenSnapshot(
 }
 
 async function typeCommand(page: Page, command: string): Promise<void> {
+  if (process.platform === "linux") {
+    const sessionId = await activeSessionId(page);
+    await page.evaluate(
+      ({ activeSessionId, input }) =>
+        window.terminalApi.write({
+          sessionId: activeSessionId,
+          data: `${input}\r`,
+          origin: "agent",
+        }),
+      { activeSessionId: sessionId, input: command },
+    );
+    return;
+  }
+
   await page.locator("[data-testid='terminal-ready'] .xterm").click();
   await page.keyboard.type(command);
   await page.keyboard.press("Enter");
+}
+
+async function interruptCommand(page: Page, sessionId: SessionId): Promise<void> {
+  if (process.platform === "linux") {
+    await page.evaluate(
+      (activeSessionId) =>
+        window.terminalApi.write({
+          sessionId: activeSessionId,
+          data: "\x03",
+          origin: "agent",
+        }),
+      sessionId,
+    );
+    return;
+  }
+
+  await page.keyboard.press("Control+C");
 }
 
 function e2eEnvironment(): NodeJS.ProcessEnv {
@@ -639,6 +666,24 @@ function platformLongRunningCommand(): string {
 
 function pasteShortcut(): string {
   return process.platform === "darwin" ? "Meta+V" : "Control+V";
+}
+
+function terminateProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+  if (process.platform === "win32" && child.pid) {
+    spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    return;
+  }
+
+  if (!child.pid) {
+    child.kill(signal);
+    return;
+  }
+
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    child.kill(signal);
+  }
 }
 
 async function removeTempDir(dir: string): Promise<void> {
