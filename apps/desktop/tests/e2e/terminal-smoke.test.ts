@@ -519,7 +519,7 @@ async function stopElectronProcess(): Promise<void> {
 
 async function connectToElectron(port: number): Promise<Browser> {
   const endpoint = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + 30000;
   let lastError: unknown;
 
   while (Date.now() < deadline) {
