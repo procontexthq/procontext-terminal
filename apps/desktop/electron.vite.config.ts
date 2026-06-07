@@ -19,6 +19,8 @@ const alias = {
   ),
 };
 
+const workspacePackages = Object.keys(alias);
+
 export default defineConfig({
   main: {
     resolve: { alias },
@@ -26,7 +28,7 @@ export default defineConfig({
       noExternal: true,
     },
     build: {
-      externalizeDeps: { exclude: ["@terminal/recorder"] },
+      externalizeDeps: { exclude: workspacePackages },
       rollupOptions: {
         external: ["electron", "node-pty"],
         output: {

@@ -44,7 +44,8 @@ class FakePtyHost implements PtyHost {
   });
 }
 
-const request: CreateSessionRequest = { shell: "/bin/sh", cols: 80, rows: 24 };
+const testShell = platformShell();
+const request: CreateSessionRequest = { shell: testShell, cols: 80, rows: 24 };
 
 describe("TerminalSessionManager", () => {
   it("creates a running session and emits lifecycle events", async () => {
@@ -66,18 +67,18 @@ describe("TerminalSessionManager", () => {
     const manager = new TerminalSessionManager(host);
 
     const snapshot = await manager.createSession({
-      shell: "/bin/sh",
+      shell: testShell,
       cwd: "/tmp",
       cols: 80,
       rows: 24,
     });
 
-    expect(snapshot.shell).toBe("/bin/sh");
+    expect(snapshot.shell).toBe(testShell);
     expect(snapshot.cwd).toBe("/tmp");
     expect(host.spawnRequests[0]).toMatchObject({
       sessionId: snapshot.sessionId,
       shell: {
-        executable: "/bin/sh",
+        executable: testShell,
         args: [],
         cwd: "/tmp",
       },
@@ -400,3 +401,11 @@ describe("TerminalSessionManager", () => {
     expect(host.pty.kill).toHaveBeenCalledTimes(2);
   });
 });
+
+function platformShell(): string {
+  if (process.platform === "win32") {
+    return process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe";
+  }
+
+  return "/bin/sh";
+}
