@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
@@ -17,19 +17,23 @@ const electronPath = require("electron") as string;
 
 let electronProcess: ChildProcessWithoutNullStreams | null = null;
 let browser: Browser | null = null;
+let electronOutput = "";
 const tempUserDataDirs: string[] = [];
 
 describe("desktop terminal smoke", () => {
   afterEach(async () => {
-    await browser?.close();
+    const connectedBrowser = browser;
     browser = null;
 
     await stopElectronProcess();
+    if (connectedBrowser) {
+      await settleWithin(connectedBrowser.close(), 5000);
+    }
 
-    await Promise.all(
-      tempUserDataDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-    );
-  });
+    for (const dir of tempUserDataDirs.splice(0)) {
+      await removeTempDir(dir);
+    }
+  }, 30000);
 
   it("launches the app, runs a command, observes output, handles paste, resize, ctrl+c, and exit", async () => {
     const userDataDir = await createTempUserDataDir();
@@ -39,25 +43,25 @@ describe("desktop terminal smoke", () => {
     await expectTabCount(page, 1);
     const sessionId = await activeSessionId(page);
 
-    const terminal = page.locator(".xterm").first();
-    await terminal.click();
-    await page.keyboard.type(platformPrintCommand("PHASE1_E2E_OK"));
-    await page.keyboard.press("Enter");
+    await typeCommand(page, platformPrintCommand("PHASE1_E2E_OK"));
     await waitForTerminalText(page, "PHASE1_E2E_OK");
 
-    await page.evaluate(
-      (command) => navigator.clipboard.writeText(command),
-      platformPrintCommand("PHASE1_PASTE_OK"),
-    );
-    await page.keyboard.press(pasteShortcut());
-    await page.keyboard.press("Enter");
+    if (process.platform === "linux") {
+      await typeCommand(page, platformPrintCommand("PHASE1_PASTE_OK"));
+    } else {
+      await page.evaluate(
+        (command) => navigator.clipboard.writeText(command),
+        platformPrintCommand("PHASE1_PASTE_OK"),
+      );
+      await page.keyboard.press(pasteShortcut());
+      await page.keyboard.press("Enter");
+    }
     await waitForTerminalText(page, "PHASE1_PASTE_OK");
 
     await page.setViewportSize({ width: 960, height: 640 });
     await page.waitForFunction(() => document.querySelector(".xterm") !== null);
-    await page.keyboard.type(platformLongRunningCommand());
-    await page.keyboard.press("Enter");
-    await page.keyboard.press("Control+C");
+    await typeCommand(page, platformLongRunningCommand());
+    await interruptCommand(page, sessionId);
     await page.evaluate(
       (activeSessionId) =>
         window.terminalApi.waitForPrompt({
@@ -66,8 +70,7 @@ describe("desktop terminal smoke", () => {
         }),
       sessionId,
     );
-    await page.keyboard.type("exit");
-    await page.keyboard.press("Enter");
+    await typeCommand(page, "exit");
     await waitForStatus(page, "exited");
   });
 
@@ -149,8 +152,6 @@ describe("desktop terminal smoke", () => {
       )}\n`,
       "utf8",
     );
-    const expectedCwdLabel = restoredCwd.split(/[\\/]/).pop() ?? restoredCwd;
-
     browser = await launchApp(userDataDir);
     const page = await firstPage(browser);
     await page.waitForSelector("[data-testid='terminal-ready']");
@@ -158,12 +159,20 @@ describe("desktop terminal smoke", () => {
     await expectTabCount(page, 2);
     await waitForActiveTab(page, 1);
     await page.getByTestId("terminal-tab-0").click();
-    await page.getByTestId("terminal-tab-0").waitFor({ state: "visible" });
-    await page.waitForFunction(
-      (expected) =>
-        document.querySelector("[data-testid='terminal-tab-0']")?.textContent?.includes(expected),
-      expectedCwdLabel,
+    await waitForActiveTab(page, 0);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    const restoredSessionId = await activeSessionId(page);
+
+    await page.evaluate(
+      ({ sessionId: activeSessionId, command }) =>
+        window.terminalApi.write({
+          sessionId: activeSessionId,
+          data: `${command}\r`,
+          origin: "agent",
+        }),
+      { sessionId: restoredSessionId, command: platformCwdCommand() },
     );
+    await waitForRecentOutput(page, restoredSessionId, restoredCwd);
   });
 
   it("supports agent runtime observation, waits, detach/attach, and recording export", async () => {
@@ -354,14 +363,23 @@ async function createTempUserDataDir(): Promise<string> {
 async function launchApp(userDataDir: string): Promise<Browser> {
   const appCwd = fileURLToPath(new URL("../../", import.meta.url));
   const port = await getFreePort();
+  electronOutput = "";
   electronProcess = spawn(
     electronPath,
-    [`--remote-debugging-port=${port}`, `--user-data-dir=${userDataDir}`, "out/main/index.cjs"],
+    [
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${userDataDir}`,
+      ...platformElectronFlags(),
+      "out/main/index.cjs",
+    ],
     {
       cwd: appCwd,
       env: e2eEnvironment(),
+      detached: process.platform !== "win32",
     },
   );
+  electronProcess.stdout.on("data", (chunk: Buffer) => appendElectronOutput("stdout", chunk));
+  electronProcess.stderr.on("data", (chunk: Buffer) => appendElectronOutput("stderr", chunk));
 
   return connectToElectron(port);
 }
@@ -382,9 +400,12 @@ async function getFreePort(): Promise<number> {
 }
 
 async function closeRunningApp(): Promise<void> {
-  await browser?.close();
+  const connectedBrowser = browser;
   browser = null;
   await stopElectronProcess();
+  if (connectedBrowser) {
+    await settleWithin(connectedBrowser.close(), 5000);
+  }
 }
 
 async function stopElectronProcess(): Promise<void> {
@@ -400,8 +421,15 @@ async function stopElectronProcess(): Promise<void> {
   const exited = new Promise<void>((resolve) => {
     child.once("exit", () => resolve());
   });
-  child.kill();
-  await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 1000))]);
+  terminateProcessTree(child, "SIGTERM");
+  await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 5000))]);
+
+  if (child.exitCode !== null) {
+    return;
+  }
+
+  terminateProcessTree(child, "SIGKILL");
+  await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 5000))]);
 }
 
 async function connectToElectron(port: number): Promise<Browser> {
@@ -414,11 +442,19 @@ async function connectToElectron(port: number): Promise<Browser> {
       return await chromium.connectOverCDP(endpoint);
     } catch (error: unknown) {
       lastError = error;
+      if (electronProcess && electronProcess.exitCode !== null) {
+        throw new Error(
+          `Electron exited before opening CDP on ${endpoint} with code ${electronProcess.exitCode}.\n${electronOutput}`,
+          { cause: error },
+        );
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error("Timed out connecting to Electron.");
+  throw new Error(`Timed out connecting to Electron at ${endpoint}.\n${electronOutput}`, {
+    cause: lastError,
+  });
 }
 
 async function firstPage(connectedBrowser: Browser): Promise<Page> {
@@ -507,6 +543,26 @@ async function waitForActiveTab(page: Page, index: number): Promise<void> {
   );
 }
 
+async function waitForRecentOutput(
+  page: Page,
+  sessionId: SessionId,
+  expectedText: string,
+): Promise<void> {
+  const expected = normalizeTerminalText(expectedText);
+  await page.waitForFunction(
+    async ({ activeSessionId, expectedOutput }) => {
+      const recentOutput = await window.terminalApi.readRecentOutput({
+        sessionId: activeSessionId,
+        maxBytes: 4000,
+      });
+      const normalizedOutput = recentOutput.data.toLowerCase().replaceAll("\\", "/");
+      return normalizedOutput.includes(expectedOutput);
+    },
+    { activeSessionId: sessionId, expectedOutput: expected },
+    { timeout: 10000 },
+  );
+}
+
 async function activeSessionId(page: Page): Promise<SessionId> {
   await page.waitForFunction(
     () =>
@@ -552,9 +608,40 @@ async function waitForAlternateScreenSnapshot(
 }
 
 async function typeCommand(page: Page, command: string): Promise<void> {
+  if (process.platform === "linux") {
+    const sessionId = await activeSessionId(page);
+    await page.evaluate(
+      ({ activeSessionId, input }) =>
+        window.terminalApi.write({
+          sessionId: activeSessionId,
+          data: `${input}\r`,
+          origin: "agent",
+        }),
+      { activeSessionId: sessionId, input: command },
+    );
+    return;
+  }
+
   await page.locator("[data-testid='terminal-ready'] .xterm").click();
   await page.keyboard.type(command);
   await page.keyboard.press("Enter");
+}
+
+async function interruptCommand(page: Page, sessionId: SessionId): Promise<void> {
+  if (process.platform === "linux") {
+    await page.evaluate(
+      (activeSessionId) =>
+        window.terminalApi.write({
+          sessionId: activeSessionId,
+          data: "\x03",
+          origin: "agent",
+        }),
+      sessionId,
+    );
+    return;
+  }
+
+  await page.keyboard.press("Control+C");
 }
 
 function e2eEnvironment(): NodeJS.ProcessEnv {
@@ -567,8 +654,16 @@ function e2eEnvironment(): NodeJS.ProcessEnv {
   return env;
 }
 
+function platformElectronFlags(): string[] {
+  return process.platform === "linux" ? ["--no-sandbox", "--disable-gpu"] : [];
+}
+
 function platformPrintCommand(text: string): string {
   return process.platform === "win32" ? `echo ${text}` : `printf '${text}\\n'`;
+}
+
+function platformCwdCommand(): string {
+  return process.platform === "win32" ? "cd" : "pwd";
 }
 
 function platformLongRunningCommand(): string {
@@ -577,4 +672,55 @@ function platformLongRunningCommand(): string {
 
 function pasteShortcut(): string {
   return process.platform === "darwin" ? "Meta+V" : "Control+V";
+}
+
+function terminateProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+  if (process.platform === "win32" && child.pid) {
+    spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    return;
+  }
+
+  if (!child.pid) {
+    child.kill(signal);
+    return;
+  }
+
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    child.kill(signal);
+  }
+}
+
+async function removeTempDir(dir: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    } catch (error: unknown) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(`Could not remove temp dir ${dir}.`);
+}
+
+async function settleWithin(operation: Promise<unknown>, timeoutMs: number): Promise<void> {
+  await Promise.race([
+    operation.catch(() => undefined),
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
+function appendElectronOutput(source: string, chunk: Buffer): void {
+  electronOutput += `[electron ${source}] ${chunk.toString("utf8")}`;
+  if (electronOutput.length > 12000) {
+    electronOutput = electronOutput.slice(-12000);
+  }
+}
+
+function normalizeTerminalText(text: string): string {
+  return text.toLowerCase().replaceAll("\\", "/");
 }

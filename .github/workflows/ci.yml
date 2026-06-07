@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+          - ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgbm1 \
+            libgtk-3-0 \
+            libnss3 \
+            libxss1 \
+            xvfb
+          if apt-cache show libasound2t64 >/dev/null 2>&1; then
+            sudo apt-get install -y libasound2t64
+          else
+            sudo apt-get install -y libasound2
+          fi
+
+      - name: Install dependencies
+        run: |
+          unset ELECTRON_SKIP_BINARY_DOWNLOAD
+          for attempt in 1 2 3; do
+            pnpm install --frozen-lockfile && exit 0
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
+      - name: Verify Electron binary
+        working-directory: apps/desktop
+        run: |
+          unset ELECTRON_SKIP_BINARY_DOWNLOAD
+          pnpm rebuild electron
+          node -e "const fs=require('node:fs');const electron=require('electron');if(!fs.existsSync(electron)){throw new Error('Electron binary not found: '+electron)};console.log(electron)"
+
+      - name: Reject npm lockfile
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json must not be committed; use pnpm-lock.yaml."
+            exit 1
+          fi
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format
+        run: pnpm format
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Unit and integration tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Electron E2E tests
+        if: runner.os != 'Linux'
+        run: pnpm test:e2e
+
+      - name: Electron E2E tests with virtual display
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" pnpm test:e2e

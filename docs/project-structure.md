@@ -162,6 +162,10 @@ Must not:
 - Mix terminal output with application logs.
 - Log PTY bytes, terminal input, clipboard contents, transcript data, or full environment values by default.
 
+Packaging note:
+
+- `apps/desktop/package.json` may declare native runtime dependencies such as `node-pty` so bundled Electron main code can resolve them from the app package on macOS, Windows, and Linux. Application code must still import `node-pty` only through `packages/pty-host`.
+
 Good delegation tasks:
 
 - Implement window lifecycle.
