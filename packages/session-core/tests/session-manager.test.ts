@@ -196,6 +196,22 @@ describe("TerminalSessionManager", () => {
     expect(host.pty.write).toHaveBeenCalledWith("echo detached\r");
   });
 
+  it("limits recent output by UTF-8 bytes without splitting code points", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const snapshot = await manager.createSession(request);
+
+    host.pty.emitData("😀😀😀");
+    const recentOutput = manager.readRecentOutput({
+      sessionId: snapshot.sessionId,
+      maxBytes: 5,
+    });
+
+    expect(Buffer.byteLength(recentOutput.data, "utf8")).toBeLessThanOrEqual(5);
+    expect(recentOutput.data).toBe(Buffer.from(recentOutput.data, "utf8").toString("utf8"));
+    expect(recentOutput.data).toBe("😀");
+  });
+
   it("refuses detach and attach requests for invalid lifecycle states", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);

@@ -17,6 +17,19 @@ export type AgentPolicyActor = {
 export type AgentPolicyOperation = {
   type: AgentCommandType;
   sessionId?: SessionId;
+  cwd?: string;
+  shell?: string;
+  inputKind?: "text" | "key" | "resize" | "kill";
+  observationKind?:
+    | "list"
+    | "get"
+    | "recentOutput"
+    | "screen"
+    | "waitText"
+    | "waitScreenChange"
+    | "waitQuiet"
+    | "waitPrompt";
+  recordingKind?: "start" | "stop" | "export";
 };
 
 export type AgentPolicyRequest = {

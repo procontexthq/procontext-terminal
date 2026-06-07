@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 
 import type { RawData, WebSocket, WebSocketServer } from "ws";
 
-import type { AgentPolicy } from "@terminal/policy-engine";
+import type { AgentPolicy, AgentPolicyOperation } from "@terminal/policy-engine";
 import {
   createAgentCommandFailure,
   createAgentCommandSuccess,
@@ -23,6 +23,7 @@ import {
   type CaptureScreenRequest,
   type CreateSessionRequest,
   type KillSessionRequest,
+  type PolicyDenial,
   type ReadRecentOutputRequest,
   type RecentOutputSnapshot,
   type RendererSessionEvent,
@@ -194,6 +195,33 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       return;
     }
 
+    const decision = options.policy.authorize({
+      actor: {
+        kind: "agent",
+        authenticated: connection.authenticated,
+        local: connection.local,
+        ownedSessionIds: connection.ownedSessionIds,
+      },
+      operation: policyOperationForCommand(command),
+    });
+    if (decision.type === "deny") {
+      const terminalError = terminalErrorFromPolicyDenial(command, decision.reason);
+      audit(
+        connection,
+        command.type,
+        "deny",
+        command.requestId,
+        terminalError,
+        decision.reason.code,
+      );
+      sendJson(connection.socket, {
+        type: "terminal.denied",
+        payload: decision.reason,
+      } satisfies AgentEvent);
+      sendResult(connection, createAgentCommandFailure(command.requestId, terminalError));
+      return;
+    }
+
     if (command.type === "agent.authenticate") {
       handleAuthenticate(command, connection);
       return;
@@ -209,40 +237,6 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
         },
       );
       audit(connection, command.type, "deny", command.requestId, terminalError);
-      sendResult(connection, createAgentCommandFailure(command.requestId, terminalError));
-      return;
-    }
-
-    const decision = options.policy.authorize({
-      actor: {
-        kind: "agent",
-        authenticated: connection.authenticated,
-        local: connection.local,
-        ownedSessionIds: connection.ownedSessionIds,
-      },
-      operation: {
-        type: command.type,
-        ...(commandSessionId(command) ? { sessionId: commandSessionId(command) } : {}),
-      },
-    });
-    if (decision.type === "deny") {
-      const terminalError = createTerminalError("policy_denied", decision.reason.message, {
-        operation: command.type,
-        sessionId: commandSessionId(command),
-        cause: decision.reason.code,
-      });
-      audit(
-        connection,
-        command.type,
-        "deny",
-        command.requestId,
-        terminalError,
-        decision.reason.code,
-      );
-      sendJson(connection.socket, {
-        type: "terminal.denied",
-        payload: decision.reason,
-      } satisfies AgentEvent);
       sendResult(connection, createAgentCommandFailure(command.requestId, terminalError));
       return;
     }
@@ -445,6 +439,79 @@ function commandSessionId(command: AgentCommand): SessionId | undefined {
     case "terminal.sendText":
       return command.payload.sessionId;
   }
+}
+
+function policyOperationForCommand(command: AgentCommand): AgentPolicyOperation {
+  switch (command.type) {
+    case "agent.authenticate":
+      return { type: command.type };
+    case "terminal.list":
+      return { type: command.type, observationKind: "list" };
+    case "terminal.create":
+      return {
+        type: command.type,
+        ...(command.payload.cwd ? { cwd: command.payload.cwd } : {}),
+        ...(command.payload.shell ? { shell: command.payload.shell } : {}),
+      };
+    case "terminal.attach":
+      return { type: command.type, sessionId: command.payload.sessionId, observationKind: "get" };
+    case "terminal.sendText":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "text" };
+    case "terminal.sendKey":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "key" };
+    case "terminal.resize":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "resize" };
+    case "terminal.readRecentOutput":
+      return {
+        type: command.type,
+        sessionId: command.payload.sessionId,
+        observationKind: "recentOutput",
+      };
+    case "terminal.captureScreen":
+      return {
+        type: command.type,
+        sessionId: command.payload.sessionId,
+        observationKind: "screen",
+      };
+    case "terminal.waitForText":
+      return {
+        type: command.type,
+        sessionId: command.payload.sessionId,
+        observationKind: "waitText",
+      };
+    case "terminal.waitForScreenChange":
+      return {
+        type: command.type,
+        sessionId: command.payload.sessionId,
+        observationKind: "waitScreenChange",
+      };
+    case "terminal.waitForQuiet":
+      return {
+        type: command.type,
+        sessionId: command.payload.sessionId,
+        observationKind: "waitQuiet",
+      };
+    case "terminal.waitForPrompt":
+      return {
+        type: command.type,
+        sessionId: command.payload.sessionId,
+        observationKind: "waitPrompt",
+      };
+    case "terminal.kill":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "kill" };
+  }
+}
+
+function terminalErrorFromPolicyDenial(command: AgentCommand, denial: PolicyDenial): TerminalError {
+  return createTerminalError(
+    denial.code === "auth_required" ? "auth_required" : "policy_denied",
+    denial.message,
+    {
+      operation: command.type,
+      sessionId: commandSessionId(command),
+      cause: denial.code,
+    },
+  );
 }
 
 function normalizeTerminalError(error: unknown, command: AgentCommand): TerminalError {

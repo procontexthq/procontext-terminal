@@ -80,25 +80,11 @@ export async function createTerminalSession({
     fitAddon.fit();
 
     const dimensions = fitAddon.proposeDimensions() ?? { cols: 80, rows: 24 };
-    const snapshot = attachSessionId
-      ? await api.attachSession({ sessionId: attachSessionId })
-      : await api.createSession({
-          ...dimensions,
-          ...(session?.cwd ? { cwd: session.cwd } : {}),
-          ...(session?.shell ? { shell: session.shell } : {}),
-        });
-    let rendererInputEnabled = snapshot.state !== "detached";
-    let sessionCanAcceptPtyOperations =
-      snapshot.state === "running" || snapshot.state === "detached";
-    dataSubscription = terminal.onData((data) => {
-      if (!rendererInputEnabled) {
-        return;
-      }
-      void api.write({ sessionId: snapshot.sessionId, data }).catch((error: unknown) => {
-        onError?.(error);
-      });
-    });
-    eventSubscription = api.onSessionEvent(snapshot.sessionId, (event) => {
+    let sessionId: SessionId | null = null;
+    let bufferedEvents: RendererSessionEvent[] = [];
+    let rendererInputEnabled = false;
+    let sessionCanAcceptPtyOperations = false;
+    const processSessionEvent = (event: RendererSessionEvent): void => {
       onSessionEvent?.(event);
       switch (event.type) {
         case "session.output":
@@ -113,11 +99,16 @@ export async function createTerminalSession({
           sessionCanAcceptPtyOperations = true;
           break;
         case "session.exited":
-        case "session.error":
           rendererInputEnabled = false;
           sessionCanAcceptPtyOperations = false;
           break;
+        case "session.error":
+          onError?.(event.payload);
+          break;
         case "session.snapshot.request":
+          if (!sessionId) {
+            break;
+          }
           if (!isObservableTerminal(terminal)) {
             onError?.(new Error("Terminal screen snapshot is not supported by this terminal."));
             break;
@@ -127,7 +118,7 @@ export async function createTerminalSession({
               requestId: event.requestId,
               snapshot: captureTerminalScreen({
                 terminal,
-                sessionId: snapshot.sessionId,
+                sessionId,
                 title: currentTitle,
               }),
             })
@@ -139,6 +130,40 @@ export async function createTerminalSession({
         case "agent.activity":
           break;
       }
+    };
+    eventSubscription = api.onTerminalEvent((event) => {
+      if (!sessionId) {
+        bufferedEvents.push(event);
+        return;
+      }
+      if (eventMatchesSession(event, sessionId)) {
+        processSessionEvent(event);
+      }
+    });
+    const snapshot = attachSessionId
+      ? await api.attachSession({ sessionId: attachSessionId })
+      : await api.createSession({
+          ...dimensions,
+          ...(session?.cwd ? { cwd: session.cwd } : {}),
+          ...(session?.shell ? { shell: session.shell } : {}),
+        });
+    sessionId = snapshot.sessionId;
+    rendererInputEnabled = snapshot.state !== "detached";
+    sessionCanAcceptPtyOperations = snapshot.state === "running" || snapshot.state === "detached";
+    const eventsToFlush = bufferedEvents;
+    bufferedEvents = [];
+    for (const event of eventsToFlush) {
+      if (eventMatchesSession(event, sessionId)) {
+        processSessionEvent(event);
+      }
+    }
+    dataSubscription = terminal.onData((data) => {
+      if (!rendererInputEnabled) {
+        return;
+      }
+      void api.write({ sessionId: snapshot.sessionId, data }).catch((error: unknown) => {
+        onError?.(error);
+      });
     });
     if (attachSessionId) {
       const recentOutput = await api.readRecentOutput({
@@ -307,6 +332,25 @@ function disposeRendererResources({
     terminal.dispose();
   } catch (error: unknown) {
     onError?.(error);
+  }
+}
+
+function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId): boolean {
+  switch (event.type) {
+    case "session.created":
+    case "session.attached":
+    case "session.detached":
+      return event.payload.sessionId === sessionId;
+    case "session.output":
+      return event.payload.sessionId === sessionId;
+    case "session.exited":
+      return event.payload.sessionId === sessionId;
+    case "session.error":
+      return event.payload.sessionId === sessionId;
+    case "session.snapshot.request":
+      return event.payload.sessionId === sessionId;
+    case "agent.activity":
+      return false;
   }
 }
 

@@ -29,6 +29,32 @@ describe("default agent policy", () => {
     });
   });
 
+  it("allows authentication and ignores safe operation metadata in the default local policy", () => {
+    const policy = createDefaultAgentPolicy({ createDecisionId: () => "decision-auth" });
+    const actor = {
+      kind: "agent" as const,
+      authenticated: false,
+      local: true,
+      ownedSessionIds: new Set<string>(),
+    };
+    const createOperation = {
+      type: "terminal.create" as const,
+      cwd: "/workspace",
+      shell: "/bin/sh",
+    };
+
+    expect(policy.authorize({ actor, operation: { type: "agent.authenticate" } })).toMatchObject({
+      type: "allow",
+      decisionId: "decision-auth",
+    });
+    expect(
+      policy.authorize({
+        actor: { ...actor, authenticated: true },
+        operation: createOperation,
+      }),
+    ).toMatchObject({ type: "allow" });
+  });
+
   it("denies unauthenticated and non-local agent operations with stable reasons", () => {
     const policy = createDefaultAgentPolicy({ createDecisionId: () => "decision-deny" });
     const sessionId = createSessionId("session-policy-2");

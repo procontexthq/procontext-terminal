@@ -45,22 +45,52 @@ The policy engine must not:
 
 The policy engine returns decisions. Callers enforce those decisions.
 
+Every agent command, including `agent.authenticate`, goes through a policy
+decision before the gateway mutates connection authentication or terminal state.
+When unauthenticated access is denied with `auth_required`, callers surface an
+`auth_required` terminal error. Other denial codes are surfaced as
+`policy_denied`.
+
 ## Decision Shape
 
 Policy decisions should be structured and auditable:
 
 ```ts
+type AgentPolicyOperation = {
+  type: AgentCommandType;
+  sessionId?: SessionId;
+  cwd?: string;
+  shell?: string;
+  inputKind?: "text" | "key" | "resize" | "kill";
+  observationKind?:
+    | "list"
+    | "get"
+    | "recentOutput"
+    | "screen"
+    | "waitText"
+    | "waitScreenChange"
+    | "waitQuiet"
+    | "waitPrompt";
+  recordingKind?: "start" | "stop" | "export";
+};
+
 type PolicyDecision =
   | { type: "allow"; decisionId: string; reason?: string }
   | { type: "deny"; decisionId: string; reason: PolicyDenial };
 ```
 
 Denial reasons must be machine-readable and include enough context for UI, logs, and agent responses.
+Operation metadata is intentionally safe context only. It can include `cwd`,
+`shell`, the session ID, and coarse operation kinds, but it must not include raw
+terminal input text, PTY output, clipboard data, tokens, secrets, or transcript
+payloads by default.
 
 ## Testing Expectations
 
 - Sensitive operations route through policy checks.
+- Authentication routes through policy before mutating auth state.
 - Denials prevent side effects.
 - Denial reasons are structured and stable.
 - Human, agent, and system origins can be evaluated differently.
+- Agent input policy checks receive safe input metadata, not raw terminal text.
 - Default local policy allows intended development flows without skipping decision points.
