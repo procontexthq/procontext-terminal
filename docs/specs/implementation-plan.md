@@ -263,3 +263,12 @@ pnpm test
 pnpm test:e2e
 pnpm build
 ```
+
+## Continuous Verification
+
+Pull requests and pushes to `main` run the same verification sequence on
+macOS, Windows, and Linux CI runners. The matrix installs dependencies with
+the frozen pnpm lockfile, rejects accidental npm lockfiles, runs linting,
+format checking, type checking, tests, Electron E2E smoke tests, and the build.
+Linux E2E runs under Xvfb so Electron has a virtual display while preserving
+the same app runtime path used on desktop systems.

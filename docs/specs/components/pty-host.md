@@ -33,6 +33,10 @@ The PTY host must not:
 - Store recordings directly.
 
 The PTY host should be the only module that imports `node-pty` directly.
+The desktop app package may still declare `node-pty` as a runtime dependency
+for Electron bundling and packaging, because the built main process resolves the
+native module from the app package. That dependency declaration must not become
+a direct app-code import.
 
 ## Platform Behavior
 
