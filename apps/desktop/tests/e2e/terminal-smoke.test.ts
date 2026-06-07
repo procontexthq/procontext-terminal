@@ -22,10 +22,13 @@ const tempUserDataDirs: string[] = [];
 
 describe("desktop terminal smoke", () => {
   afterEach(async () => {
-    await browser?.close();
+    const connectedBrowser = browser;
     browser = null;
 
     await stopElectronProcess();
+    if (connectedBrowser) {
+      await settleWithin(connectedBrowser.close(), 5000);
+    }
 
     for (const dir of tempUserDataDirs.splice(0)) {
       await removeTempDir(dir);
@@ -397,9 +400,12 @@ async function getFreePort(): Promise<number> {
 }
 
 async function closeRunningApp(): Promise<void> {
-  await browser?.close();
+  const connectedBrowser = browser;
   browser = null;
   await stopElectronProcess();
+  if (connectedBrowser) {
+    await settleWithin(connectedBrowser.close(), 5000);
+  }
 }
 
 async function stopElectronProcess(): Promise<void> {
@@ -699,6 +705,13 @@ async function removeTempDir(dir: string): Promise<void> {
   }
 
   throw lastError instanceof Error ? lastError : new Error(`Could not remove temp dir ${dir}.`);
+}
+
+async function settleWithin(operation: Promise<unknown>, timeoutMs: number): Promise<void> {
+  await Promise.race([
+    operation.catch(() => undefined),
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
 }
 
 function appendElectronOutput(source: string, chunk: Buffer): void {
