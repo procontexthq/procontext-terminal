@@ -614,8 +614,23 @@ function appendRecentOutput(current: string, data: string): string {
 }
 
 function sliceRecentOutput(value: string, maxBytes: number): string {
-  if (value.length <= maxBytes) {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) {
     return value;
   }
-  return value.slice(value.length - maxBytes);
+  const characters = Array.from(value);
+  const output: string[] = [];
+  let usedBytes = 0;
+  for (let index = characters.length - 1; index >= 0; index -= 1) {
+    const character = characters[index];
+    if (!character) {
+      continue;
+    }
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (usedBytes + characterBytes > maxBytes) {
+      break;
+    }
+    output.push(character);
+    usedBytes += characterBytes;
+  }
+  return output.reverse().join("");
 }

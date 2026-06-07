@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createDefaultAgentPolicy } from "@terminal/policy-engine";
+import { createDefaultAgentPolicy, type AgentPolicy } from "@terminal/policy-engine";
 import {
   createAgentCommand,
   createRequestId,
@@ -150,6 +150,39 @@ describe("agent gateway", () => {
     client.close();
   });
 
+  it("still requires authentication when policy allows an unauthenticated command", async () => {
+    const tempDir = await createTempDir();
+    const services = createFakeServices();
+    const policy: AgentPolicy = {
+      authorize: vi.fn(() => ({ type: "allow", decisionId: "decision-allow" })),
+    };
+    const gateway = await startAgentGateway({
+      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
+      services,
+      policy,
+      token: "test-token",
+      tokenExpiresAt: "2026-05-11T00:05:00.000Z",
+      now: () => new Date("2026-05-11T00:00:00.000Z"),
+    });
+    gateways.push(gateway);
+    const client = await AgentTestClient.connect(gateway.descriptor.url);
+
+    await expect(
+      client.request(createAgentCommand("terminal.create", { cols: 80, rows: 24 })),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { type: "auth_required", operation: "terminal.create" },
+    });
+
+    expect(
+      vi
+        .mocked(policy.authorize)
+        .mock.calls.some(([request]) => request.operation.type === "terminal.create"),
+    ).toBe(true);
+    expect(services.createSession).not.toHaveBeenCalled();
+    client.close();
+  });
+
   it("rejects expired tokens without authenticating the connection or mutating sessions", async () => {
     const tempDir = await createTempDir();
     const services = createFakeServices();
@@ -175,6 +208,111 @@ describe("agent gateway", () => {
     });
 
     expect(services.createSession).not.toHaveBeenCalled();
+    client.close();
+  });
+
+  it("routes authentication through policy before mutating connection auth state", async () => {
+    const tempDir = await createTempDir();
+    const services = createFakeServices();
+    const policy: AgentPolicy = {
+      authorize: vi.fn(() => ({
+        type: "deny",
+        decisionId: "decision-auth-deny",
+        reason: {
+          decisionId: "decision-auth-deny",
+          code: "remote_control_disabled",
+          message: "Remote agent control is disabled.",
+          operation: "agent.authenticate",
+        },
+      })),
+    };
+    const gateway = await startAgentGateway({
+      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
+      services,
+      policy,
+      token: "test-token",
+      tokenExpiresAt: "2026-05-11T00:05:00.000Z",
+      now: () => new Date("2026-05-11T00:00:00.000Z"),
+    });
+    gateways.push(gateway);
+    const client = await AgentTestClient.connect(gateway.descriptor.url);
+
+    await expect(
+      client.request(createAgentCommand("agent.authenticate", { token: "test-token" })),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", operation: "agent.authenticate" },
+    });
+    await expect(
+      client.request(createAgentCommand("terminal.create", { cols: 80, rows: 24 })),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", operation: "terminal.create" },
+    });
+
+    expect(
+      vi
+        .mocked(policy.authorize)
+        .mock.calls.some(([request]) => request.operation.type === "agent.authenticate"),
+    ).toBe(true);
+    expect(services.createSession).not.toHaveBeenCalled();
+    client.close();
+  });
+
+  it("passes safe operation metadata to policy without raw terminal input", async () => {
+    const tempDir = await createTempDir();
+    const services = createFakeServices();
+    const policy: AgentPolicy = {
+      authorize: vi.fn(() => ({ type: "allow", decisionId: "decision-safe-context" })),
+    };
+    const gateway = await startAgentGateway({
+      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
+      services,
+      policy,
+      token: "test-token",
+      tokenExpiresAt: "2026-05-11T00:05:00.000Z",
+      now: () => new Date("2026-05-11T00:00:00.000Z"),
+    });
+    gateways.push(gateway);
+    const client = await AgentTestClient.connect(gateway.descriptor.url);
+
+    await expectAuthenticate(client);
+    const created = await client.request(
+      createAgentCommand("terminal.create", {
+        cols: 80,
+        rows: 24,
+        cwd: "/workspace",
+        shell: "/bin/sh",
+      }),
+    );
+    const sessionId = (created as Extract<AgentCommandResult, { ok: true }>).value
+      .sessionId as SessionId;
+    await client.request(
+      createAgentCommand("terminal.sendText", {
+        sessionId,
+        text: "SECRET_INPUT\r",
+      }),
+    );
+
+    const operations = vi
+      .mocked(policy.authorize)
+      .mock.calls.map(([request]) => request.operation as Record<string, unknown>);
+    expect(operations).toContainEqual(expect.objectContaining({ type: "agent.authenticate" }));
+    expect(operations).toContainEqual(
+      expect.objectContaining({
+        type: "terminal.create",
+        cwd: "/workspace",
+        shell: "/bin/sh",
+      }),
+    );
+    const sendTextOperation = operations.find(
+      (operation) => operation.type === "terminal.sendText",
+    );
+    expect(sendTextOperation).toMatchObject({
+      sessionId,
+      inputKind: "text",
+    });
+    expect(JSON.stringify(sendTextOperation)).not.toContain("SECRET_INPUT");
     client.close();
   });
 

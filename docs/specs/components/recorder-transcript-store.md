@@ -23,7 +23,18 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 
 ## Recording Format
 
-Recording format should be append-only and versioned.
+On disk, recordings are append-only JSON Lines. The first line is a versioned
+header and every later line is one validated, redacted recording event.
+
+```ts
+type RecordingHeader = {
+  type: "recording.header";
+  schemaVersion: 1;
+  sessionId: SessionId;
+};
+```
+
+Stored events use the protocol recording event schema:
 
 ```ts
 type RecordingEvent =
@@ -33,6 +44,20 @@ type RecordingEvent =
   | { type: "terminal.resize"; sessionId: SessionId; at: string; cols: number; rows: number }
   | { type: "session.exited"; sessionId: SessionId; at: string; exitCode: number | null; signal: string | null };
 ```
+
+The export API keeps the schema version 1 envelope:
+
+```ts
+type TerminalRecordingExport = {
+  schemaVersion: 1;
+  sessionId: SessionId;
+  exportedAt: string;
+  events: RecordingEvent[];
+};
+```
+
+Legacy JSON-array recordings can be read for compatibility, but new writes use
+only the versioned JSONL format.
 
 ## Boundaries
 
@@ -47,10 +72,11 @@ The recorder must not:
 ## Persistence Rules
 
 - Full transcripts are not persisted by default unless recording is enabled.
-- Recording files must include schema versions.
+- Recording files must include a versioned JSONL header.
 - Transcript indexes must not duplicate raw terminal output unnecessarily.
 - Redaction policy must apply before data is written.
 - Exported files must preserve event ordering.
+- Recording events must be validated when read and exported.
 
 ## Testing Expectations
 
@@ -59,3 +85,5 @@ The recorder must not:
 - Resize and exit events are captured.
 - Redaction rules apply before persistence.
 - Exported replay metadata can be validated against its schema version.
+- Corrupted stored recordings fail export instead of returning unvalidated data.
+- Legacy JSON-array recordings remain exportable.

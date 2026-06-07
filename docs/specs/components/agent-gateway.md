@@ -64,6 +64,19 @@ Phase 3 exposes the first external command set:
 ownership, event filtering, and subsequent control. It does not change the
 renderer lifecycle state of that terminal.
 
+The gateway authorizes every parsed command through the policy engine before
+performing command-specific side effects. This includes `agent.authenticate`;
+a policy denial for authentication prevents the connection from becoming
+authenticated even if the token is valid. Non-authentication terminal commands
+still require an authenticated connection even when a permissive policy returns
+`allow`.
+
+Policy requests include safe operation metadata such as `cwd`, `shell`,
+`sessionId`, coarse input kind, coarse observation kind, or recording kind.
+They intentionally exclude raw terminal input text, PTY output, tokens,
+clipboard contents, and transcript payloads unless a future policy explicitly
+opts into that sensitive data.
+
 ## Boundaries
 
 The agent gateway must not:
@@ -88,4 +101,6 @@ the gateway returns a structured `observation_unavailable` terminal error.
 - Invalid payloads fail closed with typed errors.
 - Allowed requests map to the expected session manager operation.
 - Denied requests produce policy denial events without side effects.
+- Authentication denial by policy leaves the connection unauthenticated.
+- Input authorization includes only safe metadata by default.
 - Event streams preserve session identity and lifecycle ordering.

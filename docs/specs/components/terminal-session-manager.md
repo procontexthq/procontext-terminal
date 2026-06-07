@@ -41,6 +41,12 @@ stateDiagram-v2
   Exited --> [*]
 ```
 
+`session.error` is a diagnostic event, not a lifecycle transition by itself.
+Only canonical snapshots and explicit lifecycle events change session state. A
+recording failure or observer failure can emit `session.error` while the PTY
+continues running and accepting input, resize, detach, and kill operations.
+Session creation failures still transition the session record to `failed`.
+
 ## Boundaries
 
 The session manager must not:
@@ -70,6 +76,7 @@ Session metadata must be serializable and shared through protocol types. At mini
 
 - Session lifecycle transitions follow the state machine.
 - PTY output, exit, title, bell, resize, and error events are broadcast through public event contracts.
+- `session.error` diagnostics do not make a running session failed unless the canonical lifecycle state changes.
 - A failing event subscriber must not prevent other subscribers from receiving events or change session lifecycle state.
 - Shutdown terminates running or exiting sessions without leaving orphaned PTY handles.
 - Shutdown must not clear still-active session records when termination fails or times out; keeping the PTY handle available lets callers retry, inspect, or escalate cleanup.

@@ -83,10 +83,15 @@ class ObservableFakeTerminal extends FakeTerminal {
 function fakeApi(): RendererTerminalApi & {
   emit: (event: RendererSessionEvent) => void;
   unsubscribeSessionEvent: ReturnType<typeof vi.fn>;
+  unsubscribeTerminalEvent: ReturnType<typeof vi.fn>;
 } {
-  let handler: ((event: RendererSessionEvent) => void) | null = null;
+  let sessionHandler: ((event: RendererSessionEvent) => void) | null = null;
+  let terminalHandler: ((event: RendererSessionEvent) => void) | null = null;
   const unsubscribeSessionEvent = vi.fn(() => {
-    handler = null;
+    sessionHandler = null;
+  });
+  const unsubscribeTerminalEvent = vi.fn(() => {
+    terminalHandler = null;
   });
   const snapshot: TerminalSessionSnapshot = {
     sessionId: "session-1" as SessionId,
@@ -187,13 +192,20 @@ function fakeApi(): RendererTerminalApi & {
       }),
     ),
     releaseSession: vi.fn<RendererTerminalApi["releaseSession"]>(() => Promise.resolve()),
-    onTerminalEvent: vi.fn<RendererTerminalApi["onTerminalEvent"]>(() => vi.fn()),
+    onTerminalEvent: vi.fn<RendererTerminalApi["onTerminalEvent"]>((nextHandler) => {
+      terminalHandler = nextHandler;
+      return unsubscribeTerminalEvent;
+    }),
     onSessionEvent: vi.fn<RendererTerminalApi["onSessionEvent"]>((_sessionId, nextHandler) => {
-      handler = nextHandler;
+      sessionHandler = nextHandler;
       return unsubscribeSessionEvent;
     }),
-    emit: (event) => handler?.(event),
+    emit: (event) => {
+      terminalHandler?.(event);
+      sessionHandler?.(event);
+    },
     unsubscribeSessionEvent,
+    unsubscribeTerminalEvent,
   };
 }
 
@@ -227,6 +239,46 @@ describe("terminal controller", () => {
     expect(write).toHaveBeenCalledWith({ sessionId: controller.sessionId, data: "echo ok\r" });
     expect(terminal.writes).toEqual(["ok"]);
     expect(resize).toHaveBeenCalledWith({ sessionId: controller.sessionId, cols: 80, rows: 24 });
+  });
+
+  it("buffers startup output emitted before session creation resolves", async () => {
+    const terminal = new FakeTerminal();
+    const api = fakeApi();
+    let resolveCreateSession!: (snapshot: TerminalSessionSnapshot) => void;
+    const pendingCreateSession = new Promise<TerminalSessionSnapshot>((resolve) => {
+      resolveCreateSession = resolve;
+    });
+    const earlySnapshot: TerminalSessionSnapshot = {
+      sessionId: "session-early" as SessionId,
+      state: "running",
+      shell: "/bin/sh",
+      cwd: "/tmp",
+      cols: 80,
+      rows: 24,
+      title: null,
+      createdBy: "human",
+      createdAt: "2026-05-09T00:00:00.000Z",
+      updatedAt: "2026-05-09T00:00:00.000Z",
+    };
+    vi.mocked(api.createSession).mockReturnValueOnce(pendingCreateSession);
+
+    const controllerPromise = createTerminalSession({
+      api,
+      element: document.createElement("div"),
+      createTerminal: () => terminal,
+      createFitAddon: () => ({
+        fit: vi.fn(),
+        proposeDimensions: () => ({ cols: 80, rows: 24 }),
+      }),
+    });
+    api.emit({
+      type: "session.output",
+      payload: { sessionId: earlySnapshot.sessionId, data: "startup prompt" },
+    });
+    resolveCreateSession(earlySnapshot);
+    await controllerPromise;
+
+    expect(terminal.writes).toEqual(["startup prompt"]);
   });
 
   it("passes launch options to session creation and focuses the terminal", async () => {
@@ -537,11 +589,50 @@ describe("terminal controller", () => {
     });
 
     expect(terminal.dataSubscriptionDispose).toHaveBeenCalledOnce();
-    expect(api.unsubscribeSessionEvent).toHaveBeenCalledOnce();
+    expect(api.unsubscribeTerminalEvent).toHaveBeenCalledOnce();
     expect(terminal.dispose).toHaveBeenCalledOnce();
     expect(terminal.writes).toEqual([]);
     expect(api.detachSession).toHaveBeenCalledWith({ sessionId: controller.sessionId });
     expect(api.kill).not.toHaveBeenCalled();
+  });
+
+  it("keeps input and resize active after non-fatal session errors", async () => {
+    const terminal = new FakeTerminal();
+    const api = fakeApi();
+
+    const controller = await createTerminalSession({
+      api,
+      element: document.createElement("div"),
+      createTerminal: () => terminal,
+      createFitAddon: () => ({
+        fit: vi.fn(),
+        proposeDimensions: () => ({ cols: 80, rows: 24 }),
+      }),
+    });
+    vi.mocked(api.write).mockClear();
+    vi.mocked(api.resize).mockClear();
+
+    api.emit({
+      type: "session.error",
+      payload: {
+        type: "recording_failed",
+        message: "recording failed",
+        sessionId: controller.sessionId,
+      },
+    });
+    terminal.emitData("still live");
+    await controller.resize();
+    await Promise.resolve();
+
+    expect(api.write).toHaveBeenCalledWith({
+      sessionId: controller.sessionId,
+      data: "still live",
+    });
+    expect(api.resize).toHaveBeenCalledWith({
+      sessionId: controller.sessionId,
+      cols: 80,
+      rows: 24,
+    });
   });
 
   it("ignores resize and skips termination after disposal or session exit", async () => {

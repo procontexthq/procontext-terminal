@@ -364,6 +364,7 @@ Rules:
 - The preload bridge unwraps result envelopes into the renderer API and rejects failed calls with typed terminal errors.
 - Long-lived streams use explicit subscribe/unsubscribe operations.
 - Payloads are runtime-validated at process boundaries.
+- `session.error` is a diagnostic event and does not inherently mark a session failed; lifecycle state comes from snapshots and lifecycle events.
 
 ## Agent Control Contract
 
@@ -489,12 +490,14 @@ Security requirements:
 - Preload exposes only the typed terminal API.
 - External agent gateway binds to local-only transports by default.
 - Agent connections require short-lived authentication.
-- Agent operations are authorized by the policy engine.
+- Agent operations, including authentication, are authorized by the policy engine.
+- Policy requests include safe metadata such as cwd, shell, session ID, and coarse operation kind, but exclude raw terminal input and PTY output by default.
 - All agent operations are auditable.
 - Runtime validation is required for IPC, agent messages, settings, and recordings.
 - Shell output is treated as untrusted text containing control sequences.
 - Clipboard operations require clear origin handling.
 - Recording can be disabled, redacted, or scoped by policy.
+- Recording persistence is versioned append-only JSONL; export keeps the protocol schema version 1 envelope.
 
 Sensitive operations:
 

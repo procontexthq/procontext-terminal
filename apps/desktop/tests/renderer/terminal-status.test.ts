@@ -60,8 +60,8 @@ describe("terminal status", () => {
     expect(
       nextTerminalStatus("running", {
         type: "session.error",
-        payload: { type: "session_kill_failed", message: "kill failed", sessionId },
+        payload: { type: "recording_failed", message: "recording failed", sessionId },
       }),
-    ).toBe("failed");
+    ).toBe("running");
   });
 });
