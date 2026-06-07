@@ -61,7 +61,16 @@ jobs:
           fi
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          unset ELECTRON_SKIP_BINARY_DOWNLOAD
+          pnpm install --frozen-lockfile
+
+      - name: Verify Electron binary
+        working-directory: apps/desktop
+        run: |
+          unset ELECTRON_SKIP_BINARY_DOWNLOAD
+          pnpm rebuild electron
+          node -e "const fs=require('node:fs');const electron=require('electron');if(!fs.existsSync(electron)){throw new Error('Electron binary not found: '+electron)};console.log(electron)"
 
       - name: Reject npm lockfile
         run: |
