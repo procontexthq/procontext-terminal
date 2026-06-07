@@ -8,9 +8,17 @@ import { fileURLToPath } from "node:url";
 
 import { chromium, type Browser, type Page } from "playwright";
 import { afterEach, describe, it } from "vitest";
+import { WebSocket as NodeWebSocket } from "ws";
 
 import { defaultTerminalConfig } from "@terminal/config";
-import type { SessionId, TerminalScreenSnapshot } from "@terminal/protocol";
+import {
+  createAgentCommand,
+  parseAgentGatewayDescriptor,
+  type AgentCommandResult,
+  type AgentGatewayDescriptor,
+  type SessionId,
+  type TerminalScreenSnapshot,
+} from "@terminal/protocol";
 
 const require = createRequire(import.meta.url);
 const electronPath = require("electron") as string;
@@ -352,6 +360,83 @@ describe("desktop terminal smoke", () => {
       );
     }
   });
+
+  it("exposes an authenticated local agent gateway that shares the visible PTY session", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    const sessionId = await activeSessionId(page);
+    const descriptor = await waitForAgentDescriptor(userDataDir);
+    const agent = await E2EAgentClient.connect(descriptor.url);
+    const unauthenticatedAgent = await E2EAgentClient.connect(descriptor.url);
+
+    try {
+      await expectAgentOk(
+        agent.request(createAgentCommand("agent.authenticate", { token: descriptor.token })),
+      );
+      await expectAgentOk(agent.request(createAgentCommand("terminal.attach", { sessionId })));
+
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.sendText", {
+            sessionId,
+            text: `${platformPrintCommand("PHASE3_AGENT_TO_UI")}\r`,
+          }),
+        ),
+      );
+      await waitForTerminalText(page, "PHASE3_AGENT_TO_UI");
+      await page.waitForFunction(
+        () =>
+          document.querySelector("[data-testid='agent-activity']")?.textContent === "Agent active",
+        undefined,
+        { timeout: 10000 },
+      );
+
+      await typeCommand(page, platformPrintCommand("PHASE3_UI_TO_AGENT"));
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForText", {
+            sessionId,
+            text: "PHASE3_UI_TO_AGENT",
+            timeoutMs: 10000,
+          }),
+        ),
+      );
+      const recentOutput = await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.readRecentOutput", { sessionId, maxBytes: 4000 }),
+        ),
+      );
+      if (!JSON.stringify(recentOutput).includes("PHASE3_UI_TO_AGENT")) {
+        throw new Error("Expected gateway recent output to include text written through the UI.");
+      }
+
+      const denied = await unauthenticatedAgent.request(
+        createAgentCommand("terminal.sendText", {
+          sessionId,
+          text: `${platformPrintCommand("PHASE3_UNAUTH_SHOULD_NOT_APPEAR")}\r`,
+        }),
+      );
+      if (denied.ok || denied.error.type !== "auth_required") {
+        throw new Error(
+          `Expected unauthenticated gateway request to be denied: ${JSON.stringify(denied)}`,
+        );
+      }
+      await delay(200);
+      const afterDenied = await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.readRecentOutput", { sessionId, maxBytes: 4000 }),
+        ),
+      );
+      if (JSON.stringify(afterDenied).includes("PHASE3_UNAUTH_SHOULD_NOT_APPEAR")) {
+        throw new Error("Unauthorized gateway input mutated the terminal session.");
+      }
+    } finally {
+      agent.close();
+      unauthenticatedAgent.close();
+    }
+  });
 });
 
 async function createTempUserDataDir(): Promise<string> {
@@ -530,6 +615,21 @@ async function waitForPersistedWorkspace(
   }
 
   throw new Error("Timed out waiting for persisted workspace state.");
+}
+
+async function waitForAgentDescriptor(userDataDir: string): Promise<AgentGatewayDescriptor> {
+  const descriptorPath = join(userDataDir, "agent-gateway.json");
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    try {
+      return parseAgentGatewayDescriptor(
+        JSON.parse(await readFile(descriptorPath, "utf8")) as unknown,
+      );
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error("Timed out waiting for agent gateway descriptor.");
 }
 
 async function waitForActiveTab(page: Page, index: number): Promise<void> {
@@ -723,4 +823,123 @@ function appendElectronOutput(source: string, chunk: Buffer): void {
 
 function normalizeTerminalText(text: string): string {
   return text.toLowerCase().replaceAll("\\", "/");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function expectAgentOk(result: Promise<AgentCommandResult>): Promise<unknown> {
+  const resolved = await result;
+  if (!resolved.ok) {
+    throw new Error(`Expected agent command success: ${JSON.stringify(resolved.error)}`);
+  }
+  return resolved.value;
+}
+
+class E2EAgentClient {
+  private readonly pendingMessages: unknown[] = [];
+  private readonly parseErrors: string[] = [];
+  private readonly waiters = new Set<(message: unknown) => boolean>();
+
+  private constructor(private readonly socket: NodeWebSocket) {
+    socket.on("message", (data) => {
+      void parseWebSocketMessage(data)
+        .then((message) => {
+          for (const waiter of [...this.waiters]) {
+            if (waiter(message)) {
+              return;
+            }
+          }
+          this.pendingMessages.push(message);
+        })
+        .catch((error: unknown) => {
+          this.parseErrors.push(error instanceof Error ? error.message : String(error));
+        });
+    });
+  }
+
+  static async connect(url: string): Promise<E2EAgentClient> {
+    const socket = new NodeWebSocket(url);
+    await new Promise<void>((resolve, reject) => {
+      socket.once("open", () => resolve());
+      socket.once("error", () => reject(new Error("Agent WebSocket failed.")));
+    });
+    return new E2EAgentClient(socket);
+  }
+
+  async request(command: unknown): Promise<AgentCommandResult> {
+    const response = this.waitForResult(agentCommandLabel(command));
+    this.socket.send(JSON.stringify(command));
+    return response;
+  }
+
+  close(): void {
+    this.socket.close();
+  }
+
+  private waitForResult(label: string, timeoutMs = 10000): Promise<AgentCommandResult> {
+    const queuedIndex = this.pendingMessages.findIndex((message) => isAgentCommandResult(message));
+    if (queuedIndex !== -1) {
+      const [message] = this.pendingMessages.splice(queuedIndex, 1);
+      return Promise.resolve(message as AgentCommandResult);
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.waiters.delete(waiter);
+        reject(
+          new Error(
+            `Timed out waiting for agent command response for ${label}. pending=${JSON.stringify(
+              this.pendingMessages,
+            )} parseErrors=${JSON.stringify(this.parseErrors)}`,
+          ),
+        );
+      }, timeoutMs);
+      const waiter = (message: unknown): boolean => {
+        if (!isAgentCommandResult(message)) {
+          return false;
+        }
+        clearTimeout(timeout);
+        this.waiters.delete(waiter);
+        resolve(message);
+        return true;
+      };
+      this.waiters.add(waiter);
+    });
+  }
+}
+
+function isAgentCommandResult(value: unknown): value is AgentCommandResult {
+  return typeof value === "object" && value !== null && "ok" in value;
+}
+
+function agentCommandLabel(command: unknown): string {
+  if (
+    typeof command === "object" &&
+    command !== null &&
+    "type" in command &&
+    typeof command.type === "string"
+  ) {
+    return command.type;
+  }
+  return "unknown";
+}
+
+async function parseWebSocketMessage(data: unknown): Promise<unknown> {
+  if (typeof data === "string") {
+    return JSON.parse(data) as unknown;
+  }
+  if (data instanceof Blob) {
+    return JSON.parse(await data.text()) as unknown;
+  }
+  if (data instanceof ArrayBuffer) {
+    return JSON.parse(Buffer.from(data).toString("utf8")) as unknown;
+  }
+  if (ArrayBuffer.isView(data)) {
+    return JSON.parse(
+      Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8"),
+    ) as unknown;
+  }
+  return JSON.parse(String(data)) as unknown;
 }

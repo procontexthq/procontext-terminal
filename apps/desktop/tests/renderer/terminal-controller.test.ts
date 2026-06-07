@@ -187,6 +187,7 @@ function fakeApi(): RendererTerminalApi & {
       }),
     ),
     releaseSession: vi.fn<RendererTerminalApi["releaseSession"]>(() => Promise.resolve()),
+    onTerminalEvent: vi.fn<RendererTerminalApi["onTerminalEvent"]>(() => vi.fn()),
     onSessionEvent: vi.fn<RendererTerminalApi["onSessionEvent"]>((_sessionId, nextHandler) => {
       handler = nextHandler;
       return unsubscribeSessionEvent;

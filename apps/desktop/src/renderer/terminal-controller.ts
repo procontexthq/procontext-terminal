@@ -136,6 +136,7 @@ export async function createTerminalSession({
             });
           break;
         case "session.created":
+        case "agent.activity":
           break;
       }
     });

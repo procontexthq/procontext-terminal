@@ -20,6 +20,7 @@ export function nextTerminalStatus(
     case "session.output":
       return outputStatus(current);
     case "session.snapshot.request":
+    case "agent.activity":
       return current;
   }
 }

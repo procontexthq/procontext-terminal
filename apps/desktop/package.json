@@ -12,7 +12,9 @@
     "test:e2e": "pnpm build && vitest run -c vitest.e2e.config.ts"
   },
   "dependencies": {
+    "@terminal/agent-gateway": "workspace:*",
     "@terminal/config": "workspace:*",
+    "@terminal/policy-engine": "workspace:*",
     "@terminal/protocol": "workspace:*",
     "@terminal/pty-host": "workspace:*",
     "@terminal/recorder": "workspace:*",
@@ -24,12 +26,14 @@
     "react-dom": "^19.2.6"
   },
   "devDependencies": {
+    "@types/ws": "^8.5.14",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^38.8.6",
     "electron-vite": "^5.0.0",
     "jsdom": "^29.1.1",
     "playwright": "^1.59.1",
     "vite": "^7.3.3",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.5",
+    "ws": "^8.18.3"
   }
 }

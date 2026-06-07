@@ -10,11 +10,13 @@ coverage.
 
 ## Status
 
-Phase 1 is complete: a single-session terminal with real PTY behavior and a
-secure main/preload/renderer split.
+Phase 2 is complete: tabs, workspace restore, internal agent-useful terminal
+observation, waits, detach/attach, recording export, and cross-platform CI are
+implemented on top of the PTY-backed desktop terminal.
 
-Upcoming phases add multi-session workflows, agent control APIs, TUI observation
-hardening, recording, replay, and packaging.
+Phase 3 is adding the external local agent control plane: authenticated
+loopback WebSocket access, explicit policy decisions, audit events, and visible
+agent activity. Later phases add human terminal UX polish and packaging.
 
 ## Architecture
 

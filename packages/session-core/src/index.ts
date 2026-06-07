@@ -79,7 +79,7 @@ export class TerminalSessionManager {
         cols: request.cols,
         rows: request.rows,
         title: null,
-        createdBy: "human",
+        createdBy: request.createdBy ?? "human",
         createdAt: now,
         updatedAt: now,
       },
@@ -170,6 +170,10 @@ export class TerminalSessionManager {
 
   getSession(request: GetSessionRequest): TerminalSessionSnapshot {
     return { ...this.getRecord(request.sessionId).snapshot };
+  }
+
+  listSessions(): TerminalSessionSnapshot[] {
+    return [...this.sessions.values()].map((record) => ({ ...record.snapshot }));
   }
 
   write(request: WriteInputRequest): Promise<void> {

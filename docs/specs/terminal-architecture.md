@@ -371,15 +371,20 @@ Agent requests should mirror session-manager operations while adding authorizati
 
 ```ts
 type AgentCommand =
-  | { type: "terminal.create"; id: RequestId; payload: CreateTerminalPayload }
-  | { type: "terminal.attach"; id: RequestId; payload: { sessionId: SessionId } }
-  | { type: "terminal.sendText"; id: RequestId; payload: { sessionId: SessionId; text: string } }
-  | { type: "terminal.sendKey"; id: RequestId; payload: { sessionId: SessionId; key: TerminalKey } }
-  | { type: "terminal.resize"; id: RequestId; payload: { sessionId: SessionId; cols: number; rows: number } }
-  | { type: "terminal.captureScreen"; id: RequestId; payload: { sessionId: SessionId } }
-  | { type: "terminal.readRecentOutput"; id: RequestId; payload: { sessionId: SessionId; maxBytes: number } }
-  | { type: "terminal.waitForText"; id: RequestId; payload: WaitForTextPayload }
-  | { type: "terminal.kill"; id: RequestId; payload: { sessionId: SessionId } };
+  | { type: "agent.authenticate"; requestId: RequestId; payload: { token: string } }
+  | { type: "terminal.list"; requestId: RequestId; payload: {} }
+  | { type: "terminal.create"; requestId: RequestId; payload: CreateTerminalPayload }
+  | { type: "terminal.attach"; requestId: RequestId; payload: { sessionId: SessionId } }
+  | { type: "terminal.sendText"; requestId: RequestId; payload: { sessionId: SessionId; text: string } }
+  | { type: "terminal.sendKey"; requestId: RequestId; payload: { sessionId: SessionId; key: TerminalKey } }
+  | { type: "terminal.resize"; requestId: RequestId; payload: { sessionId: SessionId; cols: number; rows: number } }
+  | { type: "terminal.captureScreen"; requestId: RequestId; payload: CaptureScreenPayload }
+  | { type: "terminal.readRecentOutput"; requestId: RequestId; payload: { sessionId: SessionId; maxBytes: number } }
+  | { type: "terminal.waitForText"; requestId: RequestId; payload: WaitForTextPayload }
+  | { type: "terminal.waitForQuiet"; requestId: RequestId; payload: WaitForQuietPayload }
+  | { type: "terminal.waitForScreenChange"; requestId: RequestId; payload: WaitForScreenChangePayload }
+  | { type: "terminal.waitForPrompt"; requestId: RequestId; payload: WaitForPromptPayload }
+  | { type: "terminal.kill"; requestId: RequestId; payload: { sessionId: SessionId } };
 ```
 
 Agent events:

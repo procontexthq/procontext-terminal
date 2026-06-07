@@ -170,11 +170,21 @@ terminal observation, lifecycle, input, wait, and recording contracts are proven
 
 Implementation:
 
-- Add local agent gateway.
-- Add short-lived authentication.
-- Add policy engine decision points.
-- Add agent commands for create, attach, send text, send key, resize, read output, capture screen, wait, and kill.
-- Add audit events.
+- Add a local-only WebSocket agent gateway inside Electron main, bound to
+  `127.0.0.1`.
+- Write an ephemeral runtime descriptor under Electron `userData` with the
+  gateway URL, short-lived token, token expiry, and app PID; remove it on
+  shutdown.
+- Add short-lived token authentication before terminal commands are accepted.
+- Add policy engine decision points for authenticated local agent control and
+  session ownership.
+- Add agent commands for list, create, attach, send text, send key, resize,
+  read output, capture screen, wait, and kill.
+- Treat renderer-dependent observation honestly: recent output works through
+  session-core, while capture-screen and screen-based waits return structured
+  observation errors when no renderer window can provide a snapshot.
+- Add audit events without logging tokens, terminal input, PTY output, or
+  transcript data.
 - Add visible agent activity indicators.
 
 Testing:
@@ -189,6 +199,7 @@ Exit criteria:
 - A local authenticated agent can create and operate a terminal through the gateway.
 - Unauthorized or denied operations produce structured errors without side effects.
 - Agent activity is visible and auditable.
+- The same implementation passes verification on macOS, Windows, and Linux.
 
 ## Phase 4: Human Terminal UX Completion
 

@@ -4,10 +4,17 @@ import {
   TerminalApiError,
   createRendererCommandFailure,
   createRendererCommandSuccess,
+  createAgentCommand,
+  createAgentCommandFailure,
+  createAgentCommandSuccess,
   createRequestId,
   createSessionId,
   createTerminalError,
+  isAgentEvent,
   isRendererSessionEvent,
+  parseAgentCommand,
+  parseAgentCommandResult,
+  parseAgentGatewayDescriptor,
   parseCreateSessionRequest,
   parseDetachSessionRequest,
   parseRendererCommand,
@@ -53,6 +60,103 @@ describe("protocol schemas", () => {
     expect(() => parseWriteInputRequest({ sessionId: "", data: "x" })).toThrow();
     expect(() => parseResizeSessionRequest({ sessionId: "s", cols: 80, rows: -1 })).toThrow();
     expect(() => parseKillSessionRequest({ sessionId: "" })).toThrow();
+  });
+
+  it("validates agent command envelopes, auth, and structured result envelopes", () => {
+    const requestId = createRequestId("agent-request-1");
+    const sessionId = createSessionId("session-agent-1");
+
+    expect(
+      parseAgentCommand({
+        type: "agent.authenticate",
+        requestId,
+        payload: { token: "token-value" },
+      }),
+    ).toEqual({
+      type: "agent.authenticate",
+      requestId,
+      payload: { token: "token-value" },
+    });
+    expect(
+      createAgentCommand("terminal.sendText", { sessionId, text: "echo from agent\r" }, requestId),
+    ).toEqual({
+      type: "terminal.sendText",
+      requestId,
+      payload: { sessionId, text: "echo from agent\r" },
+    });
+    expect(
+      parseAgentCommand({
+        type: "terminal.create",
+        requestId,
+        payload: { cols: 80, rows: 24, cwd: "/tmp" },
+      }),
+    ).toMatchObject({
+      type: "terminal.create",
+      payload: { cols: 80, rows: 24, cwd: "/tmp" },
+    });
+    expect(() =>
+      parseAgentCommand({
+        type: "terminal.resize",
+        requestId,
+        payload: { sessionId, cols: 0, rows: 24 },
+      }),
+    ).toThrow();
+
+    expect(parseAgentCommandResult(createAgentCommandSuccess(requestId, { ok: true }))).toEqual({
+      ok: true,
+      requestId,
+      value: { ok: true },
+    });
+    expect(
+      parseAgentCommandResult(
+        createAgentCommandFailure(
+          requestId,
+          createTerminalError("auth_required", "Authentication is required.", {
+            operation: "terminal.sendText",
+          }),
+        ),
+      ),
+    ).toMatchObject({
+      ok: false,
+      requestId,
+      error: { type: "auth_required", operation: "terminal.sendText" },
+    });
+  });
+
+  it("validates agent gateway descriptor and agent events without secrets", () => {
+    const sessionId = createSessionId("session-agent-2");
+    const descriptor = {
+      url: "ws://127.0.0.1:34567",
+      token: "short-lived-token",
+      tokenExpiresAt: "2026-05-11T00:05:00.000Z",
+      pid: 1234,
+    };
+
+    expect(parseAgentGatewayDescriptor(descriptor)).toEqual(descriptor);
+    expect(() =>
+      parseAgentGatewayDescriptor({
+        ...descriptor,
+        url: "ws://0.0.0.0:34567",
+      }),
+    ).toThrow();
+    expect(
+      isAgentEvent({
+        type: "terminal.output",
+        payload: { sessionId, data: "output" },
+      }),
+    ).toBe(true);
+    expect(
+      isAgentEvent({
+        type: "terminal.denied",
+        payload: {
+          decisionId: "decision-1",
+          code: "auth_required",
+          message: "Authentication is required.",
+          operation: "terminal.sendText",
+          sessionId,
+        },
+      }),
+    ).toBe(true);
   });
 
   it("validates terminal config schema version 2 workspace state", () => {

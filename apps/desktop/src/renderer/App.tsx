@@ -30,6 +30,7 @@ import { nextTerminalStatus, type TerminalUiStatus } from "./terminal-status";
 export function App(): ReactElement {
   const [config, setConfig] = useState<TerminalConfig | null>(null);
   const [tabsState, setTabsState] = useState<TerminalTabsState | null>(null);
+  const [agentActive, setAgentActive] = useState(false);
   const controllers = useRef(new Map<string, TerminalController>());
   const saveQueue = useRef(Promise.resolve());
   const lastSavedWorkspace = useRef<string | null>(null);
@@ -58,6 +59,14 @@ export function App(): ReactElement {
       disposed = true;
     };
   }, [reportError]);
+
+  useEffect(() => {
+    return window.terminalApi.onTerminalEvent((event) => {
+      if (event.type === "agent.activity") {
+        setAgentActive(event.payload.authenticatedConnections > 0);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     if (!tabsState) {
@@ -186,7 +195,15 @@ export function App(): ReactElement {
             +
           </button>
         </div>
-        <span data-testid="terminal-status">{activeTab?.status ?? "starting"}</span>
+        <div className="titlebar-status">
+          <span
+            className={`agent-activity${agentActive ? " is-active" : ""}`}
+            data-testid="agent-activity"
+          >
+            {agentActive ? "Agent active" : "Agent idle"}
+          </span>
+          <span data-testid="terminal-status">{activeTab?.status ?? "starting"}</span>
+        </div>
       </header>
       <section className="terminal-workspace">
         {config && tabsState

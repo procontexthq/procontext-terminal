@@ -5,7 +5,13 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
+      "@terminal/agent-gateway": fileURLToPath(
+        new URL("./packages/agent-gateway/src/index.ts", import.meta.url),
+      ),
       "@terminal/config": fileURLToPath(new URL("./packages/config/src/index.ts", import.meta.url)),
+      "@terminal/policy-engine": fileURLToPath(
+        new URL("./packages/policy-engine/src/index.ts", import.meta.url),
+      ),
       "@terminal/protocol": fileURLToPath(
         new URL("./packages/protocol/src/index.ts", import.meta.url),
       ),
