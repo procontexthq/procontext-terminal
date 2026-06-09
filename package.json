@@ -13,7 +13,13 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run --passWithNoTests",
     "test:e2e": "pnpm --filter @terminal/desktop test:e2e",
-    "build": "pnpm -r build"
+    "test:package": "pnpm --filter @terminal/desktop test:package",
+    "build": "pnpm -r build",
+    "package:current": "pnpm --filter @terminal/desktop package:current",
+    "package:mac": "pnpm --filter @terminal/desktop package:mac",
+    "package:linux": "pnpm --filter @terminal/desktop package:linux",
+    "package:win": "pnpm --filter @terminal/desktop package:win",
+    "package:verify": "pnpm --filter @terminal/desktop package:verify"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

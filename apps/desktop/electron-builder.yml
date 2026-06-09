@@ -1,0 +1,44 @@
+appId: com.procontext.terminal
+productName: ProContext Terminal
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+copyright: Copyright 2026 ProContext
+
+directories:
+  output: dist
+
+files:
+  - out/**/*
+  - package.json
+
+asar: false
+
+npmRebuild: true
+nodeGypRebuild: false
+buildDependenciesFromSource: false
+
+publish: null
+
+mac:
+  category: public.app-category.developer-tools
+  identity: null
+  target:
+    - dmg
+
+dmg:
+  sign: false
+
+linux:
+  category: Development
+  executableName: procontext-terminal
+  target:
+    - AppImage
+    - deb
+
+win:
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
