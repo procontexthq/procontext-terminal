@@ -1,6 +1,8 @@
 {
   "name": "@terminal/desktop",
   "version": "0.1.0",
+  "description": "ProContext Terminal desktop app.",
+  "author": "ProContext",
   "private": true,
   "type": "module",
   "main": "./out/main/index.cjs",
@@ -9,7 +11,14 @@
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:e2e": "pnpm build && vitest run -c vitest.e2e.config.ts"
+    "test:e2e": "pnpm build && vitest run -c vitest.e2e.config.ts",
+    "test:package": "pnpm package:current && vitest run -c vitest.package.config.ts && pnpm package:verify",
+    "package:clean": "node scripts/clean-package-output.mjs",
+    "package:current": "pnpm package:clean && pnpm build && electron-builder --dir --publish never",
+    "package:mac": "pnpm package:clean && pnpm build && electron-builder --mac dmg --publish never",
+    "package:linux": "pnpm package:clean && pnpm build && electron-builder --linux AppImage deb --publish never",
+    "package:win": "pnpm package:clean && pnpm build && electron-builder --win nsis --publish never",
+    "package:verify": "node scripts/verify-packaged-app.mjs"
   },
   "dependencies": {
     "@terminal/agent-gateway": "workspace:*",
@@ -29,6 +38,7 @@
     "@types/ws": "^8.5.14",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^38.8.6",
+    "electron-builder": "^26.15.0",
     "electron-vite": "^5.0.0",
     "jsdom": "^29.1.1",
     "playwright": "^1.59.1",

@@ -36,6 +36,7 @@ The architecture source of truth is [Terminal Architecture Spec](./specs/termina
 |   `-- desktop/
 |       |-- package.json
 |       |-- electron-builder.yml
+|       |-- scripts/
 |       |-- src/
 |       |   |-- main/
 |       |   |-- preload/
@@ -165,6 +166,7 @@ Must not:
 Packaging note:
 
 - `apps/desktop/package.json` may declare native runtime dependencies such as `node-pty` so bundled Electron main code can resolve them from the app package on macOS, Windows, and Linux. Application code must still import `node-pty` only through `packages/pty-host`.
+- `apps/desktop/electron-builder.yml` owns distributable artifact configuration. Packaging verification helpers live under `apps/desktop/scripts`.
 
 Good delegation tasks:
 

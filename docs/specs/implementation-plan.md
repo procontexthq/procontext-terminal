@@ -242,17 +242,39 @@ after the terminal runtime and priority feature set are stable.
 
 Implementation:
 
-- Add cross-platform packaging.
-- Add release CI and provenance.
+- Add `electron-builder` packaging for the Electron desktop app.
+- Build platform artifacts on the matching target OS because Electron and
+  native PTY dependencies are platform-specific.
+- Produce macOS `.app` and `.dmg` artifacts, Linux `.AppImage` and package
+  artifacts, and Windows installer artifacts.
+- Keep `node-pty` as a desktop runtime dependency and verify the packaged app
+  can load it from the packaged resources.
+- Package desktop app resources unpacked until the native PTY helper lifecycle
+  is proven ASAR-safe; `node-pty` helper binaries must be reachable through real
+  filesystem paths in packaged apps.
+- Add release CI that builds, smoke tests, uploads artifacts, and emits
+  provenance attestations.
+- Keep Phase 4 human terminal UX work out of the release-hardening scope.
 
 Testing:
 
-- Packaging smoke tests on macOS, Windows, and Linux.
-- Release verification that native PTY modules are packaged correctly.
+- Packaged smoke tests on macOS, Windows, and Linux launch the built app from
+  the packaged output, create a PTY-backed terminal, run a command, capture the
+  visible screen, and verify the authenticated local agent gateway can attach,
+  send input, and read recent output.
+- Native PTY packaging verification checks that packaged resources include a
+  loadable `node-pty` native module outside the ASAR archive when required.
+- Release CI runs the normal lint, format, typecheck, unit/integration,
+  Electron E2E, build, package, packaged smoke, and package verification checks
+  before uploading artifacts.
 
 Exit criteria:
 
 - Packaged app artifacts launch and can create a PTY-backed terminal on each target OS.
+- Packaged app artifacts preserve Phase 3 agent gateway behavior for a visible
+  terminal session.
+- Native PTY dependencies are present in packaged resources and verified by an
+  automated release check.
 - Release artifacts include provenance attestations.
 
 ## Release Verification
@@ -267,6 +289,8 @@ Before pushing a release branch or publishing artifacts, run the relevant projec
 - Integration tests.
 - Electron E2E smoke tests.
 - Build desktop artifacts.
+- Build platform-specific desktop packages.
+- Run packaged-app smoke tests.
 - Verify native PTY module packaging.
 - Generate provenance attestations.
 

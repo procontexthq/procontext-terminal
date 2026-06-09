@@ -1,0 +1,166 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  package:
+    name: Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            package_script: package:mac
+            artifact_name: procontext-terminal-macos
+          - os: windows-latest
+            package_script: package:win
+            artifact_name: procontext-terminal-windows
+          - os: ubuntu-latest
+            package_script: package:linux
+            artifact_name: procontext-terminal-linux
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            fakeroot \
+            libgbm1 \
+            libgtk-3-0 \
+            libnss3 \
+            libxss1 \
+            xvfb
+          if apt-cache show libasound2t64 >/dev/null 2>&1; then
+            sudo apt-get install -y libasound2t64
+          else
+            sudo apt-get install -y libasound2
+          fi
+
+      - name: Install dependencies
+        run: |
+          unset ELECTRON_SKIP_BINARY_DOWNLOAD
+          for attempt in 1 2 3; do
+            pnpm install --frozen-lockfile && exit 0
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
+      - name: Verify Electron binary
+        working-directory: apps/desktop
+        run: |
+          unset ELECTRON_SKIP_BINARY_DOWNLOAD
+          pnpm rebuild electron
+          node -e "const fs=require('node:fs');const electron=require('electron');if(!fs.existsSync(electron)){throw new Error('Electron binary not found: '+electron)};console.log(electron)"
+
+      - name: Reject npm lockfile
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json must not be committed; use pnpm-lock.yaml."
+            exit 1
+          fi
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format
+        run: pnpm format
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Unit and integration tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Electron E2E tests
+        if: runner.os != 'Linux'
+        run: pnpm test:e2e
+
+      - name: Electron E2E tests with virtual display
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" pnpm test:e2e
+
+      - name: Build release artifacts
+        run: pnpm ${{ matrix.package_script }}
+
+      - name: Verify native PTY packaging
+        run: pnpm package:verify
+
+      - name: Packaged app smoke
+        if: runner.os != 'Linux'
+        working-directory: apps/desktop
+        run: pnpm exec vitest run -c vitest.package.config.ts
+
+      - name: Packaged app smoke with virtual display
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" pnpm exec vitest run -c vitest.package.config.ts
+
+      - name: Collect release artifact files
+        run: |
+          rm -rf apps/desktop/release-artifacts
+          mkdir -p apps/desktop/release-artifacts
+          find apps/desktop/dist -maxdepth 1 -type f \( \
+            -name "*.dmg" -o \
+            -name "*.dmg.blockmap" -o \
+            -name "*.AppImage" -o \
+            -name "*.AppImage.zsync" -o \
+            -name "*.deb" -o \
+            -name "*.rpm" -o \
+            -name "*.exe" -o \
+            -name "*.exe.blockmap" -o \
+            -name "*.msi" -o \
+            -name "latest*.yml" \
+          \) -exec cp {} apps/desktop/release-artifacts/ \;
+          if [ "$(find apps/desktop/release-artifacts -type f | wc -l | tr -d ' ')" = "0" ]; then
+            echo "No release artifact files were produced."
+            exit 1
+          fi
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: apps/desktop/release-artifacts/*
+          if-no-files-found: error
+
+      - name: Generate artifact attestations
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: apps/desktop/release-artifacts/*

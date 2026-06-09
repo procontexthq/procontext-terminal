@@ -15,6 +15,14 @@ export default tseslint.config(
   },
   js.configs.recommended,
   {
+    files: ["**/*.js", "**/*.mjs"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
     files: ["**/*.ts", "**/*.tsx"],
     extends: [...tseslint.configs.recommendedTypeChecked],
     languageOptions: {

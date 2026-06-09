@@ -53,6 +53,18 @@ pnpm test:e2e
 pnpm build
 ```
 
+Packaging and release-hardening checks:
+
+```bash
+pnpm package:current
+pnpm package:verify
+pnpm test:package
+```
+
+`package:current` builds the unpacked packaged app for the current OS. Platform
+release artifacts are built on matching CI runners through `package:mac`,
+`package:linux`, and `package:win`.
+
 Development logs are mirrored to stderr and app diagnostics persist as JSONL in
 `main.log` under the platform Electron logs directory. Terminal PTY output and
 input are not written to app logs by default.
