@@ -25,6 +25,7 @@ import {
 const require = createRequire(import.meta.url);
 const electronPath = require("electron") as string;
 const e2eUiTimeoutMs = process.platform === "win32" ? 30000 : 10000;
+const e2eAppLaunchTimeoutMs = process.platform === "linux" && process.env.CI ? 60000 : 30000;
 
 let electronProcess: ChildProcessWithoutNullStreams | null = null;
 let browser: Browser | null = null;
@@ -652,7 +653,7 @@ async function stopElectronProcess(): Promise<void> {
 
 async function connectToElectron(port: number): Promise<Browser> {
   const endpoint = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + e2eAppLaunchTimeoutMs;
   let lastError: unknown;
 
   while (Date.now() < deadline) {
@@ -909,9 +910,9 @@ function platformPrintCommand(text: string): string {
 }
 
 function platformManyLinesCommand(prefix: string, count: number): string {
-  return Array.from({ length: count }, (_value, index) =>
-    platformPrintCommand(`${prefix}_${index + 1}`),
-  ).join("\r");
+  const quotedPrefix = prefix.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
+  const script = `for (let i = 1; i <= ${count}; i += 1) console.log('${quotedPrefix}_' + i)`;
+  return `node -e ${JSON.stringify(script)}`;
 }
 
 function platformLongRunningCommand(): string {
