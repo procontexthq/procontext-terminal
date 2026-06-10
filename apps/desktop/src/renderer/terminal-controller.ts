@@ -5,7 +5,6 @@ import type {
   RendererTerminalApi,
   SessionId,
   TerminalError,
-  TerminalWorkspaceTab,
   Unsubscribe,
 } from "@terminal/protocol";
 
@@ -30,6 +29,11 @@ export type TerminalControllerDisposeOptions = {
   sessionLifecycle?: TerminalSessionDisposeLifecycle;
 };
 
+export type TerminalLaunchMetadata = {
+  cwd: string | null;
+  shell: string | null;
+};
+
 type DataSubscription = {
   dispose: () => void;
 };
@@ -44,7 +48,7 @@ export type TerminalController = {
 export type CreateTerminalSessionOptions = {
   api: RendererTerminalApi;
   element: HTMLElement;
-  session?: TerminalWorkspaceTab;
+  session?: TerminalLaunchMetadata;
   attachSessionId?: SessionId;
   createTerminal: () => TerminalLike;
   createFitAddon: () => FitAddonLike;

@@ -1,13 +1,13 @@
-import type {
-  SessionId,
-  TerminalSessionSnapshot,
-  TerminalWorkspaceState,
-  TerminalWorkspaceTab,
-} from "@terminal/protocol";
+import type { SessionId, TerminalSessionSnapshot } from "@terminal/protocol";
 
 import type { TerminalUiStatus } from "./terminal-status";
 
-export type TerminalTab = TerminalWorkspaceTab & {
+export type TerminalTabLaunchMetadata = {
+  cwd: string | null;
+  shell: string | null;
+};
+
+export type TerminalTab = TerminalTabLaunchMetadata & {
   id: string;
   sessionId: SessionId | null;
   title: string | null;
@@ -22,29 +22,17 @@ export type TerminalTabsState = {
 
 let nextTabIndex = 1;
 
-export function createInitialTerminalTabs(workspace: TerminalWorkspaceState): TerminalTabsState {
-  const tabs = workspace.tabs.map((tab) => createTerminalTab(tab));
-  const activeTab = tabs[workspace.activeTabIndex] ?? tabs[0] ?? createTerminalTab(defaultTab());
+export function createInitialTerminalTabs(): TerminalTabsState {
+  const activeTab = createTerminalTab(defaultTab());
   return {
-    tabs: tabs.length > 0 ? tabs : [activeTab],
+    tabs: [activeTab],
     activeTabId: activeTab.id,
-  };
-}
-
-export function terminalTabsToWorkspace(state: TerminalTabsState): TerminalWorkspaceState {
-  const activeTabIndex = Math.max(
-    0,
-    state.tabs.findIndex((tab) => tab.id === state.activeTabId),
-  );
-  return {
-    tabs: state.tabs.map(({ cwd, shell }) => ({ cwd, shell })),
-    activeTabIndex,
   };
 }
 
 export function addTerminalTab(
   state: TerminalTabsState,
-  tab: TerminalWorkspaceTab = defaultTab(),
+  tab: TerminalTabLaunchMetadata = defaultTab(),
 ): TerminalTabsState {
   const nextTab = createTerminalTab(tab);
   return {
@@ -207,11 +195,11 @@ export function terminalTabLabel(tab: TerminalTab, index: number): string {
   return `Terminal ${index + 1}`;
 }
 
-export function defaultTab(): TerminalWorkspaceTab {
+export function defaultTab(): TerminalTabLaunchMetadata {
   return { cwd: null, shell: null };
 }
 
-function createTerminalTab(tab: TerminalWorkspaceTab): TerminalTab {
+function createTerminalTab(tab: TerminalTabLaunchMetadata): TerminalTab {
   return {
     id: `tab-${nextTabIndex++}`,
     sessionId: null,

@@ -42,7 +42,6 @@ function services(
     requestScreenSnapshot?: TerminalCommandServices["requestScreenSnapshot"];
     rejectSnapshotResponse?: TerminalCommandServices["rejectSnapshotResponse"];
     getConfig?: () => TerminalConfig;
-    saveConfig?: (config: TerminalConfig) => Promise<TerminalConfig>;
     policy?: TerminalPolicy;
   } = {},
 ): TerminalCommandServices {
@@ -129,11 +128,6 @@ function services(
     resolveSnapshotResponse: vi.fn(),
     rejectSnapshotResponse: overrides.rejectSnapshotResponse ?? vi.fn(),
     getConfig: overrides.getConfig ?? defaultTerminalConfig,
-    saveConfig:
-      overrides.saveConfig ??
-      ((config: TerminalConfig) => {
-        return Promise.resolve(config);
-      }),
     policy: overrides.policy ?? createDefaultTerminalPolicy(),
   };
 }
@@ -250,43 +244,36 @@ describe("terminal command handler", () => {
     expect(exportRecording).toHaveBeenCalledWith({ sessionId });
   });
 
-  it("handles session release and workspace persistence commands", async () => {
+  it("handles session release and rejects removed workspace persistence commands", async () => {
     const sessionId = createSessionId("session-1");
     const releaseSession = vi.fn(() => Promise.resolve());
-    const saveConfig = vi.fn((config: TerminalConfig) => Promise.resolve(config));
     const result = await handleRendererCommandPayload(
       createRendererCommand("session.release", { sessionId }),
-      services({ releaseSession, saveConfig }),
+      services({ releaseSession }),
     );
 
     expect(result).toMatchObject({ ok: true, value: null });
     expect(releaseSession).toHaveBeenCalledWith({ sessionId });
 
-    const saved = await handleRendererCommandPayload(
-      createRendererCommand("settings.saveWorkspace", {
-        workspace: {
-          tabs: [{ cwd: "/tmp", shell: null }],
-          activeTabIndex: 0,
-        },
-      }),
-      services({ releaseSession, saveConfig }),
-    );
-
-    expect(saved).toMatchObject({
-      ok: true,
-      value: {
-        schemaVersion: 2,
-        workspace: {
-          tabs: [{ cwd: "/tmp", shell: null }],
-          activeTabIndex: 0,
+    const removed = await handleRendererCommandPayload(
+      {
+        type: "settings.saveWorkspace",
+        requestId: createRequestId("removed-workspace-save"),
+        payload: {
+          workspace: {
+            tabs: [{ cwd: "/tmp", shell: null }],
+            activeTabIndex: 0,
+          },
         },
       },
-    });
-    expect(saveConfig).toHaveBeenCalledWith({
-      ...defaultTerminalConfig(),
-      workspace: {
-        tabs: [{ cwd: "/tmp", shell: null }],
-        activeTabIndex: 0,
+      services({ releaseSession }),
+    );
+
+    expect(removed).toMatchObject({
+      ok: false,
+      error: {
+        type: "invalid_request",
+        operation: "ipc",
       },
     });
   });

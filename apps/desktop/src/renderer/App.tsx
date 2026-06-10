@@ -7,7 +7,6 @@ import type {
   SessionId,
   TerminalConfig,
   TerminalSessionSnapshot,
-  TerminalWorkspaceState,
 } from "@terminal/protocol";
 
 import type { TerminalController } from "./terminal-controller";
@@ -22,21 +21,21 @@ import {
   selectTerminalTab,
   setTabSessionId,
   terminalTabLabel,
-  terminalTabsToWorkspace,
   updateTabStatus,
   type TerminalTab,
   type TerminalTabsState,
 } from "./terminal-tabs";
 import { nextTerminalStatus, type TerminalUiStatus } from "./terminal-status";
 
+type UiTheme = "coder" | "gamer" | "classic";
+
 export function App(): ReactElement {
   const [config, setConfig] = useState<TerminalConfig | null>(null);
   const [tabsState, setTabsState] = useState<TerminalTabsState | null>(null);
   const [agentActive, setAgentActive] = useState(false);
+  const [uiTheme, setUiTheme] = useState<UiTheme>(() => readUiThemePreference());
   const controllers = useRef(new Map<string, TerminalController>());
   const pendingDetachedSessions = useRef<TerminalSessionSnapshot[]>([]);
-  const saveQueue = useRef(Promise.resolve());
-  const lastSavedWorkspace = useRef<string | null>(null);
 
   const reportError = useCallback((error: unknown) => {
     console.error(error);
@@ -53,8 +52,7 @@ export function App(): ReactElement {
         if (disposed) {
           return;
         }
-        lastSavedWorkspace.current = stableWorkspaceKey(loadedConfig.workspace);
-        let nextTabsState = createInitialTerminalTabs(loadedConfig.workspace);
+        let nextTabsState = createInitialTerminalTabs();
         for (const snapshot of latestSessionSnapshots([
           ...pendingDetachedSessions.current,
           ...existingSessions,
@@ -103,28 +101,6 @@ export function App(): ReactElement {
     });
   }, []);
 
-  useEffect(() => {
-    if (!tabsState) {
-      return;
-    }
-
-    const workspace = terminalTabsToWorkspace(tabsState);
-    const workspaceKey = stableWorkspaceKey(workspace);
-    if (workspaceKey === lastSavedWorkspace.current) {
-      return;
-    }
-    lastSavedWorkspace.current = workspaceKey;
-    saveQueue.current = saveQueue.current
-      .then(() => window.terminalApi.saveWorkspace(workspace))
-      .then((savedConfig) => {
-        setConfig(savedConfig);
-      })
-      .catch((error: unknown) => {
-        lastSavedWorkspace.current = null;
-        reportError(error);
-      });
-  }, [reportError, tabsState]);
-
   const registerController = useCallback((tabId: string, controller: TerminalController | null) => {
     if (controller) {
       controllers.current.set(tabId, controller);
@@ -170,6 +146,10 @@ export function App(): ReactElement {
     setTabsState((current) => (current ? addTerminalTab(current) : current));
   }, []);
 
+  const tabs = tabsState?.tabs ?? [];
+  const activeTabId = tabsState?.activeTabId ?? null;
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+
   const closeTab = useCallback(
     (tab: TerminalTab, index: number) => {
       void closeTabByPolicy({
@@ -177,25 +157,25 @@ export function App(): ReactElement {
         label: terminalTabLabel(tab, index),
         controllers: controllers.current,
         onClose: () => {
+          if (tabs.length === 1) {
+            window.close();
+            return;
+          }
           setTabsState((current) => (current ? closeTerminalTab(current, tab.id) : current));
         },
         onRelease: (sessionId) => releaseSessionWhenInactive(sessionId, reportError),
         onError: reportError,
       });
     },
-    [reportError],
+    [reportError, tabs.length],
   );
 
-  const tabs = tabsState?.tabs ?? [];
-  const activeTabId = tabsState?.activeTabId ?? null;
-  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
-
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-theme={uiTheme}>
       <header className="titlebar">
         <div className="tab-strip" role="tablist" aria-label="Terminal tabs">
           {tabs.map((tab, index) => (
-            <div className="tab-item" key={tab.id}>
+            <div className={`tab-item${tab.id === activeTabId ? " is-active" : ""}`} key={tab.id}>
               <button
                 type="button"
                 role="tab"
@@ -207,7 +187,7 @@ export function App(): ReactElement {
               >
                 {tab.hasUnreadBell ? <span className="tab-bell" aria-hidden="true" /> : null}
                 <span className="tab-label">{terminalTabLabel(tab, index)}</span>
-                <span className="tab-status">{tab.status}</span>
+                <span className={`tab-status is-${tab.status}`}>{tab.status}</span>
               </button>
               <button
                 type="button"
@@ -231,13 +211,34 @@ export function App(): ReactElement {
           </button>
         </div>
         <div className="titlebar-status">
+          <label className="theme-picker">
+            <span>Theme</span>
+            <select
+              data-testid="theme-select"
+              value={uiTheme}
+              onChange={(event) => {
+                const nextTheme = parseUiTheme(event.target.value);
+                setUiTheme(nextTheme);
+                saveUiThemePreference(nextTheme);
+              }}
+            >
+              <option value="coder">Coder</option>
+              <option value="gamer">Gamer</option>
+              <option value="classic">Classic</option>
+            </select>
+          </label>
           <span
             className={`agent-activity${agentActive ? " is-active" : ""}`}
             data-testid="agent-activity"
           >
             {agentActive ? "Agent active" : "Agent idle"}
           </span>
-          <span data-testid="terminal-status">{activeTab?.status ?? "starting"}</span>
+          <span
+            className={`terminal-state is-${activeTab?.status ?? "starting"}`}
+            data-testid="terminal-status"
+          >
+            {activeTab?.status ?? "starting"}
+          </span>
         </div>
       </header>
       <section className="terminal-workspace">
@@ -340,8 +341,24 @@ function requiresCloseConfirmation(status: TerminalUiStatus): boolean {
   );
 }
 
-function stableWorkspaceKey(workspace: TerminalWorkspaceState): string {
-  return JSON.stringify(workspace);
+function readUiThemePreference(): UiTheme {
+  try {
+    return parseUiTheme(window.localStorage.getItem("terminal.uiTheme"));
+  } catch {
+    return "coder";
+  }
+}
+
+function saveUiThemePreference(theme: UiTheme): void {
+  try {
+    window.localStorage.setItem("terminal.uiTheme", theme);
+  } catch {
+    // Theme preference is cosmetic; ignore storage failures.
+  }
+}
+
+function parseUiTheme(value: string | null): UiTheme {
+  return value === "gamer" || value === "classic" ? value : "coder";
 }
 
 function shouldDisplayDetachedSession(snapshot: TerminalSessionSnapshot): boolean {

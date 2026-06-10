@@ -12,7 +12,6 @@ import {
   defaultTerminalConfig,
   loadTerminalConfig,
   resolveTerminalConfigPath,
-  saveTerminalConfig,
 } from "@terminal/config";
 import { createDefaultAgentPolicy, createDefaultTerminalPolicy } from "@terminal/policy-engine";
 import { NodePtyHost } from "@terminal/pty-host";
@@ -71,7 +70,6 @@ const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
 let agentGateway: AgentGateway | null = null;
 let terminalConfig: TerminalConfig = defaultTerminalConfig();
-let terminalConfigPath: string | null = null;
 let quitAfterShutdown = false;
 let suppressNextWindowAllClosedQuit = false;
 
@@ -175,7 +173,7 @@ void app
       logFilePath: resolveMainLogPath(logDirectory),
     });
 
-    terminalConfigPath = resolveTerminalConfigPath(app.getPath("userData"));
+    const terminalConfigPath = resolveTerminalConfigPath(app.getPath("userData"));
     logger.info("settings", "load_started", { settingsPath: terminalConfigPath });
     const loadedConfig = await loadTerminalConfig(terminalConfigPath);
     terminalConfig = loadedConfig.config;
@@ -196,7 +194,6 @@ void app
       terminalPolicy,
       logger,
       () => terminalConfig,
-      saveConfig,
       screenSnapshotService,
     );
     await createMainWindow().catch((error: unknown) => {
@@ -295,30 +292,6 @@ function resolveLogLevel() {
   return parseLogLevel(process.env.PROCONTEXT_LOG_LEVEL, !app.isPackaged ? "debug" : "info");
 }
 
-async function saveConfig(config: TerminalConfig): Promise<TerminalConfig> {
-  if (!terminalConfigPath) {
-    throw new Error("Terminal settings path is not initialized.");
-  }
-
-  await saveTerminalConfig(terminalConfigPath, config);
-  terminalConfig = config;
-  const redactors = [createPatternRedactor(terminalConfig.recording.redactedPatterns)];
-  if (recorder) {
-    recorder.updateRedactors(redactors);
-  } else {
-    recorder = new FileTerminalRecorder({
-      directory: join(app.getPath("userData"), "recordings"),
-      redactors,
-    });
-  }
-  logger.info("settings", "saved", {
-    settingsPath: terminalConfigPath,
-    workspaceTabs: config.workspace.tabs.length,
-    activeTabIndex: config.workspace.activeTabIndex,
-  });
-  return terminalConfig;
-}
-
 async function shutdownApp() {
   if (agentGateway) {
     logger.info("agent", "gateway_shutdown_started");
@@ -346,7 +319,6 @@ function createAgentGatewayServices(
     rejectSnapshotResponse: (requestId, sessionId, reason) =>
       snapshotService.rejectSnapshotResponse(requestId, sessionId, reason),
     getConfig: () => terminalConfig,
-    saveConfig,
     policy: terminalPolicy,
     logger,
   };

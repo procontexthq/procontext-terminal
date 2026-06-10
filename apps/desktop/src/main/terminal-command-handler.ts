@@ -54,7 +54,6 @@ export type TerminalCommandServices = {
   registerRendererSession?(sessionId: TerminalScreenSnapshot["sessionId"]): void;
   unregisterRendererSession?(sessionId: TerminalScreenSnapshot["sessionId"]): void;
   getConfig(): TerminalConfig;
-  saveConfig(config: TerminalConfig): Promise<TerminalConfig>;
   policy: TerminalPolicy;
   logger?: AppLogger;
 };
@@ -238,21 +237,6 @@ async function handleRendererCommand(
       );
     case "settings.get":
       return createRendererCommandSuccess(command.requestId, services.getConfig());
-    case "settings.saveWorkspace": {
-      const current = services.getConfig();
-      try {
-        const saved = await services.saveConfig({
-          ...current,
-          workspace: command.payload.workspace,
-        });
-        return createRendererCommandSuccess(command.requestId, saved);
-      } catch (error: unknown) {
-        throw createTerminalError("settings_save_failed", "Could not save workspace settings.", {
-          operation: "settings.saveWorkspace",
-          cause: errorMessage(error),
-        });
-      }
-    }
   }
 }
 

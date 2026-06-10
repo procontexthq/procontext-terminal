@@ -110,15 +110,15 @@ gateway/API is intentionally not part of Phase 2.
 
 Phase 2A starts with a tabs-only multi-session milestone. Each tab owns one
 real PTY session. Inactive tabs remain mounted so their output and scrollback
-continue to update while the user works elsewhere. Restart restore recreates
-fresh PTY sessions from saved tab order, active tab, shell, and launch cwd; it
-does not restore process state or terminal output.
+continue to update while the user works elsewhere. Restart opens a fresh
+default human terminal tab; detached live sessions can still be reconciled into
+visible tabs, but prior human tab count, order, active tab, cwd, and shell
+metadata are not persisted as restart state.
 
 Implementation:
 
 - Phase 2A: add terminal tabs, tab focus, tab close, running-tab close
-  confirmation, shell title labels, bell/unread indicators, and workspace
-  restore as fresh sessions.
+  confirmation, shell title labels, and bell/unread indicators.
 - Phase 2A: add session release so exited and failed sessions can be removed
   after their final view closes without conflating release with kill.
 - Add a screen observer that can snapshot visible rows, cursor position,
@@ -149,7 +149,7 @@ Testing:
 - Renderer tests for mounted tabs, focus, title, bell, screen snapshots, and
   snapshot request/response behavior.
 - Electron E2E tests for creating, switching, resizing, closing, detaching,
-  reattaching, restoring fresh sessions, snapshotting normal and alternate
+  reattaching, fresh restart behavior, snapshotting normal and alternate
   screens, and wait helper timeouts.
 
 Exit criteria:
@@ -163,7 +163,8 @@ Exit criteria:
 - Common TUI navigation works through keyboard and mouse primitives.
 - Recording can be enabled, disabled, redacted, exported, and replayed according
   to policy.
-- Settings and session workspace state restore safely after restart.
+- App restart starts a fresh default human tab while preserving non-layout
+  settings safely.
 
 ## Phase 3: External Agent Control Plane
 

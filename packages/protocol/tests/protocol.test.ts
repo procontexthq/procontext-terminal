@@ -23,7 +23,6 @@ import {
   parseReadRecentOutputRequest,
   parseReleaseSessionRequest,
   parseResizeSessionRequest,
-  parseSaveWorkspaceRequest,
   parseSendKeyRequest,
   parseTerminalRecordingExport,
   parseTerminalScreenSnapshot,
@@ -159,70 +158,41 @@ describe("protocol schemas", () => {
     ).toBe(true);
   });
 
-  it("validates terminal config schema version 2 workspace state", () => {
-    expect(
-      parseTerminalConfig({
-        schemaVersion: 2,
-        terminal: {
-          fontFamily: "monospace",
-          fontSize: 13,
-          scrollback: 5000,
-          theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
-        },
-        shell: {
-          defaultProfile: null,
-          profiles: [
-            {
-              id: "zsh",
-              name: "Zsh",
-              shell: "/bin/zsh",
-              cwd: null,
-              env: { TERM: "xterm-256color" },
-            },
-          ],
-        },
-        workspace: {
-          tabs: [{ cwd: "/tmp", shell: null }],
-          activeTabIndex: 0,
-        },
-        recording: { state: "disabled", redactedPatterns: [] },
-      }),
-    ).toMatchObject({
+  it("validates terminal config schema version 2 and ignores legacy workspace state", () => {
+    const parsed = parseTerminalConfig({
       schemaVersion: 2,
+      terminal: {
+        fontFamily: "monospace",
+        fontSize: 13,
+        scrollback: 5000,
+        theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+      },
+      shell: {
+        defaultProfile: null,
+        profiles: [
+          {
+            id: "zsh",
+            name: "Zsh",
+            shell: "/bin/zsh",
+            cwd: null,
+            env: { TERM: "xterm-256color" },
+          },
+        ],
+      },
       workspace: {
         tabs: [{ cwd: "/tmp", shell: null }],
         activeTabIndex: 0,
       },
+      recording: { state: "disabled", redactedPatterns: [] },
     });
 
-    expect(() =>
-      parseTerminalConfig({
-        schemaVersion: 2,
-        terminal: {
-          fontFamily: "monospace",
-          fontSize: 13,
-          scrollback: 5000,
-          theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
-        },
-        shell: { defaultProfile: null, profiles: [] },
-        workspace: { tabs: [], activeTabIndex: 0 },
-        recording: { state: "disabled", redactedPatterns: [] },
-      }),
-    ).toThrow();
-    expect(() =>
-      parseTerminalConfig({
-        schemaVersion: 2,
-        terminal: {
-          fontFamily: "monospace",
-          fontSize: 13,
-          scrollback: 5000,
-          theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
-        },
-        shell: { defaultProfile: null, profiles: [] },
-        workspace: { tabs: [{ cwd: null, shell: null }], activeTabIndex: 1 },
-        recording: { state: "disabled", redactedPatterns: [] },
-      }),
-    ).toThrow();
+    expect(parsed).toMatchObject({
+      schemaVersion: 2,
+      shell: {
+        profiles: [{ id: "zsh", shell: "/bin/zsh" }],
+      },
+    });
+    expect(parsed).not.toHaveProperty("workspace");
   });
 
   it("validates observation, wait, input, and recording contracts", () => {
@@ -384,7 +354,7 @@ describe("protocol schemas", () => {
       type: "session.release",
       payload: { sessionId },
     });
-    expect(
+    expect(() =>
       parseRendererCommand({
         type: "settings.saveWorkspace",
         requestId,
@@ -395,30 +365,9 @@ describe("protocol schemas", () => {
           },
         },
       }),
-    ).toMatchObject({
-      type: "settings.saveWorkspace",
-      payload: {
-        workspace: {
-          tabs: [{ cwd: "/tmp", shell: null }],
-          activeTabIndex: 0,
-        },
-      },
-    });
+    ).toThrow();
     expect(parseReleaseSessionRequest({ sessionId })).toEqual({ sessionId });
     expect(() => parseReleaseSessionRequest({ sessionId: "" })).toThrow();
-    expect(
-      parseSaveWorkspaceRequest({
-        workspace: {
-          tabs: [{ cwd: null, shell: null }],
-          activeTabIndex: 0,
-        },
-      }),
-    ).toEqual({
-      workspace: {
-        tabs: [{ cwd: null, shell: null }],
-        activeTabIndex: 0,
-      },
-    });
 
     const success = createRendererCommandSuccess(requestId, null);
     expect(parseRendererCommandResult(success)).toEqual(success);

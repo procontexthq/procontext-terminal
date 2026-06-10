@@ -50,7 +50,6 @@ export function registerTerminalIpc(
   policy: TerminalPolicy,
   logger: AppLogger,
   getConfig: () => TerminalConfig,
-  saveConfig: (config: TerminalConfig) => Promise<TerminalConfig>,
   screenSnapshotService: ScreenSnapshotService = createScreenSnapshotService(),
 ): () => void {
   const trackedRendererIds = new Set<number>();
@@ -77,7 +76,6 @@ export function registerTerminalIpc(
       unregisterRendererSession: (sessionId) =>
         screenSnapshotService.unregisterRendererSession(sessionId, rendererId),
       getConfig,
-      saveConfig,
       policy,
       logger,
     });

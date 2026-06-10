@@ -16,16 +16,6 @@ export type TerminalTheme = {
   cursor: string;
 };
 
-export type TerminalWorkspaceTab = {
-  cwd: string | null;
-  shell: string | null;
-};
-
-export type TerminalWorkspaceState = {
-  tabs: TerminalWorkspaceTab[];
-  activeTabIndex: number;
-};
-
 export type TerminalShellProfile = {
   id: string;
   name: string;
@@ -51,7 +41,6 @@ export type TerminalConfig = {
     defaultProfile: string | null;
     profiles: TerminalShellProfile[];
   };
-  workspace: TerminalWorkspaceState;
   recording: RecordingConfig;
 };
 
@@ -73,8 +62,7 @@ export type TerminalErrorType =
   | "session_attach_failed"
   | "session_snapshot_failed"
   | "wait_timeout"
-  | "recording_failed"
-  | "settings_save_failed";
+  | "recording_failed";
 
 export type TerminalError = {
   type: TerminalErrorType;
@@ -368,10 +356,6 @@ export type TerminalRecordingExport = {
   events: TerminalRecordingEvent[];
 };
 
-export type SaveWorkspaceRequest = {
-  workspace: TerminalWorkspaceState;
-};
-
 export type TerminalSessionSnapshot = {
   sessionId: SessionId;
   state: SessionState;
@@ -446,8 +430,7 @@ export type RendererCommand =
   | { type: "recording.start"; requestId: RequestId; payload: RecordingControlRequest }
   | { type: "recording.stop"; requestId: RequestId; payload: RecordingControlRequest }
   | { type: "recording.export"; requestId: RequestId; payload: RecordingExportRequest }
-  | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> }
-  | { type: "settings.saveWorkspace"; requestId: RequestId; payload: SaveWorkspaceRequest };
+  | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> };
 
 export type RendererCommandType = RendererCommand["type"];
 
@@ -490,7 +473,6 @@ export type RendererTerminalApi = {
   stopRecording(request: RecordingControlRequest): Promise<void>;
   exportRecording(request: RecordingExportRequest): Promise<TerminalRecordingExport>;
   getConfig(): Promise<TerminalConfig>;
-  saveWorkspace(workspace: TerminalWorkspaceState): Promise<TerminalConfig>;
   onTerminalEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe;
   onSessionEvent(sessionId: SessionId, handler: (event: RendererSessionEvent) => void): Unsubscribe;
 };
@@ -530,26 +512,6 @@ export const terminalThemeSchema = z.object({
   cursor: z.string().min(1),
 });
 
-export const terminalWorkspaceTabSchema = z.object({
-  cwd: z.string().min(1).nullable(),
-  shell: z.string().min(1).nullable(),
-});
-
-export const terminalWorkspaceStateSchema = z
-  .object({
-    tabs: z.array(terminalWorkspaceTabSchema).min(1),
-    activeTabIndex: z.number().int().min(0),
-  })
-  .superRefine((workspace, context) => {
-    if (workspace.activeTabIndex >= workspace.tabs.length) {
-      context.addIssue({
-        code: "custom",
-        message: "activeTabIndex must point to an existing workspace tab.",
-        path: ["activeTabIndex"],
-      });
-    }
-  });
-
 export const terminalShellProfileSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -575,7 +537,6 @@ export const terminalConfigSchema = z.object({
     defaultProfile: z.string().min(1).nullable(),
     profiles: z.array(terminalShellProfileSchema),
   }),
-  workspace: terminalWorkspaceStateSchema,
   recording: recordingConfigSchema,
 });
 
@@ -598,7 +559,6 @@ export const terminalErrorTypeSchema = z.enum([
   "session_snapshot_failed",
   "wait_timeout",
   "recording_failed",
-  "settings_save_failed",
 ]);
 
 export const terminalErrorSchema = z.object({
@@ -813,10 +773,6 @@ export const terminalRecordingExportSchema = z.object({
   sessionId: sessionIdSchema,
   exportedAt: z.string().min(1),
   events: z.array(terminalRecordingEventSchema),
-});
-
-export const saveWorkspaceRequestSchema = z.object({
-  workspace: terminalWorkspaceStateSchema,
 });
 
 export const agentGatewayDescriptorSchema = z.object({
@@ -1144,11 +1100,6 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     requestId: requestIdSchema,
     payload: z.object({}),
   }),
-  z.object({
-    type: z.literal("settings.saveWorkspace"),
-    requestId: requestIdSchema,
-    payload: saveWorkspaceRequestSchema,
-  }),
 ]);
 
 export const rendererCommandResultSchema = z.union([
@@ -1265,10 +1216,6 @@ export function parseWaitForQuietRequest(value: unknown): WaitForQuietRequest {
 
 export function parseTerminalRecordingExport(value: unknown): TerminalRecordingExport {
   return terminalRecordingExportSchema.parse(value);
-}
-
-export function parseSaveWorkspaceRequest(value: unknown): SaveWorkspaceRequest {
-  return saveWorkspaceRequestSchema.parse(value);
 }
 
 export function parseTerminalConfig(value: unknown): TerminalConfig {
