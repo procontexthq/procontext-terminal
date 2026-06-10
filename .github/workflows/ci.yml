@@ -46,7 +46,7 @@ jobs:
 
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: scripts/install-linux-system-deps.sh
+        run: bash scripts/install-linux-system-deps.sh
 
       - name: Install dependencies
         run: |

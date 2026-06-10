@@ -58,7 +58,7 @@ if [[ -n "${native_build_jobs}" ]]; then
   export npm_config_jobs="${npm_config_jobs:-${native_build_jobs}}"
 fi
 
-scripts/install-linux-system-deps.sh
+bash scripts/install-linux-system-deps.sh
 
 unset ELECTRON_SKIP_BINARY_DOWNLOAD
 pnpm "${pnpm_install_args[@]}"
