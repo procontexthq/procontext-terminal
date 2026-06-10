@@ -21,6 +21,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Assign stable session IDs.
 - Track lifecycle state.
 - Own canonical session metadata: shell, cwd, env profile, cols, rows, title, createdBy, and timestamps.
+- Apply the main-process default working directory only when a create request
+  does not carry explicit or profile-derived `cwd` launch metadata.
 - Route input to the correct PTY.
 - Broadcast output, exit, resize, title, bell, and error events.
 - Preserve stable side-effect boundaries so policy-enforcing callers can deny
@@ -90,6 +92,21 @@ Session metadata must be serializable and shared through protocol types. At mini
 - Creation origin.
 - Created, updated, and exited timestamps.
 - Exit code and signal when available.
+
+## Working Directory Defaults
+
+Create-session requests preserve caller intent. An explicit `cwd` from the
+renderer, agent API, or shell profile is passed through unchanged and should
+fail as a structured PTY spawn error if the directory is invalid for the host
+platform.
+
+When no `cwd` is provided, the desktop main process supplies a validated native
+terminal default working directory. The default is the user's home directory,
+not the Electron process working directory, because packaged apps launched by
+the OS may start with `/` or another launch-service directory that native
+terminal users do not expect. If the OS home directory cannot be resolved, main
+falls back through platform environment home variables and finally the current
+process directory only as a last-resort availability fallback.
 
 ## Testing Expectations
 

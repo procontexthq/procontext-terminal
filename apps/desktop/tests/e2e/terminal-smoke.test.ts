@@ -2,7 +2,7 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:chil
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,6 +54,7 @@ describe("desktop terminal smoke", () => {
     await page.waitForSelector("[data-testid='terminal-ready']");
     await expectTabCount(page, 1);
     const sessionId = await activeSessionId(page);
+    await expectSessionCwd(page, sessionId, homedir());
 
     await typeCommand(page, platformPrintCommand("PHASE1_E2E_OK"));
     await waitForTerminalText(page, "PHASE1_E2E_OK");
@@ -160,8 +161,8 @@ describe("desktop terminal smoke", () => {
     await expectThemeFonts(page, "Orbitron", "Share Tech Mono");
     await expectThemeFontsReady(page);
 
-    await typeCommand(page, platformDirectoryListingCommand());
-    await waitForActiveTerminalText(page, "package.json");
+    await typeCommand(page, platformPrintCommand("PHASE_GAMER_STARTUP"));
+    await waitForActiveTerminalText(page, "PHASE_GAMER_STARTUP");
     await expectTerminalBackgroundConsistent(page);
   });
 
@@ -289,6 +290,9 @@ describe("desktop terminal smoke", () => {
     );
     if (snapshot.cwd === restoredCwd) {
       throw new Error("Legacy workspace cwd should not be restored into the fresh startup tab.");
+    }
+    if (snapshot.cwd !== homedir()) {
+      throw new Error(`Fresh startup tab should launch in ${homedir()}, got ${snapshot.cwd}.`);
     }
   });
 
@@ -936,6 +940,16 @@ async function activeSessionId(page: Page): Promise<SessionId> {
   return sessionId as SessionId;
 }
 
+async function expectSessionCwd(page: Page, sessionId: SessionId, cwd: string): Promise<void> {
+  const snapshot = await page.evaluate(
+    (activeSessionId) => window.terminalApi.getSession({ sessionId: activeSessionId }),
+    sessionId,
+  );
+  if (snapshot.cwd !== cwd) {
+    throw new Error(`Expected session cwd ${cwd}, got ${snapshot.cwd}.`);
+  }
+}
+
 async function captureScreen(page: Page, sessionId: SessionId): Promise<TerminalScreenSnapshot> {
   return page.evaluate(
     (activeSessionId) =>
@@ -1015,10 +1029,6 @@ function platformElectronFlags(): string[] {
 
 function platformPrintCommand(text: string): string {
   return process.platform === "win32" ? `echo ${text}` : `printf '${text}\\n'`;
-}
-
-function platformDirectoryListingCommand(): string {
-  return process.platform === "win32" ? "dir" : "ls";
 }
 
 function platformManyLinesCommand(prefix: string, count: number): string {

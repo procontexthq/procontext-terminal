@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,6 +16,7 @@ import {
   type AgentGatewayDescriptor,
   type SessionId,
   type TerminalScreenSnapshot,
+  type TerminalSessionSnapshot,
 } from "@terminal/protocol";
 
 const desktopRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -47,6 +48,12 @@ describe("packaged desktop terminal smoke", () => {
     const page = await firstPage(browser);
     await page.waitForSelector("[data-testid='terminal-ready']");
     const sessionId = await activeSessionId(page);
+    const initialSession = await getSession(page, sessionId);
+    if (initialSession.cwd !== homedir()) {
+      throw new Error(
+        `Expected packaged default terminal cwd to be the user home ${homedir()}, got ${initialSession.cwd}.`,
+      );
+    }
 
     await writeTerminalInput(page, sessionId, `${platformPrintCommand("PHASE5_PACKAGE_PTY")}\r`);
     await waitForRecentOutput(page, sessionId, "PHASE5_PACKAGE_PTY");
@@ -237,6 +244,13 @@ async function writeTerminalInput(page: Page, sessionId: SessionId, data: string
         origin: "agent",
       }),
     { activeSessionId: sessionId, input: data },
+  );
+}
+
+async function getSession(page: Page, sessionId: SessionId): Promise<TerminalSessionSnapshot> {
+  return page.evaluate(
+    (activeSessionId) => window.terminalApi.getSession({ sessionId: activeSessionId }),
+    sessionId,
   );
 }
 

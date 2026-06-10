@@ -103,6 +103,10 @@ The first multi-session milestone supports tabs only.
 - Startup creates one default human terminal tab. Human tab count, tab order,
   active tab, cwd, and shell launch metadata are not persisted or restored from
   settings across app restarts.
+- The default human terminal tab does not synthesize a working directory in the
+  renderer. When no tab launch metadata provides `cwd`, main/session-core
+  launches the shell from the platform user home directory, matching native
+  terminal startup behavior for packaged apps.
 
 ## Testing Expectations
 

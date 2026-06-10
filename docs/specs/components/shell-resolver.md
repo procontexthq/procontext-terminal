@@ -46,6 +46,14 @@ Environment construction must be explicit and testable.
 - Avoid leaking app internals into child process environments.
 - Preserve platform-specific casing and path semantics.
 
+## Working Directory Contract
+
+The shell resolver receives a resolved session working directory from the
+session manager. It must not use the packaged app process working directory as
+the user-facing terminal default. Main-process launch policy chooses the
+native terminal default working directory before shell resolution so session
+metadata and PTY spawn behavior remain identical.
+
 ## Shell Path Contract
 
 Explicit shell values must be either absolute executable paths for the current

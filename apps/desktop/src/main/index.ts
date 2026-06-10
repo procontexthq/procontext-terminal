@@ -33,6 +33,7 @@ import {
   createAgentSessionDisplayService,
   type AgentSessionDisplayService,
 } from "./agent-session-display";
+import { resolveDefaultTerminalCwd } from "./default-terminal-cwd";
 import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
 import {
   waitForPrompt,
@@ -49,6 +50,7 @@ let logger = createAppLogger({
 });
 let recorder: FileTerminalRecorder | null = null;
 const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
+  defaultCwd: defaultTerminalCwd,
   recorder: {
     record: (event) => recorder?.record(event),
     start: (session) => recorder?.start(session),
@@ -76,6 +78,25 @@ let agentGateway: AgentGateway | null = null;
 let terminalConfig: TerminalConfig = defaultTerminalConfig();
 let quitAfterShutdown = false;
 let suppressNextWindowAllClosedQuit = false;
+
+function defaultTerminalCwd(): string {
+  const resolved = resolveDefaultTerminalCwd({ appHome: safeAppHome() });
+  if (resolved.source !== "app-home") {
+    logger.warn("session", "default_cwd_fallback", {
+      cwd: resolved.cwd,
+      source: resolved.source,
+    });
+  }
+  return resolved.cwd;
+}
+
+function safeAppHome(): string {
+  try {
+    return app.getPath("home");
+  } catch {
+    return "";
+  }
+}
 
 async function createMainWindow(): Promise<BrowserWindow> {
   logger.info("window", "create_requested");
