@@ -18,6 +18,7 @@ import {
   type AgentGatewayDescriptor,
   type SessionId,
   type TerminalScreenSnapshot,
+  type TerminalSessionSnapshot,
 } from "@terminal/protocol";
 
 const require = createRequire(import.meta.url);
@@ -181,6 +182,40 @@ describe("desktop terminal smoke", () => {
       { sessionId: restoredSessionId, command: platformCwdCommand() },
     );
     await waitForRecentOutput(page, restoredSessionId, restoredCwd);
+  });
+
+  it("reconciles detached human-created sessions into visible renderer tabs", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    await expectTabCount(page, 1);
+
+    const detachedSessionId = await page.evaluate(async () => {
+      const created = await window.terminalApi.createSession({ cols: 80, rows: 24 });
+      await window.terminalApi.detachSession({ sessionId: created.sessionId });
+      return created.sessionId;
+    });
+
+    await expectTabCount(page, 2);
+    await page.waitForFunction(
+      (expectedSessionId) =>
+        document
+          .querySelector("[data-testid='terminal-ready']")
+          ?.getAttribute("data-session-id") === expectedSessionId,
+      detachedSessionId,
+      { timeout: 10000 },
+    );
+    await page.evaluate(
+      ({ sessionId, command }) =>
+        window.terminalApi.write({
+          sessionId,
+          data: `${command}\r`,
+          origin: "agent",
+        }),
+      { sessionId: detachedSessionId, command: platformPrintCommand("HUMAN_DETACHED_VISIBLE") },
+    );
+    await waitForActiveTerminalText(page, "HUMAN_DETACHED_VISIBLE");
   });
 
   it("supports agent runtime observation, waits, detach/attach, and recording export", async () => {
@@ -435,6 +470,47 @@ describe("desktop terminal smoke", () => {
     } finally {
       agent.close();
       unauthenticatedAgent.close();
+    }
+  });
+
+  it("surfaces agent-created terminal sessions as visible renderer tabs", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    const descriptor = await waitForAgentDescriptor(userDataDir);
+    const agent = await E2EAgentClient.connect(descriptor.url);
+
+    try {
+      await expectAgentOk(
+        agent.request(createAgentCommand("agent.authenticate", { token: descriptor.token })),
+      );
+      const created = (await expectAgentOk(
+        agent.request(createAgentCommand("terminal.create", { cols: 80, rows: 24 })),
+      )) as TerminalSessionSnapshot;
+      if (created.state !== "detached") {
+        throw new Error(`Expected agent-created session to start detached: ${created.state}`);
+      }
+
+      await page.waitForFunction(
+        (createdSessionId) =>
+          document
+            .querySelector("[data-testid='terminal-ready']")
+            ?.getAttribute("data-session-id") === createdSessionId,
+        created.sessionId,
+        { timeout: 10000 },
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.sendText", {
+            sessionId: created.sessionId,
+            text: `${platformPrintCommand("AGENT_CREATED_VISIBLE")}\r`,
+          }),
+        ),
+      );
+      await waitForActiveTerminalText(page, "AGENT_CREATED_VISIBLE");
+    } finally {
+      agent.close();
     }
   });
 });

@@ -4,8 +4,19 @@ import {
   type PolicyDecision,
   type PolicyDenial,
   type PolicyDenialCode,
+  type RendererCommandType,
   type SessionId,
 } from "@terminal/protocol";
+
+export type HumanPolicyActor = {
+  kind: "human";
+  local: boolean;
+};
+
+export type SystemPolicyActor = {
+  kind: "system";
+  local: boolean;
+};
 
 export type AgentPolicyActor = {
   kind: "agent";
@@ -14,8 +25,10 @@ export type AgentPolicyActor = {
   ownedSessionIds: ReadonlySet<SessionId | string>;
 };
 
-export type AgentPolicyOperation = {
-  type: AgentCommandType;
+export type TerminalPolicyActor = HumanPolicyActor | SystemPolicyActor | AgentPolicyActor;
+
+export type TerminalPolicyOperation = {
+  type: AgentCommandType | RendererCommandType;
   sessionId?: SessionId;
   cwd?: string;
   shell?: string;
@@ -32,20 +45,37 @@ export type AgentPolicyOperation = {
   recordingKind?: "start" | "stop" | "export";
 };
 
+export type AgentPolicyOperation = TerminalPolicyOperation & {
+  type: AgentCommandType;
+};
+
+export type TerminalPolicyRequest = {
+  actor: TerminalPolicyActor;
+  operation: TerminalPolicyOperation;
+};
+
 export type AgentPolicyRequest = {
   actor: AgentPolicyActor;
   operation: AgentPolicyOperation;
+};
+
+export type TerminalPolicy = {
+  authorize(request: TerminalPolicyRequest): PolicyDecision;
 };
 
 export type AgentPolicy = {
   authorize(request: AgentPolicyRequest): PolicyDecision;
 };
 
-export type DefaultAgentPolicyOptions = {
+export type DefaultTerminalPolicyOptions = {
   createDecisionId?: () => string;
 };
 
-export function createDefaultAgentPolicy(options: DefaultAgentPolicyOptions = {}): AgentPolicy {
+export type DefaultAgentPolicyOptions = DefaultTerminalPolicyOptions;
+
+export function createDefaultTerminalPolicy(
+  options: DefaultTerminalPolicyOptions = {},
+): TerminalPolicy {
   const nextDecisionId = options.createDecisionId ?? (() => createDecisionId());
   return {
     authorize({ actor, operation }) {
@@ -54,16 +84,18 @@ export function createDefaultAgentPolicy(options: DefaultAgentPolicyOptions = {}
         return deny(decisionId, "remote_control_disabled", operation);
       }
 
-      if (!actor.authenticated && operation.type !== "agent.authenticate") {
-        return deny(decisionId, "auth_required", operation);
-      }
+      if (actor.kind === "agent") {
+        if (!actor.authenticated && operation.type !== "agent.authenticate") {
+          return deny(decisionId, "auth_required", operation);
+        }
 
-      if (
-        operation.sessionId &&
-        operation.type !== "terminal.attach" &&
-        !actor.ownedSessionIds.has(operation.sessionId)
-      ) {
-        return deny(decisionId, "session_not_owned", operation);
+        if (
+          operation.sessionId &&
+          operation.type !== "terminal.attach" &&
+          !actor.ownedSessionIds.has(operation.sessionId)
+        ) {
+          return deny(decisionId, "session_not_owned", operation);
+        }
       }
 
       return { type: "allow", decisionId };
@@ -71,10 +103,19 @@ export function createDefaultAgentPolicy(options: DefaultAgentPolicyOptions = {}
   };
 }
 
+export function createDefaultAgentPolicy(options: DefaultAgentPolicyOptions = {}): AgentPolicy {
+  const terminalPolicy = createDefaultTerminalPolicy(options);
+  return {
+    authorize(request) {
+      return terminalPolicy.authorize(request);
+    },
+  };
+}
+
 function deny(
   decisionId: string,
   code: PolicyDenialCode,
-  operation: AgentPolicyOperation,
+  operation: TerminalPolicyOperation,
 ): PolicyDecision {
   return {
     type: "deny",
@@ -86,7 +127,7 @@ function deny(
 function createPolicyDenial(
   decisionId: string,
   code: PolicyDenialCode,
-  operation: AgentPolicyOperation,
+  operation: TerminalPolicyOperation,
 ): PolicyDenial {
   return {
     decisionId,

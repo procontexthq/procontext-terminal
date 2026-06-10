@@ -190,6 +190,9 @@ Implementation:
 - Treat renderer-dependent observation honestly: recent output works through
   session-core, while capture-screen and screen-based waits return structured
   observation errors when no renderer window can provide a snapshot.
+- Keep agent-created PTY sessions usable in detached/headless mode when a
+  renderer window cannot be created, while surfacing display failure as a
+  non-fatal structured agent error.
 - Add audit events without logging tokens, terminal input, PTY output, or
   transcript data.
 - Add visible agent activity indicators.

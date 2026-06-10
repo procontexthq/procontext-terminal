@@ -20,6 +20,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Own settings, logs, transcripts, recordings, and app data path resolution.
 - Coordinate shutdown so PTY sessions are terminated, detached, or restored according to policy.
 - Wire the session manager, PTY host, policy engine, recorder, settings store, app logger, and agent gateway.
+- Authorize renderer-triggered sensitive operations such as recording control
+  before invoking recorder or session-manager side effects.
 
 ## Boundaries
 
@@ -39,6 +41,13 @@ The main process must not:
 - Expose native operations only through typed IPC and the preload bridge.
 - Treat renderer requests, agent requests, settings files, and recordings as untrusted runtime input.
 - Delegate authorization decisions to the policy engine before sensitive terminal operations.
+- Log policy decisions with structured safe metadata such as request ID, session
+  ID, origin, decision ID, outcome, and denial code, without terminal input,
+  PTY output, or transcript payloads.
+- Treat destroyed or crashed renderer web contents as unavailable for
+  renderer-dependent display and observation.
+- Detach live sessions when their last renderer owner is destroyed so the
+  session can be rediscovered and reattached by a replacement renderer.
 
 ## Collaborators
 
@@ -54,5 +63,9 @@ The main process must not:
 
 - App startup creates the expected secure window configuration.
 - IPC handlers validate request payloads and return typed domain errors.
+- IPC recording start, stop, and export handlers deny cleanly without recorder
+  side effects when policy denies the request.
+- Renderer destruction removes renderer ownership and detaches orphaned running
+  sessions without killing their PTYs.
 - Phase 1 app shutdown terminates active sessions with a bounded timeout; later restore or detach policies must preserve the view/session distinction.
 - Main-process services can be wired without renderer imports or circular dependencies.

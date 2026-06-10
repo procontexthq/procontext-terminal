@@ -63,5 +63,17 @@ describe("terminal status", () => {
         payload: { type: "recording_failed", message: "recording failed", sessionId },
       }),
     ).toBe("running");
+    expect(
+      nextTerminalStatus("running", {
+        type: "session.title",
+        payload: { sessionId, title: "vim" },
+      }),
+    ).toBe("running");
+    expect(
+      nextTerminalStatus("running", {
+        type: "session.bell",
+        payload: { sessionId },
+      }),
+    ).toBe("running");
   });
 });

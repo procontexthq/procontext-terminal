@@ -16,6 +16,7 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Restore window size, position, display, and theme.
 - Create additional windows for sessions that should be displayed outside the primary window.
 - Keep renderer windows associated with the session IDs they display.
+- Best-effort create a renderer window for agent-created sessions when no window is available.
 - Coordinate close behavior with the terminal session manager and settings store.
 - Surface user prompts for close, preserve, or terminate decisions when policy requires it.
 
@@ -43,6 +44,7 @@ Window close handling must preserve the distinction between closing a view and e
 ## Testing Expectations
 
 - Window creation uses secure Electron options.
+- Agent-created sessions remain usable headlessly when renderer window creation fails.
 - Window-to-session associations are updated when sessions open, move, detach, or exit.
 - Closing a window does not implicitly kill a session unless settings or explicit user action require it.
 - Restored window state is validated before use.

@@ -2,6 +2,7 @@ import {
   createSessionId,
   createTerminalError,
   type AttachSessionRequest,
+  type BellRequest,
   type CreateSessionRequest,
   type DetachSessionRequest,
   type GetSessionRequest,
@@ -16,6 +17,7 @@ import {
   type SendKeyRequest,
   type ResizeSessionRequest,
   type SessionId,
+  type SetTitleRequest,
   type TerminalError,
   type TerminalRecordingExport,
   type TerminalRecordingEvent,
@@ -144,7 +146,7 @@ export class TerminalSessionManager {
       );
       activeRecord.snapshot = {
         ...activeRecord.snapshot,
-        state: "running",
+        state: request.createdBy === "agent" ? "detached" : "running",
         updatedAt: new Date().toISOString(),
       };
       void this.record({
@@ -210,6 +212,25 @@ export class TerminalSessionManager {
       data: request.data,
       origin: request.origin,
     });
+  }
+
+  setTitle(request: SetTitleRequest): TerminalSessionSnapshot {
+    const record = this.getRecord(request.sessionId);
+    record.snapshot = {
+      ...record.snapshot,
+      title: request.title,
+      updatedAt: new Date().toISOString(),
+    };
+    this.emit({
+      type: "session.title",
+      payload: { sessionId: request.sessionId, title: request.title },
+    });
+    return { ...record.snapshot };
+  }
+
+  reportBell(request: BellRequest): void {
+    this.getRecord(request.sessionId);
+    this.emit({ type: "session.bell", payload: { sessionId: request.sessionId } });
   }
 
   interrupt(request: KillSessionRequest): Promise<void> {
@@ -409,9 +430,6 @@ export class TerminalSessionManager {
     });
     for (const record of recordsToDispose) {
       this.disposeRecord(record);
-    }
-    if (this.sessions.size === 0) {
-      this.eventHandlers.clear();
     }
     return summarizeShutdown(results);
   }

@@ -44,6 +44,11 @@ The terminal view must preserve xterm.js behavior for:
 - Terminal title and bell events.
 - Raw keyboard and paste input.
 
+Title and bell notifications originate in renderer-owned xterm.js state, but
+they must be reported through the preload API to the session manager. Renderer
+UI updates from the resulting canonical session events instead of treating
+local xterm callbacks as the source of truth.
+
 When the backing session exits, the terminal view keeps the final buffer visible
 but stops forwarding new keyboard or paste input for that session. Post-exit
 typing is user input against a closed PTY, not an application failure. Renderer

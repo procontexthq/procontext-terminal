@@ -46,6 +46,7 @@ import {
 export type AgentGatewayTerminalServices = {
   listSessions(): TerminalSessionSnapshot[];
   createSession(request: CreateSessionRequest): Promise<TerminalSessionSnapshot>;
+  displaySession(snapshot: TerminalSessionSnapshot): Promise<void>;
   getSession(request: AttachSessionRequest): TerminalSessionSnapshot;
   write(request: WriteInputRequest): Promise<void>;
   sendKey(request: SendKeyRequest): Promise<void>;
@@ -308,6 +309,12 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
           type: "terminal.created",
           payload: snapshot,
         } satisfies AgentEvent);
+        await options.services.displaySession(snapshot).catch((error: unknown) => {
+          sendJson(connection.socket, {
+            type: "terminal.error",
+            payload: normalizeDisplayError(error, snapshot.sessionId),
+          } satisfies AgentEvent);
+        });
         return snapshot;
       }
       case "terminal.attach": {
@@ -403,6 +410,14 @@ function mapRendererEventForConnection(
     case "session.output":
       return connection.ownedSessionIds.has(event.payload.sessionId)
         ? { type: "terminal.output", payload: event.payload }
+        : null;
+    case "session.title":
+      return connection.ownedSessionIds.has(event.payload.sessionId)
+        ? { type: "terminal.title", payload: event.payload }
+        : null;
+    case "session.bell":
+      return connection.ownedSessionIds.has(event.payload.sessionId)
+        ? { type: "terminal.bell", payload: event.payload }
         : null;
     case "session.exited":
       return connection.ownedSessionIds.has(event.payload.sessionId)
@@ -524,6 +539,25 @@ function normalizeTerminalError(error: unknown, command: AgentCommand): Terminal
     {
       operation: command.type,
       sessionId: commandSessionId(command),
+      cause: error instanceof Error ? error.message : String(error),
+    },
+  );
+}
+
+function normalizeDisplayError(error: unknown, sessionId: SessionId): TerminalError {
+  if (isTerminalError(error)) {
+    return {
+      ...error,
+      sessionId: error.sessionId ?? sessionId,
+      operation: error.operation ?? "terminal.display",
+    };
+  }
+  return createTerminalError(
+    "observation_unavailable",
+    error instanceof Error ? error.message : String(error),
+    {
+      sessionId,
+      operation: "terminal.display",
       cause: error instanceof Error ? error.message : String(error),
     },
   );

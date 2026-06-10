@@ -21,7 +21,9 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 
 ## Default Policy
 
-The default local development policy permits local authenticated agent control, but every sensitive operation still passes through an explicit policy decision point.
+The default local development policy permits local authenticated agent control
+and local human desktop actions, but every sensitive operation still passes
+through an explicit policy decision point.
 
 Sensitive operations include:
 
@@ -47,17 +49,29 @@ The policy engine returns decisions. Callers enforce those decisions.
 
 Every agent command, including `agent.authenticate`, goes through a policy
 decision before the gateway mutates connection authentication or terminal state.
-When unauthenticated access is denied with `auth_required`, callers surface an
-`auth_required` terminal error. Other denial codes are surfaced as
-`policy_denied`.
+Renderer-triggered sensitive operations, including recording start, stop, and
+export, go through the same policy engine before main calls recorder/session
+manager side-effect methods. When unauthenticated access is denied with
+`auth_required`, callers surface an `auth_required` terminal error. Other denial
+codes are surfaced as `policy_denied`.
 
 ## Decision Shape
 
 Policy decisions should be structured and auditable:
 
 ```ts
-type AgentPolicyOperation = {
-  type: AgentCommandType;
+type TerminalPolicyActor =
+  | { kind: "human"; local: boolean }
+  | { kind: "system"; local: boolean }
+  | {
+      kind: "agent";
+      authenticated: boolean;
+      local: boolean;
+      ownedSessionIds: ReadonlySet<SessionId | string>;
+    };
+
+type TerminalPolicyOperation = {
+  type: AgentCommandType | RendererCommandType;
   sessionId?: SessionId;
   cwd?: string;
   shell?: string;
@@ -85,6 +99,10 @@ Operation metadata is intentionally safe context only. It can include `cwd`,
 terminal input text, PTY output, clipboard data, tokens, secrets, or transcript
 payloads by default.
 
+The agent gateway may expose an agent-specific wrapper over this generic
+terminal policy surface, but it must preserve the same decision semantics for
+agent authentication, ownership, and remote-control checks.
+
 ## Testing Expectations
 
 - Sensitive operations route through policy checks.
@@ -92,5 +110,7 @@ payloads by default.
 - Denials prevent side effects.
 - Denial reasons are structured and stable.
 - Human, agent, and system origins can be evaluated differently.
+- Renderer recording start, stop, and export requests are authorized as local
+  human operations before recorder side effects.
 - Agent input policy checks receive safe input metadata, not raw terminal text.
 - Default local policy allows intended development flows without skipping decision points.

@@ -21,6 +21,7 @@ describe("renderer terminal api", () => {
     });
     const sessionId = createSessionId("session-1");
 
+    await expect(api.listSessions()).resolves.toBe("session.list");
     await expect(api.releaseSession({ sessionId })).resolves.toBe("session.release");
     await expect(api.sendKey({ sessionId, key: "Ctrl+C", origin: "agent" })).resolves.toBe(
       "session.sendKey",
@@ -30,6 +31,17 @@ describe("renderer terminal api", () => {
     await expect(api.captureScreen({ sessionId, timeoutMs: 1000 })).resolves.toBe(
       "session.captureScreen",
     );
+    await expect(
+      api.reportSnapshotUnavailable({
+        requestId,
+        sessionId,
+        reason: "No terminal view owns this session.",
+      }),
+    ).resolves.toBe("session.snapshot.unavailable");
+    await expect(api.setTitle({ sessionId, title: "vim package.json" })).resolves.toBe(
+      "session.setTitle",
+    );
+    await expect(api.reportBell({ sessionId })).resolves.toBe("session.bell");
     await expect(api.startRecording({ sessionId })).resolves.toBe("recording.start");
     await expect(
       api.saveWorkspace({
@@ -38,6 +50,12 @@ describe("renderer terminal api", () => {
       }),
     ).resolves.toBe("settings.saveWorkspace");
 
+    expect(invoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session.list",
+        payload: {},
+      }),
+    );
     expect(invoke).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "session.release",

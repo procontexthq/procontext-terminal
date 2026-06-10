@@ -113,6 +113,9 @@ describe("agent gateway", () => {
       rows: 24,
       createdBy: "agent",
     });
+    expect(services.displaySession).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId, createdBy: "agent" }),
+    );
     expect(services.write).toHaveBeenCalledWith({
       sessionId,
       data: "echo PHASE3\r",
@@ -401,6 +404,22 @@ describe("agent gateway", () => {
       payload: { sessionId: firstSession, data: "owned output" },
     });
     await expect(otherClient.waitForEvent("terminal.output", 100)).rejects.toThrow();
+    services.emit({
+      type: "session.title",
+      payload: { sessionId: firstSession, title: "vim package.json" },
+    });
+    expect(await client.waitForEvent("terminal.title")).toMatchObject({
+      type: "terminal.title",
+      payload: { sessionId: firstSession, title: "vim package.json" },
+    });
+    services.emit({
+      type: "session.bell",
+      payload: { sessionId: firstSession },
+    });
+    expect(await client.waitForEvent("terminal.bell")).toMatchObject({
+      type: "terminal.bell",
+      payload: { sessionId: firstSession },
+    });
 
     const auditText = JSON.stringify(auditEvents);
     expect(auditText).toContain("terminal.kill");
@@ -439,6 +458,49 @@ describe("agent gateway", () => {
         sessionId,
         operation: "terminal.captureScreen",
       },
+    });
+    client.close();
+  });
+
+  it("keeps agent-created sessions usable when renderer display fails", async () => {
+    const tempDir = await createTempDir();
+    const services = createFakeServices();
+    const gateway = await startTestGateway({
+      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
+      services,
+    });
+    const client = await AgentTestClient.connect(gateway.descriptor.url);
+    await expectAuthenticate(client);
+    services.displaySession.mockRejectedValueOnce(
+      createTerminalError("observation_unavailable", "Renderer window is unavailable.", {
+        operation: "terminal.display",
+        cause: "DISPLAY is not set",
+      }),
+    );
+
+    await expect(
+      client.request(createAgentCommand("terminal.create", { cols: 80, rows: 24 })),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { createdBy: "agent" },
+    });
+    await expect(client.waitForEvent("terminal.error")).resolves.toMatchObject({
+      type: "terminal.error",
+      payload: {
+        type: "observation_unavailable",
+        operation: "terminal.display",
+        cause: "DISPLAY is not set",
+      },
+    });
+
+    const sessionId = createSessionId("session-created-1");
+    await expect(
+      client.request(createAgentCommand("terminal.sendText", { sessionId, text: "echo ok\r" })),
+    ).resolves.toMatchObject({ ok: true });
+    expect(services.write).toHaveBeenCalledWith({
+      sessionId,
+      data: "echo ok\r",
+      origin: "agent",
     });
     client.close();
   });
@@ -496,6 +558,7 @@ function createFakeServices(): AgentGatewayTerminalServices & {
   resize: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["resize"]>>;
   kill: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["kill"]>>;
   captureScreen: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["captureScreen"]>>;
+  displaySession: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["displaySession"]>>;
 } {
   const sessions = new Map<SessionId, TerminalSessionSnapshot>();
   const handlers = new Set<(event: RendererSessionEvent) => void>();
@@ -515,6 +578,7 @@ function createFakeServices(): AgentGatewayTerminalServices & {
     createSession: vi.fn<AgentGatewayTerminalServices["createSession"]>((request) => {
       const snapshot = {
         ...createSnapshot(createSessionId(`session-created-${sessions.size + 1}`)),
+        state: request.createdBy === "agent" ? "detached" : "running",
         cols: request.cols,
         rows: request.rows,
         createdBy: request.createdBy ?? "human",
@@ -523,6 +587,7 @@ function createFakeServices(): AgentGatewayTerminalServices & {
       emit({ type: "session.created", payload: snapshot });
       return Promise.resolve(snapshot);
     }),
+    displaySession: vi.fn<AgentGatewayTerminalServices["displaySession"]>(() => Promise.resolve()),
     getSession: vi.fn<AgentGatewayTerminalServices["getSession"]>(({ sessionId }) => {
       const snapshot = sessions.get(sessionId);
       if (!snapshot) {

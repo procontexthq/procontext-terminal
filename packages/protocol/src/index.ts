@@ -117,6 +117,15 @@ export type MouseInputRequest = {
   origin?: InputOrigin;
 };
 
+export type SetTitleRequest = {
+  sessionId: SessionId;
+  title: string;
+};
+
+export type BellRequest = {
+  sessionId: SessionId;
+};
+
 export type ResizeSessionRequest = {
   sessionId: SessionId;
   cols: number;
@@ -180,6 +189,12 @@ export type CaptureScreenRequest = {
 export type SnapshotResponseRequest = {
   requestId: RequestId;
   snapshot: TerminalScreenSnapshot;
+};
+
+export type SnapshotUnavailableRequest = {
+  requestId: RequestId;
+  sessionId: SessionId;
+  reason: string;
 };
 
 export type WaitForTextRequest = {
@@ -301,6 +316,8 @@ export type AgentEvent =
   | { type: "terminal.created"; payload: TerminalSessionSnapshot }
   | { type: "terminal.attached"; payload: TerminalSessionSnapshot }
   | { type: "terminal.output"; payload: { sessionId: SessionId; data: string } }
+  | { type: "terminal.title"; payload: { sessionId: SessionId; title: string } }
+  | { type: "terminal.bell"; payload: { sessionId: SessionId } }
   | { type: "terminal.exited"; payload: SessionExitEvent }
   | { type: "terminal.denied"; payload: PolicyDenial }
   | { type: "terminal.error"; payload: TerminalError };
@@ -381,6 +398,8 @@ export type SessionExitEvent = {
 export type RendererSessionEvent =
   | { type: "session.created"; payload: TerminalSessionSnapshot }
   | { type: "session.output"; payload: { sessionId: SessionId; data: string } }
+  | { type: "session.title"; payload: { sessionId: SessionId; title: string } }
+  | { type: "session.bell"; payload: { sessionId: SessionId } }
   | { type: "session.detached"; payload: TerminalSessionSnapshot }
   | { type: "session.attached"; payload: TerminalSessionSnapshot }
   | { type: "session.exited"; payload: SessionExitEvent }
@@ -394,10 +413,13 @@ export type RendererSessionEvent =
 
 export type RendererCommand =
   | { type: "session.create"; requestId: RequestId; payload: CreateSessionRequest }
+  | { type: "session.list"; requestId: RequestId; payload: Record<string, never> }
   | { type: "session.write"; requestId: RequestId; payload: WriteInputRequest }
   | { type: "session.sendKey"; requestId: RequestId; payload: SendKeyRequest }
   | { type: "session.paste"; requestId: RequestId; payload: PasteInputRequest }
   | { type: "session.mouse"; requestId: RequestId; payload: MouseInputRequest }
+  | { type: "session.setTitle"; requestId: RequestId; payload: SetTitleRequest }
+  | { type: "session.bell"; requestId: RequestId; payload: BellRequest }
   | { type: "session.interrupt"; requestId: RequestId; payload: KillSessionRequest }
   | { type: "session.resize"; requestId: RequestId; payload: ResizeSessionRequest }
   | { type: "session.kill"; requestId: RequestId; payload: KillSessionRequest }
@@ -408,6 +430,11 @@ export type RendererCommand =
   | { type: "session.readRecentOutput"; requestId: RequestId; payload: ReadRecentOutputRequest }
   | { type: "session.captureScreen"; requestId: RequestId; payload: CaptureScreenRequest }
   | { type: "session.snapshot.response"; requestId: RequestId; payload: SnapshotResponseRequest }
+  | {
+      type: "session.snapshot.unavailable";
+      requestId: RequestId;
+      payload: SnapshotUnavailableRequest;
+    }
   | { type: "session.waitForText"; requestId: RequestId; payload: WaitForTextRequest }
   | {
       type: "session.waitForScreenChange";
@@ -437,10 +464,13 @@ export type Unsubscribe = () => void;
 
 export type RendererTerminalApi = {
   createSession(request: CreateSessionRequest): Promise<TerminalSessionSnapshot>;
+  listSessions(): Promise<TerminalSessionSnapshot[]>;
   write(request: WriteInputRequest): Promise<void>;
   sendKey(request: SendKeyRequest): Promise<void>;
   paste(request: PasteInputRequest): Promise<void>;
   sendMouse(request: MouseInputRequest): Promise<void>;
+  setTitle(request: SetTitleRequest): Promise<TerminalSessionSnapshot>;
+  reportBell(request: BellRequest): Promise<void>;
   interrupt(request: KillSessionRequest): Promise<void>;
   resize(request: ResizeSessionRequest): Promise<void>;
   kill(request: KillSessionRequest): Promise<void>;
@@ -451,6 +481,7 @@ export type RendererTerminalApi = {
   readRecentOutput(request: ReadRecentOutputRequest): Promise<RecentOutputSnapshot>;
   captureScreen(request: CaptureScreenRequest): Promise<TerminalScreenSnapshot>;
   respondToSnapshot(request: SnapshotResponseRequest): Promise<void>;
+  reportSnapshotUnavailable(request: SnapshotUnavailableRequest): Promise<void>;
   waitForText(request: WaitForTextRequest): Promise<TerminalWaitResult>;
   waitForScreenChange(request: WaitForScreenChangeRequest): Promise<TerminalWaitResult>;
   waitForQuiet(request: WaitForQuietRequest): Promise<TerminalWaitResult>;
@@ -645,6 +676,15 @@ export const mouseInputRequestSchema = z.object({
   origin: z.enum(["human", "agent", "system"]).optional(),
 });
 
+export const setTitleRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  title: z.string(),
+});
+
+export const bellRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+});
+
 export const resizeSessionRequestSchema = z.object({
   sessionId: sessionIdSchema,
   ...terminalDimensions,
@@ -696,6 +736,12 @@ export const captureScreenRequestSchema = z.object({
 export const snapshotResponseRequestSchema = z.object({
   requestId: requestIdSchema,
   snapshot: terminalScreenSnapshotSchema,
+});
+
+export const snapshotUnavailableRequestSchema = z.object({
+  requestId: requestIdSchema,
+  sessionId: sessionIdSchema,
+  reason: z.string().min(1),
 });
 
 export const waitForTextRequestSchema = z.object({
@@ -937,6 +983,14 @@ export const agentEventSchema = z.discriminatedUnion("type", [
     payload: z.object({ sessionId: sessionIdSchema, data: z.string() }),
   }),
   z.object({
+    type: z.literal("terminal.title"),
+    payload: z.object({ sessionId: sessionIdSchema, title: z.string() }),
+  }),
+  z.object({
+    type: z.literal("terminal.bell"),
+    payload: z.object({ sessionId: sessionIdSchema }),
+  }),
+  z.object({
     type: z.literal("terminal.exited"),
     payload: z.object({
       sessionId: sessionIdSchema,
@@ -961,6 +1015,11 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     payload: createSessionRequestSchema,
   }),
   z.object({
+    type: z.literal("session.list"),
+    requestId: requestIdSchema,
+    payload: z.object({}),
+  }),
+  z.object({
     type: z.literal("session.write"),
     requestId: requestIdSchema,
     payload: writeInputRequestSchema,
@@ -979,6 +1038,16 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("session.mouse"),
     requestId: requestIdSchema,
     payload: mouseInputRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.setTitle"),
+    requestId: requestIdSchema,
+    payload: setTitleRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.bell"),
+    requestId: requestIdSchema,
+    payload: bellRequestSchema,
   }),
   z.object({
     type: z.literal("session.interrupt"),
@@ -1029,6 +1098,11 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("session.snapshot.response"),
     requestId: requestIdSchema,
     payload: snapshotResponseRequestSchema,
+  }),
+  z.object({
+    type: z.literal("session.snapshot.unavailable"),
+    requestId: requestIdSchema,
+    payload: snapshotUnavailableRequestSchema,
   }),
   z.object({
     type: z.literal("session.waitForText"),
@@ -1289,6 +1363,10 @@ export function isRendererSessionEvent(value: unknown): value is RendererSession
       return typeof value.payload.sessionId === "string";
     case "session.output":
       return typeof value.payload.sessionId === "string" && typeof value.payload.data === "string";
+    case "session.title":
+      return typeof value.payload.sessionId === "string" && typeof value.payload.title === "string";
+    case "session.bell":
+      return typeof value.payload.sessionId === "string";
     case "session.exited":
       return typeof value.payload.sessionId === "string";
     case "session.error":
