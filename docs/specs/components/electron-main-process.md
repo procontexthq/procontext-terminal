@@ -13,6 +13,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 ## Responsibilities
 
 - Create and manage `BrowserWindow` instances through the window manager.
+- Use packaged app icon resources for BrowserWindow and desktop shell branding
+  when those resources are available.
 - Configure secure renderer settings.
 - Register typed IPC handlers.
 - Start and stop the local agent gateway.

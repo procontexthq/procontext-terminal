@@ -72,6 +72,12 @@ The first multi-session milestone supports tabs only.
 - Closing the final tab from the tab close button closes the app window instead
   of silently replacing it with another terminal. The tab model can still create
   a fallback tab as an internal invalid-state guard.
+- Tab keyboard shortcuts must operate on the renderer tab model, not on the
+  Electron window. On macOS, `Cmd+T` creates a tab, `Cmd+W` closes the active
+  tab, and `Cmd+Shift+[` / `Cmd+Shift+]` switch to the previous/next tab. On
+  Windows and Linux, `Ctrl+Shift+T` creates a tab, `Ctrl+Shift+W` closes the
+  active tab, and `Ctrl+PageUp` / `Ctrl+PageDown` switch tabs. Plain `Ctrl+W`
+  must remain terminal input on Windows and Linux.
 - Exited and failed tabs must remain visible with an explicit terminal message
   so the user can tell that blinking cursor state no longer maps to a live PTY.
 - Tab labels prefer canonical session title events and fall back to cwd, shell,
@@ -81,7 +87,12 @@ The first multi-session milestone supports tabs only.
   the unread indicator.
 - The renderer may expose UI themes for chrome and terminal framing. The
   selected UI theme is persisted through typed settings and must not affect PTY
-  launch semantics or terminal transcript data.
+  launch semantics or terminal transcript data. Theme fonts may change renderer
+  chrome and xterm rendering fonts, but only through bundled renderer assets
+  with normal system font fallbacks so missing font assets never block startup.
+  The visible terminal frame, padding, scroll area, and xterm theme background
+  must use the same resolved theme background so theme switching does not leave
+  mismatched gutter colors.
 - Startup reconciliation attaches visible tabs for detached live sessions so
   sessions that were created while no renderer was available, or detached after
   renderer destruction, become human-visible when a renderer is available

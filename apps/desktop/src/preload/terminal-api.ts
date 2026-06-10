@@ -1,4 +1,5 @@
 import type {
+  AppShortcutAction,
   RendererCommand,
   RendererCommandPayload,
   RendererCommandResult,
@@ -14,11 +15,13 @@ import type {
 export type RendererTerminalApiDependencies = {
   invoke: (command: RendererCommand) => Promise<unknown>;
   subscribe: (handler: (payload: unknown) => void) => Unsubscribe;
+  subscribeAppShortcut: (handler: (payload: unknown) => void) => Unsubscribe;
 };
 
 export function createRendererTerminalApi({
   invoke,
   subscribe,
+  subscribeAppShortcut,
 }: RendererTerminalApiDependencies): RendererTerminalApi {
   return {
     createSession: (request) =>
@@ -67,6 +70,12 @@ export function createRendererTerminalApi({
     getConfig: () => invokeCommand(invoke, createRendererCommand("settings.get", {})),
     saveUiTheme: (theme) =>
       invokeCommand(invoke, createRendererCommand("settings.saveUiTheme", { theme })),
+    onAppShortcut: (handler) =>
+      subscribeAppShortcut((payload) => {
+        if (isAppShortcutAction(payload)) {
+          handler(payload);
+        }
+      }),
     onTerminalEvent: (handler) =>
       subscribe((payload) => {
         if (isRendererSessionEvent(payload)) {
@@ -157,6 +166,12 @@ class PreloadTerminalApiError extends Error {
   ) {
     super(terminalError.message);
   }
+}
+
+function isAppShortcutAction(value: unknown): value is AppShortcutAction {
+  return (
+    value === "newTab" || value === "closeTab" || value === "previousTab" || value === "nextTab"
+  );
 }
 
 function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId): boolean {

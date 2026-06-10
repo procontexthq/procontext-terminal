@@ -7,6 +7,7 @@ const distDir = join(desktopRoot, "dist");
 
 const layout = await resolvePackagedLayout(distDir, process.platform);
 await assertFile(layout.executable, "packaged executable");
+await assertFile(join(layout.resourcesDir, "icon.png"), "packaged app icon");
 await assertPackagedAppResources(layout.resourcesDir);
 
 const nativeModules = await findFiles(layout.resourcesDir, (path) => {
@@ -37,6 +38,7 @@ console.log(
       platform: process.platform,
       executable: layout.executable,
       resourcesDir: layout.resourcesDir,
+      appIcon: join(layout.resourcesDir, "icon.png"),
       nodePtyNativeModules: nativeModules,
     },
     null,

@@ -3,7 +3,7 @@ import type { ReactElement } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 
-import type { RendererSessionEvent, TerminalConfig } from "@terminal/protocol";
+import type { RendererSessionEvent, TerminalConfig, TerminalTheme } from "@terminal/protocol";
 
 import { createTerminalSession, type TerminalController } from "./terminal-controller";
 import type { TerminalTab } from "./terminal-tabs";
@@ -13,6 +13,8 @@ export function TerminalTabView({
   tab,
   config,
   active,
+  terminalFontFamily,
+  terminalTheme,
   registerController,
   setStatus,
   onSessionEvent,
@@ -23,6 +25,8 @@ export function TerminalTabView({
   tab: TerminalTab;
   config: TerminalConfig;
   active: boolean;
+  terminalFontFamily: string;
+  terminalTheme: TerminalTheme;
   registerController: (tabId: string, controller: TerminalController | null) => void;
   setStatus: (tabId: string, status: TerminalUiStatus) => void;
   onSessionEvent: (tabId: string, event: RendererSessionEvent) => void;
@@ -53,10 +57,10 @@ export function TerminalTabView({
           attachSessionId: tab.sessionId ?? undefined,
           createTerminal: () =>
             new Terminal({
-              fontFamily: config.terminal.fontFamily,
+              fontFamily: terminalFontFamily,
               fontSize: config.terminal.fontSize,
               scrollback: config.terminal.scrollback,
-              theme: config.terminal.theme,
+              theme: terminalTheme,
               cursorBlink: true,
             }),
           createFitAddon: () => new FitAddon(),
@@ -111,6 +115,14 @@ export function TerminalTabView({
     tab.id,
     tab.shell,
   ]);
+
+  useEffect(() => {
+    controller.current?.setFontFamily(terminalFontFamily);
+    controller.current?.setTheme(terminalTheme);
+    if (active) {
+      void controller.current?.resize();
+    }
+  }, [active, terminalFontFamily, terminalTheme]);
 
   useEffect(() => {
     if (!active) {

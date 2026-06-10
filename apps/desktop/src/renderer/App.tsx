@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ReactElement } from "react";
 import "@xterm/xterm/css/xterm.css";
 
 import type {
+  AppShortcutAction,
   RendererSessionEvent,
   SessionId,
   TerminalConfig,
@@ -19,6 +20,7 @@ import {
   createInitialTerminalTabs,
   markTabBell,
   renameTabFromTitle,
+  selectAdjacentTerminalTab,
   selectTerminalTab,
   setTabSessionId,
   terminalTabLabel,
@@ -27,12 +29,18 @@ import {
   type TerminalTabsState,
 } from "./terminal-tabs";
 import { nextTerminalStatus, type TerminalUiStatus } from "./terminal-status";
+import { themeFontSet } from "./theme-fonts";
+import {
+  resolveAppShortcut,
+  type AppShortcutInput,
+  type AppShortcutPlatform,
+} from "../shared/app-shortcuts";
 
 export function App(): ReactElement {
   const [config, setConfig] = useState<TerminalConfig | null>(null);
   const [tabsState, setTabsState] = useState<TerminalTabsState | null>(null);
   const [agentActive, setAgentActive] = useState(false);
-  const [uiTheme, setUiTheme] = useState<UiThemePreference>("coder");
+  const [uiTheme, setUiTheme] = useState<UiThemePreference>("default");
   const controllers = useRef(new Map<string, TerminalController>());
   const pendingDetachedSessions = useRef<TerminalSessionSnapshot[]>([]);
 
@@ -149,6 +157,21 @@ export function App(): ReactElement {
   const tabs = tabsState?.tabs ?? [];
   const activeTabId = tabsState?.activeTabId ?? null;
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+  const fonts = themeFontSet(uiTheme);
+  const terminalTheme = useMemo(
+    () =>
+      config
+        ? {
+            ...config.terminal.theme,
+            background: fonts.terminalBackground,
+          }
+        : null,
+    [config, fonts.terminalBackground],
+  );
+  const appStyle: CSSProperties & Record<"--ui-font" | "--terminal-font", string> = {
+    "--ui-font": fonts.uiFontFamily,
+    "--terminal-font": fonts.terminalFontFamily,
+  };
 
   const closeTab = useCallback(
     (tab: TerminalTab, index: number) => {
@@ -170,8 +193,62 @@ export function App(): ReactElement {
     [reportError, tabs.length],
   );
 
+  const selectAdjacentTab = useCallback((direction: "previous" | "next") => {
+    setTabsState((current) => (current ? selectAdjacentTerminalTab(current, direction) : current));
+  }, []);
+
+  const closeActiveTab = useCallback(() => {
+    if (!activeTab) {
+      return;
+    }
+    const activeIndex = tabs.findIndex((tab) => tab.id === activeTab.id);
+    closeTab(activeTab, activeIndex);
+  }, [activeTab, closeTab, tabs]);
+
+  const handleAppShortcut = useCallback(
+    (action: AppShortcutAction) => {
+      switch (action) {
+        case "newTab":
+          addTab();
+          break;
+        case "closeTab":
+          closeActiveTab();
+          break;
+        case "previousTab":
+          selectAdjacentTab("previous");
+          break;
+        case "nextTab":
+          selectAdjacentTab("next");
+          break;
+      }
+    },
+    [addTab, closeActiveTab, selectAdjacentTab],
+  );
+
+  useEffect(() => window.terminalApi.onAppShortcut(handleAppShortcut), [handleAppShortcut]);
+
+  useEffect(() => {
+    const platform = rendererShortcutPlatform();
+    if (!platform) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      const action = resolveAppShortcut(keyboardEventShortcutInput(event), platform);
+      if (!action) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      handleAppShortcut(action);
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [handleAppShortcut]);
+
   return (
-    <main className="app-shell" data-theme={uiTheme}>
+    <main className="app-shell" data-theme={uiTheme} style={appStyle}>
       <header className="titlebar">
         <div className="tab-strip" role="tablist" aria-label="Terminal tabs">
           {tabs.map((tab, index) => (
@@ -228,6 +305,7 @@ export function App(): ReactElement {
                   .catch(reportError);
               }}
             >
+              <option value="default">Default</option>
               <option value="coder">Coder</option>
               <option value="gamer">Gamer</option>
               <option value="classic">Classic</option>
@@ -248,13 +326,15 @@ export function App(): ReactElement {
         </div>
       </header>
       <section className="terminal-workspace">
-        {config && tabsState
+        {config && terminalTheme && tabsState
           ? tabs.map((tab) => (
               <TerminalTabView
                 key={tab.id}
                 tab={tab}
                 config={config}
                 active={tab.id === activeTabId}
+                terminalFontFamily={fonts.terminalFontFamily}
+                terminalTheme={terminalTheme}
                 registerController={registerController}
                 setStatus={setTabStatus}
                 onSessionEvent={updateStatusFromEvent}
@@ -347,8 +427,35 @@ function requiresCloseConfirmation(status: TerminalUiStatus): boolean {
   );
 }
 
+function keyboardEventShortcutInput(event: KeyboardEvent): AppShortcutInput {
+  return {
+    key: event.key,
+    code: event.code,
+    alt: event.altKey,
+    control: event.ctrlKey,
+    meta: event.metaKey,
+    shift: event.shiftKey,
+    type: "keyDown",
+    isAutoRepeat: event.repeat,
+  };
+}
+
+function rendererShortcutPlatform(): AppShortcutPlatform | null {
+  const platform = navigator.platform.toLowerCase();
+  if (platform.includes("mac")) {
+    return "darwin";
+  }
+  if (platform.includes("win")) {
+    return "win32";
+  }
+  if (platform.includes("linux") || platform.includes("x11")) {
+    return "linux";
+  }
+  return null;
+}
+
 function parseUiTheme(value: string | null): UiThemePreference {
-  return value === "gamer" || value === "classic" ? value : "coder";
+  return value === "coder" || value === "gamer" || value === "classic" ? value : "default";
 }
 
 function shouldDisplayDetachedSession(snapshot: TerminalSessionSnapshot): boolean {

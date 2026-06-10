@@ -1,6 +1,7 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, nativeImage } from "electron";
 
 import {
   resolveAgentGatewayDescriptorPath,
@@ -23,9 +24,11 @@ import type { TerminalConfig } from "@terminal/protocol";
 import {
   broadcastRendererEvent,
   createScreenSnapshotService,
+  IPC_CHANNELS,
   registerTerminalIpc,
   type ScreenSnapshotService,
 } from "./ipc";
+import { resolveAppShortcut, type AppShortcutPlatform } from "../shared/app-shortcuts";
 import {
   createAgentSessionDisplayService,
   type AgentSessionDisplayService,
@@ -76,12 +79,17 @@ let suppressNextWindowAllClosedQuit = false;
 
 async function createMainWindow(): Promise<BrowserWindow> {
   logger.info("window", "create_requested");
+  const appIconPath = resolveAppIconPath();
+  if (process.platform === "darwin" && appIconPath && app.dock) {
+    app.dock.setIcon(nativeImage.createFromPath(appIconPath));
+  }
   const window = new BrowserWindow({
     width: 1000,
     height: 700,
     minWidth: 640,
     minHeight: 420,
     backgroundColor: terminalConfig.terminal.theme.background,
+    ...(appIconPath ? { icon: appIconPath } : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
@@ -114,6 +122,31 @@ async function createMainWindow(): Promise<BrowserWindow> {
   });
   window.webContents.on("unresponsive", () => {
     logger.warn("renderer", "unresponsive", { windowId: window.id });
+  });
+  window.webContents.on("before-input-event", (event, input) => {
+    const platform = appShortcutPlatform();
+    if (!platform) {
+      return;
+    }
+    const action = resolveAppShortcut(
+      {
+        key: input.key,
+        code: input.code,
+        alt: input.alt,
+        control: input.control,
+        meta: input.meta,
+        shift: input.shift,
+        type: input.type,
+        isAutoRepeat: input.isAutoRepeat,
+      },
+      platform,
+    );
+    if (!action) {
+      return;
+    }
+
+    event.preventDefault();
+    window.webContents.send(IPC_CHANNELS.appShortcut, action);
   });
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
@@ -292,6 +325,22 @@ app.on("before-quit", (event) => {
 
 function resolveLogLevel() {
   return parseLogLevel(process.env.PROCONTEXT_LOG_LEVEL, !app.isPackaged ? "debug" : "info");
+}
+
+function resolveAppIconPath(): string | null {
+  const candidates = app.isPackaged
+    ? [join(process.resourcesPath, "icon.png")]
+    : [join(__dirname, "../../resources/icon.png")];
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function appShortcutPlatform(): AppShortcutPlatform | null {
+  return isAppShortcutPlatform(process.platform) ? process.platform : null;
+}
+
+function isAppShortcutPlatform(value: NodeJS.Platform): value is AppShortcutPlatform {
+  return value === "darwin" || value === "win32" || value === "linux";
 }
 
 async function saveConfig(config: TerminalConfig): Promise<TerminalConfig> {

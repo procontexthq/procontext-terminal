@@ -14,7 +14,8 @@ export function defaultTerminalConfig(): TerminalConfig {
   return {
     schemaVersion: 2,
     terminal: {
-      fontFamily: "Menlo, Monaco, Consolas, monospace",
+      fontFamily:
+        '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       fontSize: 13,
       scrollback: 5000,
       theme: {
@@ -28,7 +29,7 @@ export function defaultTerminalConfig(): TerminalConfig {
       profiles: [],
     },
     ui: {
-      theme: "coder",
+      theme: "default",
     },
     recording: {
       state: "disabled",

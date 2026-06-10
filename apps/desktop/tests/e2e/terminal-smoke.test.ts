@@ -112,6 +112,7 @@ describe("desktop terminal smoke", () => {
       undefined,
       { timeout: e2eUiTimeoutMs },
     );
+    await expectThemeFonts(page, "Orbitron", "Share Tech Mono");
     await expectTerminalBackgroundConsistent(page);
     await waitForPersistedUiTheme(userDataDir, "gamer");
 
@@ -129,6 +130,7 @@ describe("desktop terminal smoke", () => {
       undefined,
       { timeout: e2eUiTimeoutMs },
     );
+    await expectThemeFonts(page, "Orbitron", "Share Tech Mono");
     await expectTerminalBackgroundConsistent(page);
   });
 
@@ -182,6 +184,42 @@ describe("desktop terminal smoke", () => {
     await page.waitForSelector("[data-testid='terminal-ready']");
     await expectTabCount(page, 1);
     await waitForActiveTab(page, 0);
+  });
+
+  it("routes platform tab shortcuts through terminal tabs instead of the app window", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    await expectTabCount(page, 1);
+
+    await page.keyboard.press(newTabShortcut());
+    await expectTabCount(page, 2);
+    await waitForActiveTab(page, 1);
+    await typeCommand(page, platformPrintCommand("SHORTCUT_TAB_TWO"));
+    await waitForActiveTerminalText(page, "SHORTCUT_TAB_TWO");
+
+    await page.keyboard.press(previousTabShortcut());
+    await waitForActiveTab(page, 0);
+    await typeCommand(page, platformPrintCommand("SHORTCUT_TAB_ONE"));
+    await waitForActiveTerminalText(page, "SHORTCUT_TAB_ONE");
+
+    await page.keyboard.press(nextTabShortcut());
+    await waitForActiveTab(page, 1);
+    await waitForActiveTerminalText(page, "SHORTCUT_TAB_TWO");
+
+    let windowClosed = false;
+    page.once("close", () => {
+      windowClosed = true;
+    });
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.keyboard.press(closeTabShortcut());
+    await expectTabCount(page, 1);
+    if (windowClosed) {
+      throw new Error("Tab close shortcut closed the app window instead of the active tab.");
+    }
+    await waitForActiveTab(page, 0);
+    await waitForActiveTerminalText(page, "SHORTCUT_TAB_ONE");
   });
 
   it("ignores legacy workspace settings when launching fresh sessions", async () => {
@@ -728,18 +766,47 @@ async function expectTerminalBackgroundConsistent(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
       const shell = document.querySelector(".terminal-session-view.is-active");
+      const host = document.querySelector(".terminal-host.is-active");
       const terminal = document.querySelector(".terminal-host > .xterm");
       const screen = document.querySelector(".xterm-screen");
       const viewport = document.querySelector(".xterm-viewport");
-      if (!shell || !terminal || !screen || !viewport) {
+      const scrollArea = document.querySelector(".xterm-scroll-area");
+      const rows = document.querySelector(".xterm-rows");
+      if (!shell || !host || !terminal || !screen || !viewport || !rows) {
         return false;
       }
       const expected = getComputedStyle(shell).backgroundColor;
-      return [terminal, screen, viewport].every(
+      const renderedSurfaces = [host, terminal, screen, viewport, rows];
+      if (scrollArea) {
+        renderedSurfaces.push(scrollArea);
+      }
+      return renderedSurfaces.every(
         (element) => getComputedStyle(element).backgroundColor === expected,
       );
     },
     undefined,
+    { timeout: e2eUiTimeoutMs },
+  );
+}
+
+async function expectThemeFonts(
+  page: Page,
+  expectedUiFont: string,
+  expectedTerminalFont: string,
+): Promise<void> {
+  await page.waitForFunction(
+    ({ uiFont, terminalFont }) => {
+      const shell = document.querySelector(".app-shell");
+      const terminal = document.querySelector("[data-testid='terminal-ready'] .xterm");
+      if (!shell || !terminal) {
+        return false;
+      }
+      return (
+        getComputedStyle(shell).fontFamily.includes(uiFont) &&
+        getComputedStyle(terminal).fontFamily.includes(terminalFont)
+      );
+    },
+    { uiFont: expectedUiFont, terminalFont: expectedTerminalFont },
     { timeout: e2eUiTimeoutMs },
   );
 }
@@ -921,6 +988,22 @@ function platformLongRunningCommand(): string {
 
 function pasteShortcut(): string {
   return process.platform === "darwin" ? "Meta+V" : "Control+V";
+}
+
+function newTabShortcut(): string {
+  return process.platform === "darwin" ? "Meta+T" : "Control+Shift+T";
+}
+
+function closeTabShortcut(): string {
+  return process.platform === "darwin" ? "Meta+W" : "Control+Shift+W";
+}
+
+function previousTabShortcut(): string {
+  return process.platform === "darwin" ? "Meta+Shift+[" : "Control+PageUp";
+}
+
+function nextTabShortcut(): string {
+  return process.platform === "darwin" ? "Meta+Shift+]" : "Control+PageDown";
 }
 
 function terminateProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {

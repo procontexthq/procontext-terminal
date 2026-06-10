@@ -98,6 +98,21 @@ export function selectTerminalTab(state: TerminalTabsState, tabId: string): Term
   };
 }
 
+export function selectAdjacentTerminalTab(
+  state: TerminalTabsState,
+  direction: "previous" | "next",
+): TerminalTabsState {
+  const activeIndex = state.tabs.findIndex((tab) => tab.id === state.activeTabId);
+  if (activeIndex === -1 || state.tabs.length < 2) {
+    return state;
+  }
+
+  const offset = direction === "previous" ? -1 : 1;
+  const nextIndex = (activeIndex + offset + state.tabs.length) % state.tabs.length;
+  const nextTab = state.tabs[nextIndex];
+  return nextTab ? selectTerminalTab(state, nextTab.id) : state;
+}
+
 export function closeTerminalTab(state: TerminalTabsState, tabId: string): TerminalTabsState {
   const closedIndex = state.tabs.findIndex((tab) => tab.id === tabId);
   if (closedIndex === -1) {
