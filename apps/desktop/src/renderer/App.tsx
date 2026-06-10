@@ -29,7 +29,7 @@ import {
   type TerminalTabsState,
 } from "./terminal-tabs";
 import { nextTerminalStatus, type TerminalUiStatus } from "./terminal-status";
-import { themeFontSet } from "./theme-fonts";
+import { themeFontLoadDescriptors, themeFontSet } from "./theme-fonts";
 import {
   resolveAppShortcut,
   type AppShortcutInput,
@@ -158,6 +158,11 @@ export function App(): ReactElement {
   const activeTabId = tabsState?.activeTabId ?? null;
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const fonts = themeFontSet(uiTheme);
+  const terminalFontSize = config?.terminal.fontSize ?? 13;
+  const fontLoadDescriptors = useMemo(
+    () => themeFontLoadDescriptors(fonts, terminalFontSize),
+    [fonts, terminalFontSize],
+  );
   const terminalTheme = useMemo(
     () =>
       config
@@ -334,6 +339,7 @@ export function App(): ReactElement {
                 config={config}
                 active={tab.id === activeTabId}
                 terminalFontFamily={fonts.terminalFontFamily}
+                fontLoadDescriptors={fontLoadDescriptors}
                 terminalTheme={terminalTheme}
                 registerController={registerController}
                 setStatus={setTabStatus}

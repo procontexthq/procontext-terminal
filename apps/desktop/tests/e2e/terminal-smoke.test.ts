@@ -134,6 +134,37 @@ describe("desktop terminal smoke", () => {
     await expectTerminalBackgroundConsistent(page);
   });
 
+  it("starts persisted gamer theme with loaded terminal fonts before first command", async () => {
+    const userDataDir = await createTempUserDataDir();
+    await writeFile(
+      join(userDataDir, "settings.json"),
+      `${JSON.stringify(
+        {
+          ...defaultTerminalConfig(),
+          ui: { theme: "gamer" },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    await page.waitForFunction(
+      () => document.querySelector(".app-shell")?.getAttribute("data-theme") === "gamer",
+      undefined,
+      { timeout: e2eUiTimeoutMs },
+    );
+    await expectThemeFonts(page, "Orbitron", "Share Tech Mono");
+    await expectThemeFontsReady(page);
+
+    await typeCommand(page, platformDirectoryListingCommand());
+    await waitForActiveTerminalText(page, "package.json");
+    await expectTerminalBackgroundConsistent(page);
+  });
+
   it("creates, switches, closes, and does not restore terminal tabs after restart", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
@@ -811,6 +842,16 @@ async function expectThemeFonts(
   );
 }
 
+async function expectThemeFontsReady(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () =>
+      document.fonts.check('500 12px "Orbitron"') &&
+      document.fonts.check('400 13px "Share Tech Mono"'),
+    undefined,
+    { timeout: e2eUiTimeoutMs },
+  );
+}
+
 async function waitForStatus(page: Page, status: string): Promise<void> {
   await page.waitForFunction(
     (expected) =>
@@ -974,6 +1015,10 @@ function platformElectronFlags(): string[] {
 
 function platformPrintCommand(text: string): string {
   return process.platform === "win32" ? `echo ${text}` : `printf '${text}\\n'`;
+}
+
+function platformDirectoryListingCommand(): string {
+  return process.platform === "win32" ? "dir" : "ls";
 }
 
 function platformManyLinesCommand(prefix: string, count: number): string {
