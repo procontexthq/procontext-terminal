@@ -4,7 +4,8 @@
 
 Phase 3 external agent control plane implemented and verified locally and in
 GitHub Actions on macOS, Windows, and Linux. Phase 4 human terminal UX polish
-and Phase 5 packaging remain pending.
+is intentionally deferred while Phase 5 packaging and release-hardening work
+continues.
 
 ## Purpose
 
@@ -254,6 +255,14 @@ Implementation:
   filesystem paths in packaged apps.
 - Add release CI that builds, smoke tests, uploads artifacts, and emits
   provenance attestations.
+- Pin the supported development runtime to Node.js 24 LTS through `.nvmrc`,
+  `package.json` engines, and an install-time version guard.
+- Provide Linux bootstrap documentation and scripts that install Electron
+  runtime libraries, verify the Electron binary download, configure the Linux
+  sandbox helper, and support Xvfb-backed headless development over SSH.
+- Keep optional native WebSocket acceleration modules external to the
+  Electron main-process bundle so the app does not require optional `ws`
+  dependencies such as `bufferutil` when they are not installed.
 - Keep Phase 4 human terminal UX work out of the release-hardening scope.
 
 Testing:
@@ -267,6 +276,11 @@ Testing:
 - Release CI runs the normal lint, format, typecheck, unit/integration,
   Electron E2E, build, package, packaged smoke, and package verification checks
   before uploading artifacts.
+- Linux setup verification covers the documented apt dependencies, Node.js
+  version guard, Electron install verifier, and `dev:linux:headless` Xvfb
+  startup path.
+- Main-process bundling tests verify optional `ws` native dependencies stay
+  external and do not become mandatory startup requirements.
 
 Exit criteria:
 
@@ -275,6 +289,9 @@ Exit criteria:
   terminal session.
 - Native PTY dependencies are present in packaged resources and verified by an
   automated release check.
+- Fresh Linux development environments fail early with clear setup guidance
+  when Node.js, Electron's downloaded binary, display libraries, or the
+  headless display path are missing.
 - Release artifacts include provenance attestations.
 
 ## Release Verification
@@ -309,7 +326,7 @@ pnpm build
 
 Pull requests and pushes to `main` run the same verification sequence on
 macOS, Windows, and Linux CI runners. The matrix installs dependencies with
-the frozen pnpm lockfile on Node.js 22 LTS, rejects accidental npm lockfiles,
+the frozen pnpm lockfile on Node.js 24 LTS, rejects accidental npm lockfiles,
 runs linting, format checking, type checking, tests, Electron E2E smoke tests,
 and the build. Linux E2E runs under Xvfb so Electron has a virtual display
 while preserving the same app runtime path used on desktop systems.

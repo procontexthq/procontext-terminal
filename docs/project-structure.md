@@ -28,9 +28,11 @@ The architecture source of truth is [Terminal Architecture Spec](./specs/termina
 |-- AGENTS.md
 |-- AGENTS.local.md
 |-- CHANGELOG.md
+|-- .nvmrc
 |-- package.json
 |-- pnpm-lock.yaml
 |-- pnpm-workspace.yaml
+|-- scripts/
 |-- tsconfig.base.json
 |-- apps/
 |   `-- desktop/
@@ -52,6 +54,7 @@ The architecture source of truth is [Terminal Architecture Spec](./specs/termina
 |   |-- config/
 |   `-- test-fixtures/
 |-- docs/
+|   |-- development/
 |   |-- project-structure.md
 |   `-- specs/
 |       |-- implementation-plan.md
@@ -115,7 +118,27 @@ Expected responsibilities:
 
 - Define top-level scripts such as `dev`, `lint`, `format`, `typecheck`, `test`, `test:e2e`, and `build`.
 - Define package manager metadata.
+- Define the supported Node.js major through `engines`; `.nvmrc` should match this value.
 - Keep workspace orchestration at the root, not app-specific implementation.
+
+### `.nvmrc`
+
+Node.js version hint for local development.
+
+Expected responsibilities:
+
+- Pin the supported Node.js major used by the workspace.
+- Match the root `package.json` `engines.node` range.
+
+### `scripts`
+
+Root workspace setup and validation scripts.
+
+Expected responsibilities:
+
+- Check supported Node.js versions before install-time native dependency work.
+- Provide platform bootstrap helpers such as Linux Electron runtime setup.
+- Keep scripts portable and documented from README or `docs/development`.
 
 ### `pnpm-workspace.yaml`
 
@@ -140,6 +163,16 @@ Expected responsibilities:
 ## `apps/desktop`
 
 The Electron desktop application. This is the only package that owns desktop windows, renderer UI, preload exposure, app packaging, and Electron app lifecycle.
+
+### `apps/desktop/scripts`
+
+Desktop application packaging, install verification, and release helper scripts.
+
+Responsibilities:
+
+- Verify Electron and package output before app startup or packaging tests.
+- Keep app-specific packaging checks outside root workspace setup scripts.
+- Provide clear remediation when native desktop dependencies are missing.
 
 ### `apps/desktop/src/main`
 

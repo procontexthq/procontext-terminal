@@ -26,6 +26,7 @@ const alias = {
 };
 
 const workspacePackages = Object.keys(alias);
+const mainProcessExternalDeps = ["electron", "node-pty", "bufferutil", "utf-8-validate"];
 
 export default defineConfig({
   main: {
@@ -36,7 +37,7 @@ export default defineConfig({
     build: {
       externalizeDeps: { exclude: workspacePackages },
       rollupOptions: {
-        external: ["electron", "node-pty"],
+        external: mainProcessExternalDeps,
         output: {
           format: "cjs",
           entryFileNames: "[name].cjs",

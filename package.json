@@ -4,9 +4,17 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.28.2",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": "10.28.2"
+  },
   "scripts": {
-    "preinstall": "node -e \"const ua=process.env.npm_config_user_agent||'';if(!ua.startsWith('pnpm/')){console.error('Use pnpm install in this workspace.');process.exit(1)}\"",
+    "preinstall": "node scripts/check-node-version.mjs && node -e \"const ua=process.env.npm_config_user_agent||'';if(!ua.startsWith('pnpm/')){console.error('Use pnpm install in this workspace.');process.exit(1)}\"",
+    "setup:linux": "bash scripts/setup-linux.sh",
     "dev": "pnpm --filter @terminal/desktop dev",
+    "dev:linux:headless": "pnpm --filter @terminal/desktop dev:linux:headless",
+    "electron:install": "pnpm --filter @terminal/desktop electron:install",
+    "electron:verify": "pnpm --filter @terminal/desktop electron:verify",
     "lint": "eslint .",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
@@ -30,7 +38,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.6.2",
+    "@types/node": "^24.13.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "eslint": "^10.3.0",
