@@ -17,6 +17,9 @@ export function nextTerminalStatus(
       return "exited";
     case "session.error":
       return current;
+    case "session.title":
+    case "session.bell":
+      return current;
     case "session.output":
       return outputStatus(current);
     case "session.snapshot.request":

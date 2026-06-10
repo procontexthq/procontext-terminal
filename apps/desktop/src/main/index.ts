@@ -14,7 +14,7 @@ import {
   resolveTerminalConfigPath,
   saveTerminalConfig,
 } from "@terminal/config";
-import { createDefaultAgentPolicy } from "@terminal/policy-engine";
+import { createDefaultAgentPolicy, createDefaultTerminalPolicy } from "@terminal/policy-engine";
 import { NodePtyHost } from "@terminal/pty-host";
 import { FileTerminalRecorder, createPatternRedactor } from "@terminal/recorder";
 import { TerminalSessionManager } from "@terminal/session-core";
@@ -26,6 +26,10 @@ import {
   registerTerminalIpc,
   type ScreenSnapshotService,
 } from "./ipc";
+import {
+  createAgentSessionDisplayService,
+  type AgentSessionDisplayService,
+} from "./agent-session-display";
 import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
 import {
   waitForPrompt,
@@ -34,6 +38,7 @@ import {
   waitForText,
   type TerminalCommandServices,
 } from "./terminal-command-handler";
+import { attachWindowCloseSessionCleanup } from "./window-lifecycle";
 
 let logger = createAppLogger({
   isDevelopment: !app.isPackaged,
@@ -62,11 +67,13 @@ const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
   },
 });
 const screenSnapshotService = createScreenSnapshotService();
+const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
 let agentGateway: AgentGateway | null = null;
 let terminalConfig: TerminalConfig = defaultTerminalConfig();
 let terminalConfigPath: string | null = null;
 let quitAfterShutdown = false;
+let suppressNextWindowAllClosedQuit = false;
 
 async function createMainWindow(): Promise<BrowserWindow> {
   logger.info("window", "create_requested");
@@ -82,6 +89,13 @@ async function createMainWindow(): Promise<BrowserWindow> {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+  attachWindowCloseSessionCleanup({
+    window,
+    sessionManager,
+    logger,
+    getIsAppQuitting: () => quitAfterShutdown,
+    shutdownTimeoutMs: 1500,
   });
 
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
@@ -104,12 +118,26 @@ async function createMainWindow(): Promise<BrowserWindow> {
   });
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
-  if (rendererUrl && !app.isPackaged) {
-    logger.debug("renderer", "load_started", { windowId: window.id, source: "dev_server" });
-    await window.loadURL(rendererUrl);
-  } else {
-    logger.debug("renderer", "load_started", { windowId: window.id, source: "file" });
-    await window.loadFile(join(__dirname, "../renderer/index.html"));
+  try {
+    if (rendererUrl && !app.isPackaged) {
+      logger.debug("renderer", "load_started", { windowId: window.id, source: "dev_server" });
+      await window.loadURL(rendererUrl);
+    } else {
+      logger.debug("renderer", "load_started", { windowId: window.id, source: "file" });
+      await window.loadFile(join(__dirname, "../renderer/index.html"));
+    }
+  } catch (error: unknown) {
+    logger.error("renderer", "load_failed", {
+      windowId: window.id,
+      cause: error instanceof Error ? error.message : String(error),
+    });
+    if (!window.isDestroyed()) {
+      suppressNextWindowAllClosedQuit = BrowserWindow.getAllWindows().every(
+        (candidate) => candidate.id === window.id || candidate.isDestroyed(),
+      );
+      window.destroy();
+    }
+    throw error;
   }
   logger.info("window", "created", { windowId: window.id });
 
@@ -165,15 +193,29 @@ void app
 
     unregisterIpc = registerTerminalIpc(
       sessionManager,
+      terminalPolicy,
       logger,
       () => terminalConfig,
       saveConfig,
       screenSnapshotService,
     );
-    await createMainWindow();
+    await createMainWindow().catch((error: unknown) => {
+      logger.warn("window", "startup_create_failed", {
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    });
+    const agentSessionDisplay = createAgentSessionDisplayService({
+      getWindows: () => BrowserWindow.getAllWindows(),
+      createWindow: createMainWindow,
+      logger,
+    });
     agentGateway = await startAgentGateway({
       descriptorPath: resolveAgentGatewayDescriptorPath(app.getPath("userData")),
-      services: createAgentGatewayServices(sessionManager, screenSnapshotService),
+      services: createAgentGatewayServices(
+        sessionManager,
+        screenSnapshotService,
+        agentSessionDisplay,
+      ),
       policy: createDefaultAgentPolicy(),
       audit: (event) => {
         logger.info("agent", "audit", {
@@ -199,7 +241,11 @@ void app
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        void createMainWindow();
+        void createMainWindow().catch((error: unknown) => {
+          logger.warn("window", "activate_create_failed", {
+            cause: error instanceof Error ? error.message : String(error),
+          });
+        });
       }
     });
   })
@@ -210,6 +256,11 @@ void app
   });
 
 app.on("window-all-closed", () => {
+  if (suppressNextWindowAllClosedQuit) {
+    suppressNextWindowAllClosedQuit = false;
+    return;
+  }
+
   if (process.platform !== "darwin") {
     app.quit();
   }
@@ -284,6 +335,7 @@ async function shutdownApp() {
 function createAgentGatewayServices(
   manager: TerminalSessionManager,
   snapshotService: ScreenSnapshotService,
+  agentSessionDisplay: AgentSessionDisplayService,
 ): AgentGatewayTerminalServices {
   const waitServices: TerminalCommandServices = {
     sessionManager: manager,
@@ -291,14 +343,18 @@ function createAgentGatewayServices(
       snapshotService.requestScreenSnapshot(sessionId, timeoutMs),
     resolveSnapshotResponse: (requestId, snapshot) =>
       snapshotService.resolveSnapshotResponse(requestId, snapshot),
+    rejectSnapshotResponse: (requestId, sessionId, reason) =>
+      snapshotService.rejectSnapshotResponse(requestId, sessionId, reason),
     getConfig: () => terminalConfig,
     saveConfig,
+    policy: terminalPolicy,
     logger,
   };
 
   return {
     listSessions: () => manager.listSessions(),
     createSession: (request) => manager.createSession(request),
+    displaySession: (snapshot) => agentSessionDisplay.displaySession(snapshot),
     getSession: (request) => manager.getSession(request),
     write: (request) => manager.write(request),
     sendKey: (request) => manager.sendKey(request),

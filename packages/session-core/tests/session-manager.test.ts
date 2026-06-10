@@ -196,6 +196,45 @@ describe("TerminalSessionManager", () => {
     expect(host.pty.write).toHaveBeenCalledWith("echo detached\r");
   });
 
+  it("updates canonical title and emits bell events", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const events: string[] = [];
+    manager.onSessionEvent((event) => events.push(event.type));
+    const snapshot = await manager.createSession(request);
+
+    const titled = manager.setTitle({
+      sessionId: snapshot.sessionId,
+      title: "vim package.json",
+    });
+    manager.reportBell({ sessionId: snapshot.sessionId });
+
+    expect(titled.title).toBe("vim package.json");
+    expect(manager.getSession({ sessionId: snapshot.sessionId }).title).toBe("vim package.json");
+    expect(events).toContain("session.title");
+    expect(events).toContain("session.bell");
+  });
+
+  it("creates agent-owned sessions detached until a renderer attaches", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const events: string[] = [];
+    manager.onSessionEvent((event) => events.push(event.type));
+
+    const snapshot = await manager.createSession({ ...request, createdBy: "agent" });
+
+    expect(snapshot.state).toBe("detached");
+    await manager.write({
+      sessionId: snapshot.sessionId,
+      data: "echo headless\r",
+      origin: "agent",
+    });
+    expect(host.pty.write).toHaveBeenCalledWith("echo headless\r");
+    expect(manager.attachSession({ sessionId: snapshot.sessionId }).state).toBe("running");
+    expect(events).toContain("session.created");
+    expect(events).toContain("session.attached");
+  });
+
   it("limits recent output by UTF-8 bytes without splitting code points", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);
@@ -381,6 +420,19 @@ describe("TerminalSessionManager", () => {
     expect(result).toEqual({ terminated: 1, timedOut: 0 });
     expect(host.pty.kill).toHaveBeenCalledOnce();
     expect(() => manager.getSession({ sessionId: snapshot.sessionId })).toThrow();
+  });
+
+  it("keeps event subscriptions active after successful bounded shutdown", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const events: string[] = [];
+    manager.onSessionEvent((event) => events.push(event.type));
+
+    await manager.createSession(request);
+    await manager.shutdown({ timeoutMs: 50 });
+    await manager.createSession(request);
+
+    expect(events.filter((event) => event === "session.created")).toHaveLength(2);
   });
 
   it("keeps a session running when shutdown kill fails before reaching the PTY", async () => {

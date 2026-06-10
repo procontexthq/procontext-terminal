@@ -129,6 +129,7 @@ function fakeApi(): RendererTerminalApi & {
   };
   return {
     createSession: vi.fn<RendererTerminalApi["createSession"]>(() => Promise.resolve(snapshot)),
+    listSessions: vi.fn<RendererTerminalApi["listSessions"]>(() => Promise.resolve([snapshot])),
     write: vi.fn<RendererTerminalApi["write"]>(() => Promise.resolve()),
     sendKey: vi.fn<RendererTerminalApi["sendKey"]>(() => Promise.resolve()),
     paste: vi.fn<RendererTerminalApi["paste"]>(() => Promise.resolve()),
@@ -161,6 +162,11 @@ function fakeApi(): RendererTerminalApi & {
       }),
     ),
     respondToSnapshot: vi.fn<RendererTerminalApi["respondToSnapshot"]>(() => Promise.resolve()),
+    reportSnapshotUnavailable: vi.fn<RendererTerminalApi["reportSnapshotUnavailable"]>(() =>
+      Promise.resolve(),
+    ),
+    setTitle: vi.fn<RendererTerminalApi["setTitle"]>(() => Promise.resolve(snapshot)),
+    reportBell: vi.fn<RendererTerminalApi["reportBell"]>(() => Promise.resolve()),
     waitForText: vi.fn<RendererTerminalApi["waitForText"]>(() =>
       Promise.resolve({ sessionId: snapshot.sessionId, matchedAt: "2026-05-09T00:00:00.000Z" }),
     ),
@@ -327,8 +333,22 @@ describe("terminal controller", () => {
 
     terminal.emitTitle("vim package.json");
     terminal.emitBell();
+    await Promise.resolve();
+    api.emit({
+      type: "session.title",
+      payload: { sessionId: controller.sessionId, title: "vim package.json" },
+    });
+    api.emit({
+      type: "session.bell",
+      payload: { sessionId: controller.sessionId },
+    });
     await controller.dispose();
 
+    expect(api.setTitle).toHaveBeenCalledWith({
+      sessionId: controller.sessionId,
+      title: "vim package.json",
+    });
+    expect(api.reportBell).toHaveBeenCalledWith({ sessionId: controller.sessionId });
     expect(onTitleChange).toHaveBeenCalledWith("vim package.json");
     expect(onBell).toHaveBeenCalledOnce();
     expect(terminal.titleSubscriptionDispose).toHaveBeenCalledOnce();
@@ -380,6 +400,11 @@ describe("terminal controller", () => {
     });
 
     terminal.emitTitle("active title");
+    await Promise.resolve();
+    api.emit({
+      type: "session.title",
+      payload: { sessionId: controller.sessionId, title: "active title" },
+    });
     api.emit({
       type: "session.snapshot.request",
       requestId,

@@ -39,7 +39,7 @@ Not allowed by default:
 - Session: create, attach, list, get, kill.
 - Input: send text, send key, send paste, send mouse, interrupt.
 - Layout: resize, focus, open window, split pane.
-- Observation: recent output, viewport, screen snapshot, cursor, title, lifecycle.
+- Observation: recent output, viewport, screen snapshot, cursor, title, bell, lifecycle.
 - Synchronization: wait for text, wait for prompt, wait for quiet, wait for screen change.
 - Recording: start, stop, export, replay metadata.
 
@@ -59,6 +59,10 @@ Phase 3 exposes the first external command set:
 - `terminal.waitForScreenChange`
 - `terminal.waitForPrompt`
 - `terminal.kill`
+
+Owned session title and bell events are streamed as `terminal.title` and
+`terminal.bell` observations. Title text is observation data, not app
+diagnostics, and must not be written to diagnostic logs by default.
 
 `terminal.attach` attaches an agent connection to an existing session for
 ownership, event filtering, and subsequent control. It does not change the
@@ -94,6 +98,21 @@ The gateway can always read recent output from session-core for existing
 sessions. Screen snapshots and screen-based waits depend on a renderer window
 responding with xterm.js buffer state. If no renderer can provide that state,
 the gateway returns a structured `observation_unavailable` terminal error.
+This includes both "no renderer window exists" and "a renderer exists but does
+not own the requested session". Snapshot responses are correlated by request ID
+and session ID; a mismatched renderer response is rejected as
+`session_snapshot_failed` rather than being used as observation data.
+
+When an agent creates a session, the gateway asks the desktop app to make a
+renderer window available for the human-visible terminal surface. Renderer
+display is best effort: if a window cannot be created, `terminal.create` still
+returns the created PTY session, the session remains usable through headless
+operations such as input and recent-output reads, and the agent receives a
+non-fatal `terminal.error` with `operation: "terminal.display"`.
+An existing desktop window is considered usable only when the window and its
+renderer web contents are alive. Destroyed or crashed renderer contents do not
+satisfy display availability; the desktop app must create another window or
+report the same non-fatal display error.
 
 ## Testing Expectations
 

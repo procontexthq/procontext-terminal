@@ -13,6 +13,7 @@ import {
   type TerminalError,
   type TerminalScreenSnapshot,
 } from "@terminal/protocol";
+import type { TerminalPolicy, TerminalPolicyOperation } from "@terminal/policy-engine";
 import type { TerminalSessionManager } from "@terminal/session-core";
 import type { AppLogger } from "./logger";
 
@@ -20,10 +21,13 @@ export type TerminalCommandServices = {
   sessionManager: Pick<
     TerminalSessionManager,
     | "createSession"
+    | "listSessions"
     | "write"
     | "sendKey"
     | "paste"
     | "sendMouse"
+    | "setTitle"
+    | "reportBell"
     | "interrupt"
     | "resize"
     | "kill"
@@ -42,8 +46,16 @@ export type TerminalCommandServices = {
     timeoutMs: number,
   ): Promise<TerminalScreenSnapshot>;
   resolveSnapshotResponse(requestId: RequestId, snapshot: TerminalScreenSnapshot): void;
+  rejectSnapshotResponse(
+    requestId: RequestId,
+    sessionId: TerminalScreenSnapshot["sessionId"],
+    reason: string,
+  ): void;
+  registerRendererSession?(sessionId: TerminalScreenSnapshot["sessionId"]): void;
+  unregisterRendererSession?(sessionId: TerminalScreenSnapshot["sessionId"]): void;
   getConfig(): TerminalConfig;
   saveConfig(config: TerminalConfig): Promise<TerminalConfig>;
+  policy: TerminalPolicy;
   logger?: AppLogger;
 };
 
@@ -96,17 +108,22 @@ async function handleRendererCommand(
   services: TerminalCommandServices,
 ): Promise<RendererCommandResult<unknown>> {
   switch (command.type) {
-    case "session.create":
+    case "session.create": {
       services.logger?.info("session", "create_requested", {
         requestId: command.requestId,
         cwd: command.payload.cwd,
         hasExplicitShell: Boolean(command.payload.shell),
       });
+      const created = await services.sessionManager.createSession(
+        applyConfiguredShell(command.payload, services.getConfig()),
+      );
+      services.registerRendererSession?.(created.sessionId);
+      return createRendererCommandSuccess(command.requestId, created);
+    }
+    case "session.list":
       return createRendererCommandSuccess(
         command.requestId,
-        await services.sessionManager.createSession(
-          applyConfiguredShell(command.payload, services.getConfig()),
-        ),
+        services.sessionManager.listSessions(),
       );
     case "session.write":
       await services.sessionManager.write(command.payload);
@@ -120,6 +137,14 @@ async function handleRendererCommand(
     case "session.mouse":
       await services.sessionManager.sendMouse(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
+    case "session.setTitle":
+      return createRendererCommandSuccess(
+        command.requestId,
+        services.sessionManager.setTitle(command.payload),
+      );
+    case "session.bell":
+      services.sessionManager.reportBell(command.payload);
+      return createRendererCommandSuccess(command.requestId, null);
     case "session.interrupt":
       await services.sessionManager.interrupt(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
@@ -132,23 +157,25 @@ async function handleRendererCommand(
         sessionId: command.payload.sessionId,
       });
       await services.sessionManager.kill(command.payload);
+      services.unregisterRendererSession?.(command.payload.sessionId);
       return createRendererCommandSuccess(command.requestId, null);
-    case "session.detach":
-      return createRendererCommandSuccess(
-        command.requestId,
-        services.sessionManager.detachSession(command.payload),
-      );
-    case "session.attach":
-      return createRendererCommandSuccess(
-        command.requestId,
-        services.sessionManager.attachSession(command.payload),
-      );
+    case "session.detach": {
+      const snapshot = services.sessionManager.detachSession(command.payload);
+      services.unregisterRendererSession?.(snapshot.sessionId);
+      return createRendererCommandSuccess(command.requestId, snapshot);
+    }
+    case "session.attach": {
+      const snapshot = services.sessionManager.attachSession(command.payload);
+      services.registerRendererSession?.(snapshot.sessionId);
+      return createRendererCommandSuccess(command.requestId, snapshot);
+    }
     case "session.release":
       services.logger?.info("session", "release_requested", {
         requestId: command.requestId,
         sessionId: command.payload.sessionId,
       });
       await services.sessionManager.releaseSession(command.payload);
+      services.unregisterRendererSession?.(command.payload.sessionId);
       return createRendererCommandSuccess(command.requestId, null);
     case "session.get":
       return createRendererCommandSuccess(
@@ -167,6 +194,13 @@ async function handleRendererCommand(
       );
     case "session.snapshot.response":
       services.resolveSnapshotResponse(command.payload.requestId, command.payload.snapshot);
+      return createRendererCommandSuccess(command.requestId, null);
+    case "session.snapshot.unavailable":
+      services.rejectSnapshotResponse(
+        command.payload.requestId,
+        command.payload.sessionId,
+        command.payload.reason,
+      );
       return createRendererCommandSuccess(command.requestId, null);
     case "session.waitForText":
       return createRendererCommandSuccess(
@@ -189,12 +223,15 @@ async function handleRendererCommand(
         await waitForPrompt(command.payload, services),
       );
     case "recording.start":
+      authorizeRendererRecordingCommand(command, "start", services);
       await services.sessionManager.startRecording(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
     case "recording.stop":
+      authorizeRendererRecordingCommand(command, "stop", services);
       await services.sessionManager.stopRecording(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
     case "recording.export":
+      authorizeRendererRecordingCommand(command, "export", services);
       return createRendererCommandSuccess(
         command.requestId,
         await services.sessionManager.exportRecording(command.payload),
@@ -216,6 +253,47 @@ async function handleRendererCommand(
         });
       }
     }
+  }
+}
+
+function authorizeRendererRecordingCommand(
+  command: Extract<
+    RendererCommand,
+    { type: "recording.start" | "recording.stop" | "recording.export" }
+  >,
+  recordingKind: NonNullable<TerminalPolicyOperation["recordingKind"]>,
+  services: TerminalCommandServices,
+): void {
+  const operation = {
+    type: command.type,
+    sessionId: command.payload.sessionId,
+    recordingKind,
+  } satisfies TerminalPolicyOperation;
+  const decision = services.policy.authorize({
+    actor: { kind: "human", local: true },
+    operation,
+  });
+
+  services.logger?.info("policy", "decision", {
+    requestId: command.requestId,
+    commandType: command.type,
+    sessionId: command.payload.sessionId,
+    origin: "human",
+    decisionId: decision.decisionId,
+    outcome: decision.type,
+    ...(decision.type === "deny" ? { denialCode: decision.reason.code } : {}),
+  });
+
+  if (decision.type === "deny") {
+    throw createTerminalError(
+      decision.reason.code === "auth_required" ? "auth_required" : "policy_denied",
+      decision.reason.message,
+      {
+        operation: command.type,
+        sessionId: command.payload.sessionId,
+        cause: decision.reason.code,
+      },
+    );
   }
 }
 

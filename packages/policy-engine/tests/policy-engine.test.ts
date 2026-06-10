@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createSessionId } from "@terminal/protocol";
 
-import { createDefaultAgentPolicy } from "../src/index";
+import { createDefaultAgentPolicy, createDefaultTerminalPolicy } from "../src/index";
 
 describe("default agent policy", () => {
   it("allows authenticated local agent list, create, and attach operations", () => {
@@ -136,5 +136,48 @@ describe("default agent policy", () => {
         operation: { type: "terminal.kill", sessionId },
       }),
     ).toMatchObject({ type: "allow" });
+  });
+});
+
+describe("default terminal policy", () => {
+  it("allows local human and system recording operations through explicit decisions", () => {
+    const policy = createDefaultTerminalPolicy({ createDecisionId: () => "decision-recording" });
+    const sessionId = createSessionId("session-recording");
+
+    expect(
+      policy.authorize({
+        actor: { kind: "human", local: true },
+        operation: { type: "recording.start", sessionId, recordingKind: "start" },
+      }),
+    ).toEqual({ type: "allow", decisionId: "decision-recording" });
+
+    expect(
+      policy.authorize({
+        actor: { kind: "system", local: true },
+        operation: { type: "recording.export", sessionId, recordingKind: "export" },
+      }),
+    ).toEqual({ type: "allow", decisionId: "decision-recording" });
+  });
+
+  it("denies non-local human recording operations with structured reasons", () => {
+    const policy = createDefaultTerminalPolicy({ createDecisionId: () => "decision-remote" });
+    const sessionId = createSessionId("session-remote-recording");
+
+    expect(
+      policy.authorize({
+        actor: { kind: "human", local: false },
+        operation: { type: "recording.export", sessionId, recordingKind: "export" },
+      }),
+    ).toEqual({
+      type: "deny",
+      decisionId: "decision-remote",
+      reason: {
+        decisionId: "decision-remote",
+        code: "remote_control_disabled",
+        message: "Remote agent control is disabled.",
+        operation: "recording.export",
+        sessionId,
+      },
+    });
   });
 });

@@ -90,6 +90,13 @@ export async function createTerminalSession({
         case "session.output":
           terminal.write(event.payload.data);
           break;
+        case "session.title":
+          currentTitle = event.payload.title;
+          onTitleChange?.(event.payload.title);
+          break;
+        case "session.bell":
+          onBell?.();
+          break;
         case "session.attached":
           rendererInputEnabled = true;
           sessionCanAcceptPtyOperations = true;
@@ -110,7 +117,15 @@ export async function createTerminalSession({
             break;
           }
           if (!isObservableTerminal(terminal)) {
-            onError?.(new Error("Terminal screen snapshot is not supported by this terminal."));
+            void api
+              .reportSnapshotUnavailable({
+                requestId: event.requestId,
+                sessionId,
+                reason: "Terminal screen snapshot is not supported by this terminal.",
+              })
+              .catch((error: unknown) => {
+                onError?.(error);
+              });
             break;
           }
           void api
@@ -126,8 +141,8 @@ export async function createTerminalSession({
               onError?.(error);
             });
           break;
-        case "session.created":
         case "agent.activity":
+        case "session.created":
           break;
       }
     };
@@ -176,12 +191,21 @@ export async function createTerminalSession({
     }
     titleSubscription =
       terminal.onTitleChange?.((title) => {
-        currentTitle = title;
-        onTitleChange?.(title);
+        if (!sessionId) {
+          return;
+        }
+        void api.setTitle({ sessionId, title }).catch((error: unknown) => {
+          onError?.(error);
+        });
       }) ?? null;
     bellSubscription =
       terminal.onBell?.(() => {
-        onBell?.();
+        if (!sessionId) {
+          return;
+        }
+        void api.reportBell({ sessionId }).catch((error: unknown) => {
+          onError?.(error);
+        });
       }) ?? null;
     let disposed = false;
 
@@ -340,6 +364,8 @@ function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId):
     case "session.created":
     case "session.attached":
     case "session.detached":
+    case "session.title":
+    case "session.bell":
       return event.payload.sessionId === sessionId;
     case "session.output":
       return event.payload.sessionId === sessionId;

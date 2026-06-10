@@ -6,12 +6,14 @@ import type {
   RendererSessionEvent,
   SessionId,
   TerminalConfig,
+  TerminalSessionSnapshot,
   TerminalWorkspaceState,
 } from "@terminal/protocol";
 
 import type { TerminalController } from "./terminal-controller";
 import { TerminalTabView } from "./terminal-tab-view";
 import {
+  addAttachedTerminalTab,
   addTerminalTab,
   closeTerminalTab,
   createInitialTerminalTabs,
@@ -32,6 +34,7 @@ export function App(): ReactElement {
   const [tabsState, setTabsState] = useState<TerminalTabsState | null>(null);
   const [agentActive, setAgentActive] = useState(false);
   const controllers = useRef(new Map<string, TerminalController>());
+  const pendingDetachedSessions = useRef<TerminalSessionSnapshot[]>([]);
   const saveQueue = useRef(Promise.resolve());
   const lastSavedWorkspace = useRef<string | null>(null);
 
@@ -41,15 +44,30 @@ export function App(): ReactElement {
 
   useEffect(() => {
     let disposed = false;
-    void window.terminalApi
-      .getConfig()
-      .then((loadedConfig) => {
+    const sessions = window.terminalApi.listSessions().catch((error: unknown) => {
+      reportError(error);
+      return [] as TerminalSessionSnapshot[];
+    });
+    void Promise.all([window.terminalApi.getConfig(), sessions])
+      .then(([loadedConfig, existingSessions]) => {
         if (disposed) {
           return;
         }
         lastSavedWorkspace.current = stableWorkspaceKey(loadedConfig.workspace);
+        let nextTabsState = createInitialTerminalTabs(loadedConfig.workspace);
+        for (const snapshot of latestSessionSnapshots([
+          ...pendingDetachedSessions.current,
+          ...existingSessions,
+        ])) {
+          if (shouldDisplayDetachedSession(snapshot)) {
+            nextTabsState = addAttachedTerminalTab(nextTabsState, snapshot, {
+              reusePlaceholder: true,
+            });
+          }
+        }
+        pendingDetachedSessions.current = [];
         setConfig(loadedConfig);
-        setTabsState(createInitialTerminalTabs(loadedConfig.workspace));
+        setTabsState(nextTabsState);
       })
       .catch((error: unknown) => {
         reportError(error);
@@ -64,6 +82,23 @@ export function App(): ReactElement {
     return window.terminalApi.onTerminalEvent((event) => {
       if (event.type === "agent.activity") {
         setAgentActive(event.payload.authenticatedConnections > 0);
+        return;
+      }
+
+      if (
+        (event.type === "session.created" || event.type === "session.detached") &&
+        shouldDisplayDetachedSession(event.payload)
+      ) {
+        setTabsState((current) => {
+          if (!current) {
+            pendingDetachedSessions.current = upsertPendingDetachedSession(
+              pendingDetachedSessions.current,
+              event.payload,
+            );
+            return current;
+          }
+          return addAttachedTerminalTab(current, event.payload);
+        });
       }
     });
   }, []);
@@ -307,6 +342,31 @@ function requiresCloseConfirmation(status: TerminalUiStatus): boolean {
 
 function stableWorkspaceKey(workspace: TerminalWorkspaceState): string {
   return JSON.stringify(workspace);
+}
+
+function shouldDisplayDetachedSession(snapshot: TerminalSessionSnapshot): boolean {
+  return snapshot.state === "detached";
+}
+
+function upsertPendingDetachedSession(
+  snapshots: TerminalSessionSnapshot[],
+  nextSnapshot: TerminalSessionSnapshot,
+): TerminalSessionSnapshot[] {
+  const existingIndex = snapshots.findIndex(
+    (snapshot) => snapshot.sessionId === nextSnapshot.sessionId,
+  );
+  if (existingIndex === -1) {
+    return [...snapshots, nextSnapshot];
+  }
+  return snapshots.map((snapshot, index) => (index === existingIndex ? nextSnapshot : snapshot));
+}
+
+function latestSessionSnapshots(snapshots: TerminalSessionSnapshot[]): TerminalSessionSnapshot[] {
+  const bySessionId = new Map<SessionId, TerminalSessionSnapshot>();
+  for (const snapshot of snapshots) {
+    bySessionId.set(snapshot.sessionId, snapshot);
+  }
+  return [...bySessionId.values()];
 }
 
 function delay(ms: number): Promise<void> {

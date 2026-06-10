@@ -6,7 +6,11 @@ Accepted component architecture.
 
 ## Purpose
 
-The terminal session manager is the central domain service. It owns canonical terminal lifecycle state and coordinates PTY, policy, recorder, renderer, and agent-facing behavior.
+The terminal session manager is the central domain service. It owns canonical
+terminal lifecycle state and coordinates PTY, recorder, renderer, and
+agent-facing behavior. Trusted main-process callers authorize sensitive
+requests through the policy engine before invoking session-manager side-effect
+methods.
 
 This component is part of the [Terminal Architecture Spec](../terminal-architecture.md).
 
@@ -19,7 +23,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Own canonical session metadata: shell, cwd, env profile, cols, rows, title, createdBy, and timestamps.
 - Route input to the correct PTY.
 - Broadcast output, exit, resize, title, bell, and error events.
-- Enforce policy decisions before sensitive operations.
+- Preserve stable side-effect boundaries so policy-enforcing callers can deny
+  sensitive operations before PTY, lifecycle, or recorder mutation.
 - Notify recorder and observation systems.
 - Provide query APIs for session state.
 - Provide a bounded shutdown operation that terminates active PTYs before clearing session records.
@@ -30,6 +35,7 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 stateDiagram-v2
   [*] --> Creating
   Creating --> Running: PTY spawned
+  Creating --> Detached: agent PTY spawned before renderer attach
   Creating --> Failed: spawn failed
   Running --> Exiting: kill requested
   Running --> Exited: process exited
@@ -41,11 +47,24 @@ stateDiagram-v2
   Exited --> [*]
 ```
 
+Agent-created sessions enter `Detached` after PTY spawn until a renderer view
+attaches. Detached sessions still have a live PTY and accept input, resize,
+observation, and kill operations through the public session APIs.
+If the last renderer owner for a live session is destroyed or its render
+process is lost, main requests a detach transition instead of leaving the
+session marked `Running` without an observable renderer owner.
+
 `session.error` is a diagnostic event, not a lifecycle transition by itself.
 Only canonical snapshots and explicit lifecycle events change session state. A
 recording failure or observer failure can emit `session.error` while the PTY
 continues running and accepting input, resize, detach, and kill operations.
 Session creation failures still transition the session record to `failed`.
+
+Renderer-discovered title and bell notifications are reported back to the
+session manager through typed IPC. Title updates change canonical session
+metadata and emit `session.title`; bell notifications emit `session.bell`.
+App diagnostics may log that these events occurred, but must not log
+shell-provided title text by default.
 
 ## Boundaries
 
@@ -81,6 +100,7 @@ Session metadata must be serializable and shared through protocol types. At mini
 - Shutdown terminates running or exiting sessions without leaving orphaned PTY handles.
 - Shutdown must not clear still-active session records when termination fails or times out; keeping the PTY handle available lets callers retry, inspect, or escalate cleanup.
 - Releasing a session is distinct from killing it. Only exited and failed sessions can be released; running or exiting sessions must first be explicitly terminated or allowed to exit.
-- Policy denials stop sensitive operations before PTY writes or lifecycle changes.
+- Policy-enforcing callers stop sensitive operations before PTY writes,
+  lifecycle changes, or recorder control/export side effects.
 - Recorder events are emitted in stable order.
 - Query APIs return snapshots without exposing mutable internal state.

@@ -1,4 +1,9 @@
-import type { SessionId, TerminalWorkspaceState, TerminalWorkspaceTab } from "@terminal/protocol";
+import type {
+  SessionId,
+  TerminalSessionSnapshot,
+  TerminalWorkspaceState,
+  TerminalWorkspaceTab,
+} from "@terminal/protocol";
 
 import type { TerminalUiStatus } from "./terminal-status";
 
@@ -42,6 +47,52 @@ export function addTerminalTab(
   tab: TerminalWorkspaceTab = defaultTab(),
 ): TerminalTabsState {
   const nextTab = createTerminalTab(tab);
+  return {
+    tabs: [...state.tabs, nextTab],
+    activeTabId: nextTab.id,
+  };
+}
+
+export function addAttachedTerminalTab(
+  state: TerminalTabsState,
+  snapshot: TerminalSessionSnapshot,
+  options: { reusePlaceholder?: boolean } = {},
+): TerminalTabsState {
+  const existingTab = state.tabs.find((tab) => tab.sessionId === snapshot.sessionId);
+  if (existingTab) {
+    return {
+      tabs: state.tabs.map((tab) =>
+        tab.id === existingTab.id
+          ? {
+              ...tab,
+              title: snapshot.title,
+              status: snapshot.state,
+              hasUnreadBell: false,
+            }
+          : tab,
+      ),
+      activeTabId: existingTab.id,
+    };
+  }
+
+  const reusableTab = options.reusePlaceholder ? findReusablePlaceholderTab(state) : null;
+  const nextTab: TerminalTab = {
+    id: reusableTab?.id ?? `tab-${nextTabIndex++}`,
+    sessionId: snapshot.sessionId,
+    cwd: snapshot.cwd,
+    shell: snapshot.shell,
+    title: snapshot.title,
+    status: snapshot.state,
+    hasUnreadBell: false,
+  };
+
+  if (reusableTab) {
+    return {
+      tabs: state.tabs.map((tab) => (tab.id === reusableTab.id ? nextTab : tab)),
+      activeTabId: nextTab.id,
+    };
+  }
+
   return {
     tabs: [...state.tabs, nextTab],
     activeTabId: nextTab.id,
@@ -170,6 +221,22 @@ function createTerminalTab(tab: TerminalWorkspaceTab): TerminalTab {
     status: "starting",
     hasUnreadBell: false,
   };
+}
+
+function findReusablePlaceholderTab(state: TerminalTabsState): TerminalTab | null {
+  const [tab] = state.tabs;
+  if (
+    state.tabs.length === 1 &&
+    tab &&
+    tab.sessionId === null &&
+    tab.cwd === null &&
+    tab.shell === null &&
+    tab.title === null &&
+    tab.status === "starting"
+  ) {
+    return tab;
+  }
+  return null;
 }
 
 function basename(value: string): string {

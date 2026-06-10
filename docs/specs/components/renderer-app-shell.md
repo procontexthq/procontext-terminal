@@ -66,11 +66,15 @@ The first multi-session milestone supports tabs only.
 - Closing a running tab requires user confirmation before termination.
 - Closing an exited or failed tab releases the session record immediately.
 - Closing the final tab creates a new default terminal tab.
-- Tab labels prefer terminal title events and fall back to cwd, shell, or a
-  numbered terminal label. Shell-provided titles are not restored after app
-  restart.
-- Bell events mark inactive tabs unread; activating the tab clears the unread
-  indicator.
+- Tab labels prefer canonical session title events and fall back to cwd, shell,
+  or a numbered terminal label. Shell-provided titles are not restored after
+  app restart.
+- Canonical bell events mark inactive tabs unread; activating the tab clears
+  the unread indicator.
+- Startup reconciliation attaches visible tabs for detached live sessions so
+  sessions that were created while no renderer was available, or detached after
+  renderer destruction, become human-visible when a renderer is available
+  again.
 - Workspace restore persists tab order, active tab, shell, and launch cwd, then
   starts fresh PTY sessions on restart.
 

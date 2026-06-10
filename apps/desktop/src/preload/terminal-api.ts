@@ -23,10 +23,14 @@ export function createRendererTerminalApi({
   return {
     createSession: (request) =>
       invokeCommand(invoke, createRendererCommand("session.create", request)),
+    listSessions: () => invokeCommand(invoke, createRendererCommand("session.list", {})),
     write: (request) => invokeCommand(invoke, createRendererCommand("session.write", request)),
     sendKey: (request) => invokeCommand(invoke, createRendererCommand("session.sendKey", request)),
     paste: (request) => invokeCommand(invoke, createRendererCommand("session.paste", request)),
     sendMouse: (request) => invokeCommand(invoke, createRendererCommand("session.mouse", request)),
+    setTitle: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.setTitle", request)),
+    reportBell: (request) => invokeCommand(invoke, createRendererCommand("session.bell", request)),
     interrupt: (request) =>
       invokeCommand(invoke, createRendererCommand("session.interrupt", request)),
     resize: (request) => invokeCommand(invoke, createRendererCommand("session.resize", request)),
@@ -44,6 +48,8 @@ export function createRendererTerminalApi({
       invokeCommand(invoke, createRendererCommand("session.captureScreen", request)),
     respondToSnapshot: (request) =>
       invokeCommand(invoke, createRendererCommand("session.snapshot.response", request)),
+    reportSnapshotUnavailable: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.snapshot.unavailable", request)),
     waitForText: (request) =>
       invokeCommand(invoke, createRendererCommand("session.waitForText", request)),
     waitForScreenChange: (request) =>
@@ -160,6 +166,8 @@ function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId):
     case "session.detached":
     case "session.error":
     case "session.exited":
+    case "session.title":
+    case "session.bell":
       return event.payload.sessionId === sessionId;
     case "session.output":
       return event.payload.sessionId === sessionId;
@@ -183,6 +191,10 @@ function isRendererSessionEvent(value: unknown): value is RendererSessionEvent {
       return typeof value.payload.sessionId === "string";
     case "session.output":
       return typeof value.payload.sessionId === "string" && typeof value.payload.data === "string";
+    case "session.title":
+      return typeof value.payload.sessionId === "string" && typeof value.payload.title === "string";
+    case "session.bell":
+      return typeof value.payload.sessionId === "string";
     case "session.error":
       return typeof value.payload.type === "string" && typeof value.payload.message === "string";
     case "session.snapshot.request":

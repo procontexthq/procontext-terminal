@@ -41,6 +41,7 @@ The app logger must not:
 - sessionId when relevant
 - requestId when relevant
 - origin: human, agent, system
+- decisionId, outcome, and denialCode for policy decisions
 - error type and cause when relevant
 
 ## Current Phase 1 Behavior
@@ -80,3 +81,5 @@ These outputs must not be mixed. Terminal output should not be logged as app dia
 - Terminal output is excluded from app diagnostics unless explicitly enabled for a scoped debugging scenario.
 - Redaction removes sensitive values before persistence or export.
 - Error logs preserve domain error type and cause context.
+- Renderer recording policy decisions are logged without transcript payloads or
+  exported recording contents.

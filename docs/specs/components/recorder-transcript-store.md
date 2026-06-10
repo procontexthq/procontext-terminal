@@ -77,6 +77,9 @@ The recorder must not:
 - Redaction policy must apply before data is written.
 - Exported files must preserve event ordering.
 - Recording events must be validated when read and exported.
+- Recording start, stop, and export operations must be authorized before the
+  recorder is invoked. Policy denials return structured errors and must not
+  create, mutate, or export transcript files.
 
 ## Testing Expectations
 
@@ -87,3 +90,4 @@ The recorder must not:
 - Exported replay metadata can be validated against its schema version.
 - Corrupted stored recordings fail export instead of returning unvalidated data.
 - Legacy JSON-array recordings remain exportable.
+- Denied recording control and export requests have no recorder side effects.

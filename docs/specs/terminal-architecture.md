@@ -91,7 +91,12 @@ flowchart LR
   DesktopApp --> OS["macOS / Windows / Linux APIs"]
 ```
 
-The desktop app is the trust boundary. It owns all local terminal sessions. Agents do not spawn shells directly through the UI; they request terminal operations through the local agent gateway, which applies validation, policy, audit logging, and session ownership rules.
+The desktop app is the trust boundary. It owns all local terminal sessions.
+Agents do not spawn shells directly through the UI; they request terminal
+operations through the local agent gateway, which applies validation, policy,
+audit logging, and session ownership rules. Renderer IPC is also treated as
+untrusted input at the main-process boundary, so sensitive human actions such
+as recording control are authorized before recorder side effects occur.
 
 ## Process Architecture
 
@@ -133,7 +138,7 @@ flowchart TB
   Main --> WindowManager
   Main --> SessionManager
   Main --> AgentGateway
-  SessionManager --> PolicyEngine
+  Main --> PolicyEngine
   SessionManager --> PtyHost
   SessionManager --> Recorder
   SessionManager --> Logger
@@ -195,7 +200,7 @@ apps/
 packages/
   protocol/            shared IPC, agent API, event, error, and schema types
   pty-host/            node-pty adapter and shell resolver
-  session-core/        session manager, lifecycle, policy integration
+  session-core/        session manager, lifecycle, recorder integration
   agent-gateway/       local WebSocket/socket server and request handling
   recorder/            transcript and replay event storage
   terminal-observer/   screen snapshot helpers and wait conditions
@@ -287,6 +292,7 @@ sequenceDiagram
   participant Policy as Policy Engine
   participant Session as Session Manager
   participant Pty as PTY Host
+  participant Window as Window Manager
   participant Renderer as Renderer UI
 
   Agent->>Gateway: createTerminal({cwd, shell})
@@ -298,12 +304,22 @@ sequenceDiagram
   Session-->>Gateway: sessionId
   Gateway-->>Agent: session created
   Session-->>Renderer: session created event
+  Gateway->>Window: ensure visible renderer if possible
   Agent->>Gateway: sendText(sessionId, "npm test")
   Gateway->>Policy: authorize input
   Policy-->>Gateway: allow
   Gateway->>Session: write(origin=agent)
   Session->>Pty: write bytes
 ```
+
+Renderer display is best effort for agent-created sessions. If no renderer
+window can be created, the PTY session remains available through the agent API
+in detached/headless mode and renderer-dependent observations report structured
+observation errors instead of failing the create operation.
+Destroyed or crashed renderer web contents do not count as available display
+surfaces. If a renderer that owns live sessions is destroyed or its render
+process is lost, main detaches orphaned sessions so a replacement renderer can
+rediscover and reattach them.
 
 ### Viewport Snapshot
 
@@ -318,15 +334,20 @@ sequenceDiagram
 
   Agent->>Gateway: captureScreen(sessionId)
   Gateway->>Session: requestScreenSnapshot(sessionId)
-  Session->>Renderer: snapshot request
+  Session->>Renderer: snapshot request for owning renderer
   Renderer->>Observer: capture visible state
   Observer->>Xterm: read buffer, cursor, modes
   Xterm-->>Observer: screen data
-  Observer-->>Renderer: TerminalScreenSnapshot
+  Observer-->>Renderer: TerminalScreenSnapshot(sessionId)
   Renderer-->>Session: snapshot response
   Session-->>Gateway: snapshot
   Gateway-->>Agent: snapshot
 ```
+
+If no renderer owns the requested session, the snapshot request fails
+immediately with `observation_unavailable`. Main validates snapshot responses
+against the pending request ID and session ID before resolving the agent-facing
+operation.
 
 ## IPC Contract
 
@@ -341,6 +362,8 @@ type RendererCommand =
   | { type: "session.resize"; requestId: RequestId; payload: ResizeSessionRequest }
   | { type: "session.kill"; requestId: RequestId; payload: KillSessionRequest }
   | { type: "session.get"; requestId: RequestId; payload: GetSessionRequest }
+  | { type: "session.setTitle"; requestId: RequestId; payload: { sessionId: SessionId; title: string } }
+  | { type: "session.bell"; requestId: RequestId; payload: { sessionId: SessionId } }
   | { type: "settings.get"; requestId: RequestId; payload: {} }
   | { type: "session.snapshot.response"; requestId: RequestId; payload: TerminalScreenSnapshot };
 ```
@@ -351,6 +374,8 @@ Main to renderer events:
 type RendererEvent =
   | { type: "session.created"; payload: TerminalSessionSnapshot }
   | { type: "session.output"; payload: { sessionId: SessionId; data: string } }
+  | { type: "session.title"; payload: { sessionId: SessionId; title: string } }
+  | { type: "session.bell"; payload: { sessionId: SessionId } }
   | { type: "session.exited"; payload: SessionExitEvent }
   | { type: "session.error"; payload: TerminalError }
   | { type: "session.snapshot.request"; requestId: RequestId; payload: { sessionId: SessionId } };
@@ -491,8 +516,14 @@ Security requirements:
 - External agent gateway binds to local-only transports by default.
 - Agent connections require short-lived authentication.
 - Agent operations, including authentication, are authorized by the policy engine.
+- Renderer-triggered recording start, stop, and export operations are
+  authorized by the policy engine as local human actions before transcript
+  recorder side effects.
 - Policy requests include safe metadata such as cwd, shell, session ID, and coarse operation kind, but exclude raw terminal input and PTY output by default.
 - All agent operations are auditable.
+- Main-process policy decisions for renderer sensitive actions are logged with
+  safe metadata only: request ID, session ID, origin, decision ID, outcome, and
+  denial code.
 - Runtime validation is required for IPC, agent messages, settings, and recordings.
 - Shell output is treated as untrusted text containing control sequences.
 - Clipboard operations require clear origin handling.

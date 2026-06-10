@@ -276,6 +276,27 @@ describe("protocol schemas", () => {
       }),
     ).toMatchObject({ type: "session.snapshot.response" });
     expect(
+      parseRendererCommand({
+        type: "session.snapshot.unavailable",
+        requestId,
+        payload: { requestId, sessionId, reason: "No terminal view owns this session." },
+      }),
+    ).toMatchObject({ type: "session.snapshot.unavailable" });
+    expect(
+      parseRendererCommand({
+        type: "session.setTitle",
+        requestId,
+        payload: { sessionId, title: "vim package.json" },
+      }),
+    ).toMatchObject({ type: "session.setTitle" });
+    expect(
+      parseRendererCommand({
+        type: "session.bell",
+        requestId,
+        payload: { sessionId },
+      }),
+    ).toMatchObject({ type: "session.bell" });
+    expect(
       isRendererSessionEvent({
         type: "session.snapshot.request",
         requestId,
@@ -305,6 +326,18 @@ describe("protocol schemas", () => {
         payload: error,
       }),
     ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "session.title",
+        payload: { sessionId: createSessionId("session-title"), title: "vim" },
+      }),
+    ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "session.bell",
+        payload: { sessionId: createSessionId("session-bell") },
+      }),
+    ).toBe(true);
     expect(isRendererSessionEvent({ type: "unknown", payload: {} })).toBe(false);
   });
 
@@ -312,6 +345,17 @@ describe("protocol schemas", () => {
     const requestId = createRequestId("request-1");
     const sessionId = createSessionId("session-1");
 
+    expect(
+      parseRendererCommand({
+        type: "session.list",
+        requestId,
+        payload: {},
+      }),
+    ).toEqual({
+      type: "session.list",
+      requestId,
+      payload: {},
+    });
     expect(
       parseRendererCommand({
         type: "session.write",
