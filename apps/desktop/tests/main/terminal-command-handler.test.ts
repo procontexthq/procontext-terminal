@@ -42,6 +42,7 @@ function services(
     requestScreenSnapshot?: TerminalCommandServices["requestScreenSnapshot"];
     rejectSnapshotResponse?: TerminalCommandServices["rejectSnapshotResponse"];
     getConfig?: () => TerminalConfig;
+    saveConfig?: (config: TerminalConfig) => Promise<TerminalConfig>;
     policy?: TerminalPolicy;
   } = {},
 ): TerminalCommandServices {
@@ -128,6 +129,11 @@ function services(
     resolveSnapshotResponse: vi.fn(),
     rejectSnapshotResponse: overrides.rejectSnapshotResponse ?? vi.fn(),
     getConfig: overrides.getConfig ?? defaultTerminalConfig,
+    saveConfig:
+      overrides.saveConfig ??
+      ((config: TerminalConfig) => {
+        return Promise.resolve(config);
+      }),
     policy: overrides.policy ?? createDefaultTerminalPolicy(),
   };
 }
@@ -275,6 +281,26 @@ describe("terminal command handler", () => {
         type: "invalid_request",
         operation: "ipc",
       },
+    });
+  });
+
+  it("persists UI theme settings without restoring workspace layout", async () => {
+    const saveConfig = vi.fn((config: TerminalConfig) => Promise.resolve(config));
+    const result = await handleRendererCommandPayload(
+      createRendererCommand("settings.saveUiTheme", { theme: "gamer" }),
+      services({ saveConfig }),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        ...defaultTerminalConfig(),
+        ui: { theme: "gamer" },
+      },
+    });
+    expect(saveConfig).toHaveBeenCalledWith({
+      ...defaultTerminalConfig(),
+      ui: { theme: "gamer" },
     });
   });
 

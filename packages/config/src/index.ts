@@ -27,6 +27,9 @@ export function defaultTerminalConfig(): TerminalConfig {
       defaultProfile: null,
       profiles: [],
     },
+    ui: {
+      theme: "coder",
+    },
     recording: {
       state: "disabled",
       redactedPatterns: [],
@@ -57,6 +60,10 @@ export function parseTerminalConfig(value: unknown): ConfigParseResult {
     shell: {
       ...defaults.shell,
       ...(isObject(raw.shell) ? raw.shell : {}),
+    },
+    ui: {
+      ...defaults.ui,
+      ...(isObject(raw.ui) ? raw.ui : {}),
     },
     recording: recording.config,
   };

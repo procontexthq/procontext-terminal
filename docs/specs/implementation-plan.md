@@ -113,7 +113,8 @@ real PTY session. Inactive tabs remain mounted so their output and scrollback
 continue to update while the user works elsewhere. Restart opens a fresh
 default human terminal tab; detached live sessions can still be reconciled into
 visible tabs, but prior human tab count, order, active tab, cwd, and shell
-metadata are not persisted as restart state.
+metadata are not persisted as restart state. UI theme preference is persisted as
+settings state independent of terminal layout.
 
 Implementation:
 

@@ -79,9 +79,9 @@ The first multi-session milestone supports tabs only.
   app restart.
 - Canonical bell events mark inactive tabs unread; activating the tab clears
   the unread indicator.
-- The renderer may expose local UI themes for chrome and terminal framing.
-  Until settings schema support exists, this preference is renderer-local and
-  must not affect PTY launch semantics or terminal transcript data.
+- The renderer may expose UI themes for chrome and terminal framing. The
+  selected UI theme is persisted through typed settings and must not affect PTY
+  launch semantics or terminal transcript data.
 - Startup reconciliation attaches visible tabs for detached live sessions so
   sessions that were created while no renderer was available, or detached after
   renderer destruction, become human-visible when a renderer is available

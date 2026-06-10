@@ -9,6 +9,7 @@ export type DecisionId = Brand<string, "DecisionId">;
 export type SessionState = "creating" | "running" | "detached" | "exiting" | "exited" | "failed";
 export type InputOrigin = "human" | "agent" | "system";
 export type RecordingState = "disabled" | "enabled";
+export type UiThemePreference = "coder" | "gamer" | "classic";
 
 export type TerminalTheme = {
   background: string;
@@ -29,6 +30,10 @@ export type RecordingConfig = {
   redactedPatterns: string[];
 };
 
+export type UiConfig = {
+  theme: UiThemePreference;
+};
+
 export type TerminalConfig = {
   schemaVersion: 2;
   terminal: {
@@ -41,6 +46,7 @@ export type TerminalConfig = {
     defaultProfile: string | null;
     profiles: TerminalShellProfile[];
   };
+  ui: UiConfig;
   recording: RecordingConfig;
 };
 
@@ -62,7 +68,8 @@ export type TerminalErrorType =
   | "session_attach_failed"
   | "session_snapshot_failed"
   | "wait_timeout"
-  | "recording_failed";
+  | "recording_failed"
+  | "settings_save_failed";
 
 export type TerminalError = {
   type: TerminalErrorType;
@@ -356,6 +363,10 @@ export type TerminalRecordingExport = {
   events: TerminalRecordingEvent[];
 };
 
+export type SaveUiThemeRequest = {
+  theme: UiThemePreference;
+};
+
 export type TerminalSessionSnapshot = {
   sessionId: SessionId;
   state: SessionState;
@@ -430,7 +441,8 @@ export type RendererCommand =
   | { type: "recording.start"; requestId: RequestId; payload: RecordingControlRequest }
   | { type: "recording.stop"; requestId: RequestId; payload: RecordingControlRequest }
   | { type: "recording.export"; requestId: RequestId; payload: RecordingExportRequest }
-  | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> };
+  | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> }
+  | { type: "settings.saveUiTheme"; requestId: RequestId; payload: SaveUiThemeRequest };
 
 export type RendererCommandType = RendererCommand["type"];
 
@@ -473,6 +485,7 @@ export type RendererTerminalApi = {
   stopRecording(request: RecordingControlRequest): Promise<void>;
   exportRecording(request: RecordingExportRequest): Promise<TerminalRecordingExport>;
   getConfig(): Promise<TerminalConfig>;
+  saveUiTheme(theme: UiThemePreference): Promise<TerminalConfig>;
   onTerminalEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe;
   onSessionEvent(sessionId: SessionId, handler: (event: RendererSessionEvent) => void): Unsubscribe;
 };
@@ -512,6 +525,8 @@ export const terminalThemeSchema = z.object({
   cursor: z.string().min(1),
 });
 
+export const uiThemePreferenceSchema = z.enum(["coder", "gamer", "classic"]);
+
 export const terminalShellProfileSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -523,6 +538,10 @@ export const terminalShellProfileSchema = z.object({
 export const recordingConfigSchema = z.object({
   state: z.enum(["disabled", "enabled"]),
   redactedPatterns: z.array(z.string()),
+});
+
+export const uiConfigSchema = z.object({
+  theme: uiThemePreferenceSchema,
 });
 
 export const terminalConfigSchema = z.object({
@@ -537,6 +556,7 @@ export const terminalConfigSchema = z.object({
     defaultProfile: z.string().min(1).nullable(),
     profiles: z.array(terminalShellProfileSchema),
   }),
+  ui: uiConfigSchema,
   recording: recordingConfigSchema,
 });
 
@@ -559,6 +579,7 @@ export const terminalErrorTypeSchema = z.enum([
   "session_snapshot_failed",
   "wait_timeout",
   "recording_failed",
+  "settings_save_failed",
 ]);
 
 export const terminalErrorSchema = z.object({
@@ -773,6 +794,10 @@ export const terminalRecordingExportSchema = z.object({
   sessionId: sessionIdSchema,
   exportedAt: z.string().min(1),
   events: z.array(terminalRecordingEventSchema),
+});
+
+export const saveUiThemeRequestSchema = z.object({
+  theme: uiThemePreferenceSchema,
 });
 
 export const agentGatewayDescriptorSchema = z.object({
@@ -1100,6 +1125,11 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     requestId: requestIdSchema,
     payload: z.object({}),
   }),
+  z.object({
+    type: z.literal("settings.saveUiTheme"),
+    requestId: requestIdSchema,
+    payload: saveUiThemeRequestSchema,
+  }),
 ]);
 
 export const rendererCommandResultSchema = z.union([
@@ -1216,6 +1246,10 @@ export function parseWaitForQuietRequest(value: unknown): WaitForQuietRequest {
 
 export function parseTerminalRecordingExport(value: unknown): TerminalRecordingExport {
   return terminalRecordingExportSchema.parse(value);
+}
+
+export function parseSaveUiThemeRequest(value: unknown): SaveUiThemeRequest {
+  return saveUiThemeRequestSchema.parse(value);
 }
 
 export function parseTerminalConfig(value: unknown): TerminalConfig {

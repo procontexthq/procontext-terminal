@@ -24,6 +24,7 @@ import {
   parseReleaseSessionRequest,
   parseResizeSessionRequest,
   parseSendKeyRequest,
+  parseSaveUiThemeRequest,
   parseTerminalRecordingExport,
   parseTerminalScreenSnapshot,
   parseWaitForQuietRequest,
@@ -184,10 +185,12 @@ describe("protocol schemas", () => {
         activeTabIndex: 0,
       },
       recording: { state: "disabled", redactedPatterns: [] },
+      ui: { theme: "gamer" },
     });
 
     expect(parsed).toMatchObject({
       schemaVersion: 2,
+      ui: { theme: "gamer" },
       shell: {
         profiles: [{ id: "zsh", shell: "/bin/zsh" }],
       },
@@ -344,6 +347,18 @@ describe("protocol schemas", () => {
         payload: { sessionId, cols: 0, rows: 24 },
       }),
     ).toThrow();
+    expect(
+      parseRendererCommand({
+        type: "settings.saveUiTheme",
+        requestId,
+        payload: { theme: "gamer" },
+      }),
+    ).toMatchObject({
+      type: "settings.saveUiTheme",
+      payload: { theme: "gamer" },
+    });
+    expect(parseSaveUiThemeRequest({ theme: "classic" })).toEqual({ theme: "classic" });
+    expect(() => parseSaveUiThemeRequest({ theme: "unknown" })).toThrow();
     expect(
       parseRendererCommand({
         type: "session.release",

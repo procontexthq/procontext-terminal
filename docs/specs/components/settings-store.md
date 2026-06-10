@@ -22,8 +22,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Phase 1 persists settings as versioned JSON at the Electron `userData`
   settings path.
 - Phase 2A uses settings schema version 2. The schema persists terminal,
-  shell, and recording settings only; human tab layout is runtime UI state and
-  must not be restored from settings on restart.
+  shell, recording, and UI theme settings only; human tab layout is runtime UI
+  state and must not be restored from settings on restart.
 
 ## Boundaries
 
@@ -53,6 +53,7 @@ Settings must be validated at load time.
 The settings store can persist:
 
 - App settings.
+- UI theme preference.
 - Shell profiles.
 - Agent gateway settings.
 - Policy settings.

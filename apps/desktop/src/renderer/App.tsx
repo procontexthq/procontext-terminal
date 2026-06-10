@@ -7,6 +7,7 @@ import type {
   SessionId,
   TerminalConfig,
   TerminalSessionSnapshot,
+  UiThemePreference,
 } from "@terminal/protocol";
 
 import type { TerminalController } from "./terminal-controller";
@@ -27,13 +28,11 @@ import {
 } from "./terminal-tabs";
 import { nextTerminalStatus, type TerminalUiStatus } from "./terminal-status";
 
-type UiTheme = "coder" | "gamer" | "classic";
-
 export function App(): ReactElement {
   const [config, setConfig] = useState<TerminalConfig | null>(null);
   const [tabsState, setTabsState] = useState<TerminalTabsState | null>(null);
   const [agentActive, setAgentActive] = useState(false);
-  const [uiTheme, setUiTheme] = useState<UiTheme>(() => readUiThemePreference());
+  const [uiTheme, setUiTheme] = useState<UiThemePreference>("coder");
   const controllers = useRef(new Map<string, TerminalController>());
   const pendingDetachedSessions = useRef<TerminalSessionSnapshot[]>([]);
 
@@ -65,6 +64,7 @@ export function App(): ReactElement {
         }
         pendingDetachedSessions.current = [];
         setConfig(loadedConfig);
+        setUiTheme(loadedConfig.ui.theme);
         setTabsState(nextTabsState);
       })
       .catch((error: unknown) => {
@@ -219,7 +219,13 @@ export function App(): ReactElement {
               onChange={(event) => {
                 const nextTheme = parseUiTheme(event.target.value);
                 setUiTheme(nextTheme);
-                saveUiThemePreference(nextTheme);
+                void window.terminalApi
+                  .saveUiTheme(nextTheme)
+                  .then((savedConfig) => {
+                    setConfig(savedConfig);
+                    setUiTheme(savedConfig.ui.theme);
+                  })
+                  .catch(reportError);
               }}
             >
               <option value="coder">Coder</option>
@@ -341,23 +347,7 @@ function requiresCloseConfirmation(status: TerminalUiStatus): boolean {
   );
 }
 
-function readUiThemePreference(): UiTheme {
-  try {
-    return parseUiTheme(window.localStorage.getItem("terminal.uiTheme"));
-  } catch {
-    return "coder";
-  }
-}
-
-function saveUiThemePreference(theme: UiTheme): void {
-  try {
-    window.localStorage.setItem("terminal.uiTheme", theme);
-  } catch {
-    // Theme preference is cosmetic; ignore storage failures.
-  }
-}
-
-function parseUiTheme(value: string | null): UiTheme {
+function parseUiTheme(value: string | null): UiThemePreference {
   return value === "gamer" || value === "classic" ? value : "coder";
 }
 

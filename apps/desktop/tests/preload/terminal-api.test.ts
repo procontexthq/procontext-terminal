@@ -43,6 +43,7 @@ describe("renderer terminal api", () => {
     );
     await expect(api.reportBell({ sessionId })).resolves.toBe("session.bell");
     await expect(api.startRecording({ sessionId })).resolves.toBe("recording.start");
+    await expect(api.saveUiTheme("gamer")).resolves.toBe("settings.saveUiTheme");
     expect(Object.prototype.hasOwnProperty.call(api, "saveWorkspace")).toBe(false);
 
     expect(invoke).toHaveBeenCalledWith(
@@ -55,6 +56,12 @@ describe("renderer terminal api", () => {
       expect.objectContaining({
         type: "session.release",
         payload: { sessionId },
+      }),
+    );
+    expect(invoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "settings.saveUiTheme",
+        payload: { theme: "gamer" },
       }),
     );
   });

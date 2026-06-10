@@ -12,6 +12,7 @@ import {
   defaultTerminalConfig,
   loadTerminalConfig,
   resolveTerminalConfigPath,
+  saveTerminalConfig,
 } from "@terminal/config";
 import { createDefaultAgentPolicy, createDefaultTerminalPolicy } from "@terminal/policy-engine";
 import { NodePtyHost } from "@terminal/pty-host";
@@ -194,6 +195,7 @@ void app
       terminalPolicy,
       logger,
       () => terminalConfig,
+      saveConfig,
       screenSnapshotService,
     );
     await createMainWindow().catch((error: unknown) => {
@@ -292,6 +294,26 @@ function resolveLogLevel() {
   return parseLogLevel(process.env.PROCONTEXT_LOG_LEVEL, !app.isPackaged ? "debug" : "info");
 }
 
+async function saveConfig(config: TerminalConfig): Promise<TerminalConfig> {
+  const terminalConfigPath = resolveTerminalConfigPath(app.getPath("userData"));
+  await saveTerminalConfig(terminalConfigPath, config);
+  terminalConfig = config;
+  const redactors = [createPatternRedactor(terminalConfig.recording.redactedPatterns)];
+  if (recorder) {
+    recorder.updateRedactors(redactors);
+  } else {
+    recorder = new FileTerminalRecorder({
+      directory: join(app.getPath("userData"), "recordings"),
+      redactors,
+    });
+  }
+  logger.info("settings", "saved", {
+    settingsPath: terminalConfigPath,
+    uiTheme: config.ui.theme,
+  });
+  return terminalConfig;
+}
+
 async function shutdownApp() {
   if (agentGateway) {
     logger.info("agent", "gateway_shutdown_started");
@@ -319,6 +341,7 @@ function createAgentGatewayServices(
     rejectSnapshotResponse: (requestId, sessionId, reason) =>
       snapshotService.rejectSnapshotResponse(requestId, sessionId, reason),
     getConfig: () => terminalConfig,
+    saveConfig,
     policy: terminalPolicy,
     logger,
   };

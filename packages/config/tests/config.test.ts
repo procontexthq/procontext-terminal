@@ -24,6 +24,9 @@ describe("terminal config", () => {
         defaultProfile: null,
         profiles: [],
       },
+      ui: {
+        theme: "coder",
+      },
       recording: {
         state: "disabled",
         redactedPatterns: [],
@@ -43,6 +46,7 @@ describe("terminal config", () => {
       schemaVersion: 2,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh", profiles: [] },
+      ui: { theme: "coder" },
       recording: { redactedPatterns: ["token"] },
     });
     expect(parsed.config).not.toHaveProperty("workspace");
@@ -76,6 +80,7 @@ describe("terminal config", () => {
       schemaVersion: 2,
       terminal: { fontSize: 15 },
       shell: { defaultProfile: "/bin/bash" },
+      ui: { theme: "coder" },
     });
     expect(parsed.config).not.toHaveProperty("workspace");
   });
@@ -93,6 +98,7 @@ describe("terminal config", () => {
       schemaVersion: 2,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh" },
+      ui: { theme: "coder" },
     });
     expect(parsed.config).not.toHaveProperty("workspace");
   });
@@ -129,6 +135,7 @@ describe("terminal config", () => {
 
       const config = {
         ...defaultTerminalConfig(),
+        ui: { theme: "gamer" as const },
         terminal: {
           ...defaultTerminalConfig().terminal,
           fontSize: 16,

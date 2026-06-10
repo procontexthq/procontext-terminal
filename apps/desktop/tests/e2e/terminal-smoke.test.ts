@@ -19,10 +19,12 @@ import {
   type SessionId,
   type TerminalScreenSnapshot,
   type TerminalSessionSnapshot,
+  type UiThemePreference,
 } from "@terminal/protocol";
 
 const require = createRequire(import.meta.url);
 const electronPath = require("electron") as string;
+const e2eUiTimeoutMs = process.platform === "win32" ? 30000 : 10000;
 
 let electronProcess: ChildProcessWithoutNullStreams | null = null;
 let browser: Browser | null = null;
@@ -95,7 +97,7 @@ describe("desktop terminal smoke", () => {
     await Promise.all([page.waitForEvent("close"), page.getByTestId("close-tab-0").click()]);
   });
 
-  it("applies local UI themes without changing terminal sessions", async () => {
+  it("applies persisted UI themes without changing terminal sessions", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
     let page = await firstPage(browser);
@@ -107,9 +109,10 @@ describe("desktop terminal smoke", () => {
     await page.waitForFunction(
       () => document.querySelector(".app-shell")?.getAttribute("data-theme") === "gamer",
       undefined,
-      { timeout: 10000 },
+      { timeout: e2eUiTimeoutMs },
     );
     await expectTerminalBackgroundConsistent(page);
+    await waitForPersistedUiTheme(userDataDir, "gamer");
 
     if ((await activeSessionId(page)) !== sessionId) {
       throw new Error("Changing UI theme should not replace the active terminal session.");
@@ -123,7 +126,7 @@ describe("desktop terminal smoke", () => {
     await page.waitForFunction(
       () => document.querySelector(".app-shell")?.getAttribute("data-theme") === "gamer",
       undefined,
-      { timeout: 10000 },
+      { timeout: e2eUiTimeoutMs },
     );
     await expectTerminalBackgroundConsistent(page);
   });
@@ -688,7 +691,7 @@ async function waitForTerminalText(page: Page, text: string): Promise<void> {
   await page.waitForFunction(
     (expected) => document.querySelector(".xterm-rows")?.textContent?.includes(expected),
     text,
-    { timeout: 10000 },
+    { timeout: e2eUiTimeoutMs },
   );
 }
 
@@ -699,7 +702,7 @@ async function waitForActiveTerminalText(page: Page, text: string): Promise<void
         .querySelector("[data-testid='terminal-ready'] .xterm-rows")
         ?.textContent?.includes(expected),
     text,
-    { timeout: 10000 },
+    { timeout: e2eUiTimeoutMs },
   );
 }
 
@@ -716,7 +719,7 @@ async function expectTerminalBottomRowVisible(page: Page): Promise<void> {
       return rowRect.top >= viewportRect.top && rowRect.bottom <= viewportRect.bottom + 0.5;
     },
     undefined,
-    { timeout: 10000 },
+    { timeout: e2eUiTimeoutMs },
   );
 }
 
@@ -736,7 +739,7 @@ async function expectTerminalBackgroundConsistent(page: Page): Promise<void> {
       );
     },
     undefined,
-    { timeout: 10000 },
+    { timeout: e2eUiTimeoutMs },
   );
 }
 
@@ -781,6 +784,29 @@ async function waitForActiveTab(page: Page, index: number): Promise<void> {
     index,
     { timeout: 10000 },
   );
+}
+
+async function waitForPersistedUiTheme(
+  userDataDir: string,
+  theme: UiThemePreference,
+): Promise<void> {
+  const settingsPath = join(userDataDir, "settings.json");
+  const deadline = Date.now() + e2eUiTimeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
+        ui?: { theme?: unknown };
+      };
+      if (settings.ui?.theme === theme) {
+        return;
+      }
+    } catch {
+      // Settings may not exist yet; keep polling until the explicit timeout.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(`Timed out waiting for persisted UI theme ${theme}.`);
 }
 
 async function activeSessionId(page: Page): Promise<SessionId> {
