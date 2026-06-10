@@ -19,6 +19,7 @@ import { handleRendererCommandPayload } from "./terminal-command-handler";
 export const IPC_CHANNELS = {
   command: "terminal.command",
   event: "session.event",
+  appShortcut: "app.shortcut",
 } as const;
 
 export type ScreenSnapshotService = {

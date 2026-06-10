@@ -9,6 +9,7 @@ import {
   createInitialTerminalTabs,
   markTabBell,
   renameTabFromTitle,
+  selectAdjacentTerminalTab,
   selectTerminalTab,
   setTabSessionId,
 } from "../../src/renderer/terminal-tabs";
@@ -56,6 +57,27 @@ describe("terminal tabs model", () => {
 
     state = selectTerminalTab(state, inactiveTabId);
     expect(state.tabs[0]?.hasUnreadBell).toBe(false);
+  });
+
+  it("switches to adjacent tabs with wrapping", () => {
+    let state = createInitialTerminalTabs();
+    state = addTerminalTab(state);
+    state = addTerminalTab(state);
+
+    const [first, second, third] = state.tabs;
+    expect(state.activeTabId).toBe(third?.id);
+
+    state = selectAdjacentTerminalTab(state, "previous");
+    expect(state.activeTabId).toBe(second?.id);
+
+    state = selectAdjacentTerminalTab(state, "previous");
+    expect(state.activeTabId).toBe(first?.id);
+
+    state = selectAdjacentTerminalTab(state, "previous");
+    expect(state.activeTabId).toBe(third?.id);
+
+    state = selectAdjacentTerminalTab(state, "next");
+    expect(state.activeTabId).toBe(first?.id);
   });
 
   it("tracks runtime session ids without mutating launch metadata", () => {

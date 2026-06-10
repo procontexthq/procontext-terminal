@@ -16,7 +16,8 @@ describe("terminal config", () => {
     expect(defaultTerminalConfig()).toMatchObject({
       schemaVersion: 2,
       terminal: {
-        fontFamily: "Menlo, Monaco, Consolas, monospace",
+        fontFamily:
+          '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
         fontSize: 13,
         scrollback: 5000,
       },
@@ -25,7 +26,7 @@ describe("terminal config", () => {
         profiles: [],
       },
       ui: {
-        theme: "coder",
+        theme: "default",
       },
       recording: {
         state: "disabled",
@@ -46,7 +47,7 @@ describe("terminal config", () => {
       schemaVersion: 2,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh", profiles: [] },
-      ui: { theme: "coder" },
+      ui: { theme: "default" },
       recording: { redactedPatterns: ["token"] },
     });
     expect(parsed.config).not.toHaveProperty("workspace");
@@ -80,7 +81,7 @@ describe("terminal config", () => {
       schemaVersion: 2,
       terminal: { fontSize: 15 },
       shell: { defaultProfile: "/bin/bash" },
-      ui: { theme: "coder" },
+      ui: { theme: "default" },
     });
     expect(parsed.config).not.toHaveProperty("workspace");
   });
@@ -98,7 +99,7 @@ describe("terminal config", () => {
       schemaVersion: 2,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh" },
-      ui: { theme: "coder" },
+      ui: { theme: "default" },
     });
     expect(parsed.config).not.toHaveProperty("workspace");
   });

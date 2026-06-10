@@ -27,6 +27,11 @@
     "package:verify": "node scripts/verify-packaged-app.mjs"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/orbitron": "^5.2.8",
+    "@fontsource/share-tech-mono": "^5.2.7",
     "@terminal/agent-gateway": "workspace:*",
     "@terminal/config": "workspace:*",
     "@terminal/policy-engine": "workspace:*",

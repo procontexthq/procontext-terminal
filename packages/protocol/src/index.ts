@@ -9,7 +9,7 @@ export type DecisionId = Brand<string, "DecisionId">;
 export type SessionState = "creating" | "running" | "detached" | "exiting" | "exited" | "failed";
 export type InputOrigin = "human" | "agent" | "system";
 export type RecordingState = "disabled" | "enabled";
-export type UiThemePreference = "coder" | "gamer" | "classic";
+export type UiThemePreference = "default" | "coder" | "gamer" | "classic";
 
 export type TerminalTheme = {
   background: string;
@@ -457,6 +457,9 @@ export type RendererCommandResult<TValue = unknown> =
 
 export type Unsubscribe = () => void;
 
+export const appShortcutActions = ["newTab", "closeTab", "previousTab", "nextTab"] as const;
+export type AppShortcutAction = (typeof appShortcutActions)[number];
+
 export type RendererTerminalApi = {
   createSession(request: CreateSessionRequest): Promise<TerminalSessionSnapshot>;
   listSessions(): Promise<TerminalSessionSnapshot[]>;
@@ -486,6 +489,7 @@ export type RendererTerminalApi = {
   exportRecording(request: RecordingExportRequest): Promise<TerminalRecordingExport>;
   getConfig(): Promise<TerminalConfig>;
   saveUiTheme(theme: UiThemePreference): Promise<TerminalConfig>;
+  onAppShortcut(handler: (action: AppShortcutAction) => void): Unsubscribe;
   onTerminalEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe;
   onSessionEvent(sessionId: SessionId, handler: (event: RendererSessionEvent) => void): Unsubscribe;
 };
@@ -525,7 +529,7 @@ export const terminalThemeSchema = z.object({
   cursor: z.string().min(1),
 });
 
-export const uiThemePreferenceSchema = z.enum(["coder", "gamer", "classic"]);
+export const uiThemePreferenceSchema = z.enum(["default", "coder", "gamer", "classic"]);
 
 export const terminalShellProfileSchema = z.object({
   id: z.string().min(1),

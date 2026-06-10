@@ -253,6 +253,8 @@ Implementation:
   native PTY dependencies are platform-specific.
 - Produce macOS `.app` and `.dmg` artifacts, Linux `.AppImage` and package
   artifacts, and Windows installer artifacts.
+- Package native ProContext Terminal app icon resources for macOS, Windows, and
+  Linux so the desktop shell uses the product icon instead of Electron defaults.
 - Keep `node-pty` as a desktop runtime dependency and verify the packaged app
   can load it from the packaged resources.
 - Package desktop app resources unpacked until the native PTY helper lifecycle
@@ -278,6 +280,8 @@ Testing:
   send input, and read recent output.
 - Native PTY packaging verification checks that packaged resources include a
   loadable `node-pty` native module outside the ASAR archive when required.
+- Packaging verification checks that native app icon resources are present in
+  the packaged output.
 - Release CI runs the normal lint, format, typecheck, unit/integration,
   Electron E2E, build, package, packaged smoke, and package verification checks
   before uploading artifacts.

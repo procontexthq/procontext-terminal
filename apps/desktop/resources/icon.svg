@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="196" fill="#22d3ee" />
+  <text
+    x="512"
+    y="602"
+    fill="#060810"
+    font-family="Inter, Arial, Helvetica, sans-serif"
+    font-size="360"
+    font-weight="900"
+    letter-spacing="-34"
+    text-anchor="middle"
+  >pTx</text>
+  <rect x="290" y="716" width="444" height="56" rx="28" fill="#060810" opacity="0.92" />
+</svg>

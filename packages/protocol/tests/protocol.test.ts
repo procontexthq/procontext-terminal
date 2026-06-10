@@ -357,6 +357,7 @@ describe("protocol schemas", () => {
       type: "settings.saveUiTheme",
       payload: { theme: "gamer" },
     });
+    expect(parseSaveUiThemeRequest({ theme: "default" })).toEqual({ theme: "default" });
     expect(parseSaveUiThemeRequest({ theme: "classic" })).toEqual({ theme: "classic" });
     expect(() => parseSaveUiThemeRequest({ theme: "unknown" })).toThrow();
     expect(

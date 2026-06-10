@@ -18,6 +18,7 @@ describe("renderer terminal api", () => {
     const api = createRendererTerminalApi({
       invoke,
       subscribe: vi.fn(),
+      subscribeAppShortcut: vi.fn(),
     });
     const sessionId = createSessionId("session-1");
 
@@ -64,5 +65,30 @@ describe("renderer terminal api", () => {
         payload: { theme: "gamer" },
       }),
     );
+  });
+
+  it("exposes validated app shortcut subscriptions", () => {
+    let subscribedHandler: (payload: unknown) => void = () => {
+      throw new Error("Shortcut subscription was not registered.");
+    };
+    const unsubscribe = vi.fn();
+    const api = createRendererTerminalApi({
+      invoke: vi.fn(),
+      subscribe: vi.fn(),
+      subscribeAppShortcut: (handler) => {
+        subscribedHandler = handler;
+        return unsubscribe;
+      },
+    });
+    const shortcutHandler = vi.fn();
+
+    const result = api.onAppShortcut(shortcutHandler);
+    subscribedHandler?.("nextTab");
+    subscribedHandler?.("not-a-shortcut");
+    result();
+
+    expect(shortcutHandler).toHaveBeenCalledOnce();
+    expect(shortcutHandler).toHaveBeenCalledWith("nextTab");
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 });

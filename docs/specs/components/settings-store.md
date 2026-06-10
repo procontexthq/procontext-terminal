@@ -23,7 +23,10 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
   settings path.
 - Phase 2A uses settings schema version 2. The schema persists terminal,
   shell, recording, and UI theme settings only; human tab layout is runtime UI
-  state and must not be restored from settings on restart.
+  state and must not be restored from settings on restart. The default UI theme
+  is `default`; `coder`, `gamer`, and `classic` remain valid persisted choices.
+  The default terminal font stack starts with bundled JetBrains Mono and falls
+  back to normal platform monospace fonts.
 
 ## Boundaries
 

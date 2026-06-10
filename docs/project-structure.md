@@ -200,6 +200,9 @@ Packaging note:
 
 - `apps/desktop/package.json` may declare native runtime dependencies such as `node-pty` so bundled Electron main code can resolve them from the app package on macOS, Windows, and Linux. Application code must still import `node-pty` only through `packages/pty-host`.
 - `apps/desktop/electron-builder.yml` owns distributable artifact configuration. Packaging verification helpers live under `apps/desktop/scripts`.
+- `apps/desktop/resources` owns native desktop app assets such as macOS,
+  Windows, and Linux app icons. Renderer UI assets remain under
+  `apps/desktop/src/renderer`.
 
 Good delegation tasks:
 
@@ -230,6 +233,20 @@ Good delegation tasks:
 - Add one typed preload method.
 - Add runtime validation around a renderer request.
 - Improve subscription cleanup behavior.
+
+### `apps/desktop/src/shared`
+
+Desktop-app-only helpers shared by main, preload, and renderer code.
+
+Responsibilities:
+
+- Hold pure platform or UI helper logic that needs to be used by more than one
+  desktop process.
+- Avoid Electron, DOM, xterm.js, React, and node-pty imports.
+
+Good delegation tasks:
+
+- Add a pure keyboard shortcut resolver shared by main and renderer.
 
 ### `apps/desktop/src/renderer`
 

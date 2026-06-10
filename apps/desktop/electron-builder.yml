@@ -5,10 +5,15 @@ copyright: Copyright 2026 ProContext
 
 directories:
   output: dist
+  buildResources: resources
 
 files:
   - out/**/*
   - package.json
+
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
 
 asar: false
 
@@ -21,6 +26,7 @@ publish: null
 mac:
   category: public.app-category.developer-tools
   identity: null
+  icon: resources/icon.icns
   target:
     - dmg
 
@@ -30,11 +36,13 @@ dmg:
 linux:
   category: Development
   executableName: procontext-terminal
+  icon: resources/icon.png
   target:
     - AppImage
     - deb
 
 win:
+  icon: resources/icon.ico
   target:
     - nsis
 

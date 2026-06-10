@@ -5,14 +5,22 @@ import type {
   RendererTerminalApi,
   SessionId,
   TerminalError,
+  TerminalTheme,
   Unsubscribe,
 } from "@terminal/protocol";
 
 import { captureTerminalScreen, isObservableTerminal } from "./screen-observer";
 
 export type TerminalLike = {
+  options?: {
+    fontFamily?: string;
+    fontSize?: number;
+    theme?: Partial<TerminalTheme>;
+  };
+  rows?: number;
   open(element: HTMLElement): void;
   write(data: string): void;
+  refresh?(start: number, end: number): void;
   onData(handler: (data: string) => void): { dispose: () => void };
   onTitleChange?(handler: (title: string) => void): { dispose: () => void };
   onBell?(handler: () => void): { dispose: () => void };
@@ -42,6 +50,8 @@ export type TerminalController = {
   sessionId: SessionId;
   focus(): void;
   resize(): Promise<void>;
+  setFontFamily(fontFamily: string): void;
+  setTheme(theme: TerminalTheme): void;
   dispose(options?: TerminalControllerDisposeOptions): Promise<boolean>;
 };
 
@@ -218,6 +228,18 @@ export async function createTerminalSession({
       focus() {
         terminal.focus?.();
       },
+      setFontFamily(fontFamily) {
+        if (terminal.options) {
+          terminal.options.fontFamily = fontFamily;
+        }
+        refreshTerminal(terminal, onError);
+      },
+      setTheme(theme) {
+        if (terminal.options) {
+          terminal.options.theme = theme;
+        }
+        refreshTerminal(terminal, onError);
+      },
       async resize() {
         if (disposed) {
           return;
@@ -283,6 +305,18 @@ export async function createTerminalSession({
       onError,
     });
     throw error;
+  }
+}
+
+function refreshTerminal(
+  terminal: TerminalLike,
+  onError: ((error: unknown) => void) | undefined,
+): void {
+  try {
+    const endRow = Math.max(0, (terminal.rows ?? 1) - 1);
+    terminal.refresh?.(0, endRow);
+  } catch (error: unknown) {
+    onError?.(error);
   }
 }
 

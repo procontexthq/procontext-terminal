@@ -13,9 +13,12 @@ import type {
 import { createTerminalSession, type TerminalLike } from "../../src/renderer/terminal-controller";
 
 class FakeTerminal implements TerminalLike {
+  readonly options: NonNullable<TerminalLike["options"]> = {};
+  readonly rows: number = 24;
   readonly writes: string[] = [];
   readonly open = vi.fn();
   readonly focus = vi.fn();
+  readonly refresh = vi.fn();
   readonly dispose = vi.fn();
   readonly dataSubscriptionDispose = vi.fn();
   readonly titleSubscriptionDispose = vi.fn();
@@ -58,7 +61,7 @@ class FakeTerminal implements TerminalLike {
 
 class ObservableFakeTerminal extends FakeTerminal {
   readonly cols = 80;
-  readonly rows = 2;
+  override readonly rows: number = 2;
   readonly buffer = {
     active: {
       type: "normal" as const,
@@ -118,7 +121,7 @@ function fakeApi(): RendererTerminalApi & {
       },
     },
     shell: { defaultProfile: null, profiles: [] },
-    ui: { theme: "coder" as const },
+    ui: { theme: "default" as const },
     recording: {
       state: "disabled" as const,
       redactedPatterns: [],
@@ -192,6 +195,7 @@ function fakeApi(): RendererTerminalApi & {
       Promise.resolve({ ...terminalConfig, ui: { theme } }),
     ),
     releaseSession: vi.fn<RendererTerminalApi["releaseSession"]>(() => Promise.resolve()),
+    onAppShortcut: vi.fn<RendererTerminalApi["onAppShortcut"]>(() => () => undefined),
     onTerminalEvent: vi.fn<RendererTerminalApi["onTerminalEvent"]>((nextHandler) => {
       terminalHandler = nextHandler;
       return unsubscribeTerminalEvent;
@@ -239,6 +243,56 @@ describe("terminal controller", () => {
     expect(write).toHaveBeenCalledWith({ sessionId: controller.sessionId, data: "echo ok\r" });
     expect(terminal.writes).toEqual(["ok"]);
     expect(resize).toHaveBeenCalledWith({ sessionId: controller.sessionId, cols: 80, rows: 24 });
+  });
+
+  it("updates terminal font family without recreating the session", async () => {
+    const terminal = new FakeTerminal();
+    const api = fakeApi();
+
+    const controller = await createTerminalSession({
+      api,
+      element: document.createElement("div"),
+      createTerminal: () => terminal,
+      createFitAddon: () => ({
+        fit: vi.fn(),
+        proposeDimensions: () => ({ cols: 80, rows: 24 }),
+      }),
+    });
+
+    controller.setFontFamily('"JetBrains Mono", monospace');
+
+    expect(terminal.options.fontFamily).toBe('"JetBrains Mono", monospace');
+    expect(terminal.refresh).toHaveBeenCalledWith(0, 23);
+    expect(api.createSession).toHaveBeenCalledOnce();
+  });
+
+  it("updates terminal theme without recreating the session", async () => {
+    const terminal = new FakeTerminal();
+    const api = fakeApi();
+
+    const controller = await createTerminalSession({
+      api,
+      element: document.createElement("div"),
+      createTerminal: () => terminal,
+      createFitAddon: () => ({
+        fit: vi.fn(),
+        proposeDimensions: () => ({ cols: 80, rows: 24 }),
+      }),
+    });
+
+    controller.setTheme({
+      background: "#07100d",
+      foreground: "#e6fff3",
+      cursor: "#78ff8d",
+    });
+
+    expect(terminal.options.theme).toEqual({
+      background: "#07100d",
+      foreground: "#e6fff3",
+      cursor: "#78ff8d",
+    });
+    expect(terminal.refresh).toHaveBeenCalledWith(0, 23);
+    expect(api.createSession).toHaveBeenCalledOnce();
   });
 
   it("buffers startup output emitted before session creation resolves", async () => {
