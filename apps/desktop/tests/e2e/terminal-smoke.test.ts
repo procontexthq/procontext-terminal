@@ -909,10 +909,9 @@ function platformPrintCommand(text: string): string {
 }
 
 function platformManyLinesCommand(prefix: string, count: number): string {
-  if (process.platform === "win32") {
-    return `for /L %i in (1,1,${count}) do @echo ${prefix}_%i`;
-  }
-  return `i=1; while [ $i -le ${count} ]; do printf '${prefix}_%d\\n' "$i"; i=$((i+1)); done`;
+  return Array.from({ length: count }, (_value, index) =>
+    platformPrintCommand(`${prefix}_${index + 1}`),
+  ).join("\r");
 }
 
 function platformLongRunningCommand(): string {
