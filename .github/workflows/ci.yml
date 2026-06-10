@@ -46,19 +46,7 @@ jobs:
 
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgbm1 \
-            libgtk-3-0 \
-            libnss3 \
-            libxss1 \
-            xvfb
-          if apt-cache show libasound2t64 >/dev/null 2>&1; then
-            sudo apt-get install -y libasound2t64
-          else
-            sudo apt-get install -y libasound2
-          fi
+        run: bash scripts/install-linux-system-deps.sh
 
       - name: Install dependencies
         run: |

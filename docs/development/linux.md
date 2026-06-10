@@ -31,6 +31,10 @@ The script installs Electron runtime packages, installs workspace dependencies,
 rebuilds Electron, verifies Electron's downloaded binary, and fixes the Linux
 `chrome-sandbox` helper permissions when present.
 
+The apt package list is shared with CI through
+`scripts/install-linux-system-deps.sh`; release packaging passes `--package` to
+include packaging-only tools such as `fakeroot`.
+
 Temporary install files are placed under `.cache/setup-tmp` by default. This
 keeps setup reliable on SSH instances where `/tmp` may be memory-backed.
 
