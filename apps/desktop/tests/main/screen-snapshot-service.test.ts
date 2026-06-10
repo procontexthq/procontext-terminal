@@ -118,6 +118,23 @@ describe("screen snapshot service", () => {
     });
   });
 
+  it("rejects and cleans up when a renderer owner cannot receive a snapshot request", async () => {
+    const service = createScreenSnapshotService({
+      getRendererCount: () => 1,
+      sendSnapshotRequest: () => {
+        throw new Error("Renderer was destroyed before the snapshot request was sent.");
+      },
+    });
+    service.registerRendererSession(sessionId, 7);
+
+    await expect(service.requestScreenSnapshot(sessionId, 1000)).rejects.toMatchObject({
+      type: "observation_unavailable",
+      sessionId,
+      operation: "session.captureScreen",
+      cause: "Renderer was destroyed before the snapshot request was sent.",
+    });
+  });
+
   it("rejects mismatched renderer unavailable responses as snapshot protocol failures", async () => {
     let requestId = createRequestId("missing");
     const service = createScreenSnapshotService({

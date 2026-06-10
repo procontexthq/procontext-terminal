@@ -342,14 +342,26 @@ function requestScreenSnapshot({
       );
     }, timeoutMs);
     snapshotRequests.set(requestId, { sessionId, resolve, reject, timeout });
-    sendSnapshotRequest(
-      {
-        type: "session.snapshot.request",
-        requestId,
-        payload: { sessionId },
-      },
-      rendererIds,
-    );
+    try {
+      sendSnapshotRequest(
+        {
+          type: "session.snapshot.request",
+          requestId,
+          payload: { sessionId },
+        },
+        rendererIds,
+      );
+    } catch (error: unknown) {
+      clearTimeout(timeout);
+      snapshotRequests.delete(requestId);
+      reject(
+        createTerminalError("observation_unavailable", "Renderer snapshot is unavailable.", {
+          sessionId,
+          operation: "session.captureScreen",
+          cause: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
   });
 }
 

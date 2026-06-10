@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -504,6 +505,29 @@ describe("agent gateway", () => {
     });
     client.close();
   });
+
+  it("cleans up the listener and event subscription when descriptor writing fails", async () => {
+    const tempDir = await createTempDir();
+    const services = createFakeServices();
+    const blockedPath = join(tempDir, "not-a-directory");
+    const port = await getFreePort();
+    await writeFile(blockedPath, "blocks descriptor directory creation", "utf8");
+
+    await expect(
+      startAgentGateway({
+        descriptorPath: join(blockedPath, "agent-gateway.json"),
+        services,
+        policy: createDefaultAgentPolicy({ createDecisionId: () => "decision-test" }),
+        port,
+        token: "test-token",
+        tokenExpiresAt: "2026-05-11T00:05:00.000Z",
+        now: () => new Date("2026-05-11T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow();
+
+    expect(services.handlerCount()).toBe(0);
+    await expect(listenAndClose(port)).resolves.toBeUndefined();
+  });
 });
 
 async function startTestGateway({
@@ -552,6 +576,7 @@ async function expectAuthenticate(client: AgentTestClient): Promise<void> {
 function createFakeServices(): AgentGatewayTerminalServices & {
   addSession(sessionId: SessionId): TerminalSessionSnapshot;
   emit(event: RendererSessionEvent): void;
+  handlerCount(): number;
   createSession: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["createSession"]>>;
   write: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["write"]>>;
   sendKey: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["sendKey"]>>;
@@ -574,6 +599,7 @@ function createFakeServices(): AgentGatewayTerminalServices & {
   return {
     addSession,
     emit,
+    handlerCount: () => handlers.size,
     listSessions: () => [...sessions.values()],
     createSession: vi.fn<AgentGatewayTerminalServices["createSession"]>((request) => {
       const snapshot = {
@@ -627,6 +653,31 @@ function createFakeServices(): AgentGatewayTerminalServices & {
       return () => handlers.delete(handler);
     },
   };
+}
+
+async function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Could not allocate a local test port.")));
+        return;
+      }
+      server.close((error) => (error ? reject(error) : resolve(address.port)));
+    });
+  });
+}
+
+async function listenAndClose(port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  });
 }
 
 function createSnapshot(sessionId: SessionId): TerminalSessionSnapshot {

@@ -142,18 +142,24 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     });
   });
 
-  await listen(server, options.port ?? 0, host);
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Could not resolve agent gateway server address.");
+  let descriptor: AgentGatewayDescriptor;
+  try {
+    await listen(server, options.port ?? 0, host);
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Could not resolve agent gateway server address.");
+    }
+    descriptor = {
+      url: `ws://${host}:${address.port}`,
+      token,
+      tokenExpiresAt,
+      pid: process.pid,
+    };
+    await writeDescriptor(options.descriptorPath, descriptor);
+  } catch (error: unknown) {
+    await closeRuntime({ ignoreErrors: true });
+    throw error;
   }
-  const descriptor: AgentGatewayDescriptor = {
-    url: `ws://${host}:${address.port}`,
-    token,
-    tokenExpiresAt,
-    pid: process.pid,
-  };
-  await writeDescriptor(options.descriptorPath, descriptor);
 
   return {
     descriptor,
@@ -163,17 +169,30 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
         return;
       }
       stopped = true;
-      unsubscribe();
-      for (const connection of connections.values()) {
-        connection.socket.close();
-      }
-      connections.clear();
+      await closeRuntime({ ignoreErrors: false });
+    },
+  };
+
+  async function closeRuntime({ ignoreErrors }: { ignoreErrors: boolean }): Promise<void> {
+    unsubscribe();
+    for (const connection of connections.values()) {
+      connection.socket.close();
+    }
+    connections.clear();
+
+    if (ignoreErrors) {
+      await Promise.allSettled([
+        closeWebSocketServer(wss),
+        closeHttpServer(server),
+        rm(options.descriptorPath, { force: true }),
+      ]);
+    } else {
       await closeWebSocketServer(wss);
       await closeHttpServer(server);
       await rm(options.descriptorPath, { force: true });
-      emitActivity();
-    },
-  };
+    }
+    emitActivity();
+  }
 
   async function handleMessage(data: RawData, connection: ConnectionContext): Promise<void> {
     lastActiveAt = now().toISOString();
@@ -630,6 +649,10 @@ function listen(server: Server, port: number, host: string): Promise<void> {
 }
 
 function closeHttpServer(server: Server): Promise<void> {
+  if (!server.listening) {
+    return Promise.resolve();
+  }
+
   return new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
