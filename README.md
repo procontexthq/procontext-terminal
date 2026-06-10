@@ -34,12 +34,36 @@ The detailed design lives in [`docs/specs`](docs/specs).
 
 Requirements:
 
-- Node.js
+- Node.js 24
 - pnpm `10.28.2`
 
 ```bash
+nvm use
 pnpm install
 pnpm dev
+```
+
+Linux development machines need Electron runtime libraries in addition to
+JavaScript dependencies. On Ubuntu/Debian, run the bootstrap script before
+starting the app:
+
+```bash
+pnpm setup:linux
+```
+
+For SSH or other headless Linux sessions, use the Xvfb-backed dev command:
+
+```bash
+pnpm dev:linux:headless
+```
+
+See [`docs/development/linux.md`](docs/development/linux.md) for the required
+apt packages, headless behavior, and Electron install troubleshooting.
+
+To verify that Electron's downloaded binary is present:
+
+```bash
+pnpm electron:verify
 ```
 
 Useful checks:
