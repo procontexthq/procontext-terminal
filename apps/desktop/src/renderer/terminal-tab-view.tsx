@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 
 import type { RendererSessionEvent, TerminalConfig, TerminalTheme } from "@terminal/protocol";
 
+import { browserFontFaceSet, waitForFontFaces } from "./font-loading";
 import { createTerminalSession, type TerminalController } from "./terminal-controller";
 import type { TerminalTab } from "./terminal-tabs";
 import type { TerminalUiStatus } from "./terminal-status";
@@ -14,6 +15,7 @@ export function TerminalTabView({
   config,
   active,
   terminalFontFamily,
+  fontLoadDescriptors,
   terminalTheme,
   registerController,
   setStatus,
@@ -26,6 +28,7 @@ export function TerminalTabView({
   config: TerminalConfig;
   active: boolean;
   terminalFontFamily: string;
+  fontLoadDescriptors: readonly string[];
   terminalTheme: TerminalTheme;
   registerController: (tabId: string, controller: TerminalController | null) => void;
   setStatus: (tabId: string, status: TerminalUiStatus) => void;
@@ -47,6 +50,11 @@ export function TerminalTabView({
       }
 
       try {
+        const fontFaceSet = browserFontFaceSet();
+        await waitForFontFaces({
+          descriptors: fontLoadDescriptors,
+          fontFaceSet,
+        });
         const nextController = await createTerminalSession({
           api: window.terminalApi,
           element: terminalElement.current,
@@ -123,6 +131,31 @@ export function TerminalTabView({
       void controller.current?.resize();
     }
   }, [active, terminalFontFamily, terminalTheme]);
+
+  useEffect(() => {
+    let disposed = false;
+    const fontFaceSet = browserFontFaceSet();
+
+    void waitForFontFaces({
+      descriptors: fontLoadDescriptors,
+      fontFaceSet,
+      timeoutMs: Number.POSITIVE_INFINITY,
+    })
+      .then((result) => {
+        if (disposed || result !== "loaded") {
+          return;
+        }
+        controller.current?.setFontFamily(terminalFontFamily);
+        if (active) {
+          void controller.current?.resize();
+        }
+      })
+      .catch(onError);
+
+    return () => {
+      disposed = true;
+    };
+  }, [active, fontLoadDescriptors, onError, terminalFontFamily]);
 
   useEffect(() => {
     if (!active) {

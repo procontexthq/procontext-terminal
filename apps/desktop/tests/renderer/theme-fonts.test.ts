@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { UiThemePreference } from "@terminal/protocol";
 
-import { themeFontSet, themeFonts } from "../../src/renderer/theme-fonts";
+import { themeFontLoadDescriptors, themeFontSet, themeFonts } from "../../src/renderer/theme-fonts";
 
 describe("theme fonts", () => {
   it("defines bundled theme fonts with safe system fallbacks", () => {
@@ -22,5 +22,12 @@ describe("theme fonts", () => {
     expect(themeFonts.gamer.terminalFontFamily).toContain("Share Tech Mono");
     expect(themeFonts.classic.terminalFontFamily).toContain("IBM Plex Mono");
     expect(themeFonts.gamer.terminalBackground).not.toBe(themeFonts.default.terminalBackground);
+  });
+
+  it("defines explicit font loading descriptors for the selected theme", () => {
+    expect(themeFontLoadDescriptors(themeFonts.gamer, 13)).toEqual([
+      '500 12px "Orbitron"',
+      '400 13px "Share Tech Mono"',
+    ]);
   });
 });

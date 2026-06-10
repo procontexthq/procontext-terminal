@@ -90,6 +90,9 @@ The first multi-session milestone supports tabs only.
   launch semantics or terminal transcript data. Theme fonts may change renderer
   chrome and xterm rendering fonts, but only through bundled renderer assets
   with normal system font fallbacks so missing font assets never block startup.
+  The renderer waits briefly for selected theme fonts before xterm's first
+  open/fit and remeasures after late font loading so cold startup and theme
+  switching use stable terminal cell metrics.
   The visible terminal frame, padding, scroll area, and xterm theme background
   must use the same resolved theme background so theme switching does not leave
   mismatched gutter colors.
