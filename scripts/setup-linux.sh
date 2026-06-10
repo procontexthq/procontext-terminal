@@ -58,29 +58,7 @@ if [[ -n "${native_build_jobs}" ]]; then
   export npm_config_jobs="${npm_config_jobs:-${native_build_jobs}}"
 fi
 
-sudo apt-get update
-sudo apt-get install -y \
-  libatk1.0-0 \
-  libatk-bridge2.0-0 \
-  libcups2 \
-  libdrm2 \
-  libgbm1 \
-  libgtk-3-0 \
-  libnss3 \
-  libx11-xcb1 \
-  libxcomposite1 \
-  libxdamage1 \
-  libxfixes3 \
-  libxkbcommon0 \
-  libxrandr2 \
-  libxss1 \
-  xvfb
-
-if apt-cache show libasound2t64 >/dev/null 2>&1; then
-  sudo apt-get install -y libasound2t64
-else
-  sudo apt-get install -y libasound2
-fi
+scripts/install-linux-system-deps.sh
 
 unset ELECTRON_SKIP_BINARY_DOWNLOAD
 pnpm "${pnpm_install_args[@]}"
