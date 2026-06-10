@@ -44,6 +44,7 @@ export type TerminalSessionShutdownResult = {
 };
 
 export type TerminalSessionManagerOptions = {
+  defaultCwd?: () => string;
   onEventHandlerError?: (error: unknown, event: RendererSessionEvent) => void;
   recorder?: TerminalRecorder;
 };
@@ -72,12 +73,13 @@ export class TerminalSessionManager {
   async createSession(request: CreateSessionRequest): Promise<TerminalSessionSnapshot> {
     const sessionId = createSessionId();
     const now = new Date().toISOString();
+    const cwd = request.cwd ?? this.resolveDefaultCwd();
     const record: SessionRecord = {
       snapshot: {
         sessionId,
         state: "creating",
         shell: request.shell ?? "default",
-        cwd: request.cwd ?? process.cwd(),
+        cwd,
         cols: request.cols,
         rows: request.rows,
         title: null,
@@ -95,7 +97,7 @@ export class TerminalSessionManager {
     try {
       const shell = resolveShell({
         shell: request.shell,
-        cwd: request.cwd,
+        cwd,
         env: request.env,
       });
       record.snapshot = {
@@ -168,6 +170,10 @@ export class TerminalSessionManager {
       this.emit({ type: "session.error", payload: terminalError });
       throw terminalError;
     }
+  }
+
+  private resolveDefaultCwd(): string {
+    return this.options.defaultCwd?.() ?? process.cwd();
   }
 
   getSession(request: GetSessionRequest): TerminalSessionSnapshot {

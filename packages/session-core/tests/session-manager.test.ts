@@ -87,6 +87,29 @@ describe("TerminalSessionManager", () => {
     });
   });
 
+  it("uses the configured default cwd when a session request does not specify cwd", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host, { defaultCwd: () => "/Users/tester" });
+
+    const snapshot = await manager.createSession(request);
+
+    expect(snapshot.cwd).toBe("/Users/tester");
+    expect(host.spawnRequests[0]?.shell.cwd).toBe("/Users/tester");
+  });
+
+  it("keeps explicit cwd ahead of the configured default cwd", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host, { defaultCwd: () => "/Users/tester" });
+
+    const snapshot = await manager.createSession({
+      ...request,
+      cwd: "/workspace/project",
+    });
+
+    expect(snapshot.cwd).toBe("/workspace/project");
+    expect(host.spawnRequests[0]?.shell.cwd).toBe("/workspace/project");
+  });
+
   it("broadcasts PTY output with the session id", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);
