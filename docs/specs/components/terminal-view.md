@@ -55,6 +55,10 @@ typing is user input against a closed PTY, not an application failure. Renderer
 resizes after exit can still refit the local terminal view, but they must not
 send resize requests to the closed PTY session.
 
+The exited or failed state must be visible inside the terminal surface. A local
+cursor may remain visible as part of xterm.js buffer rendering, so the renderer
+must add explicit status affordance rather than relying on cursor behavior.
+
 ## Resize Behavior
 
 Resize must update both visible terminal geometry and the PTY session.

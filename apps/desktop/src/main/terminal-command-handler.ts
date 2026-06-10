@@ -238,17 +238,20 @@ async function handleRendererCommand(
       );
     case "settings.get":
       return createRendererCommandSuccess(command.requestId, services.getConfig());
-    case "settings.saveWorkspace": {
+    case "settings.saveUiTheme": {
       const current = services.getConfig();
       try {
         const saved = await services.saveConfig({
           ...current,
-          workspace: command.payload.workspace,
+          ui: {
+            ...current.ui,
+            theme: command.payload.theme,
+          },
         });
         return createRendererCommandSuccess(command.requestId, saved);
       } catch (error: unknown) {
-        throw createTerminalError("settings_save_failed", "Could not save workspace settings.", {
-          operation: "settings.saveWorkspace",
+        throw createTerminalError("settings_save_failed", "Could not save UI theme settings.", {
+          operation: "settings.saveUiTheme",
           cause: errorMessage(error),
         });
       }

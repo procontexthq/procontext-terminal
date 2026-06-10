@@ -21,10 +21,9 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Resolve app data, logs, recordings, and settings paths through platform-aware APIs.
 - Phase 1 persists settings as versioned JSON at the Electron `userData`
   settings path.
-- Phase 2A uses settings schema version 2. The schema adds a `workspace`
-  section containing tab launch cwd, shell, and active tab index. Workspace
-  restore creates fresh PTY sessions; it does not persist process state,
-  terminal output, or shell-generated titles.
+- Phase 2A uses settings schema version 2. The schema persists terminal,
+  shell, recording, and UI theme settings only; human tab layout is runtime UI
+  state and must not be restored from settings on restart.
 
 ## Boundaries
 
@@ -46,14 +45,15 @@ Settings must be validated at load time.
 - Migrations must be versioned and deterministic.
 - Unknown future schema versions must not be silently downgraded.
 - Writes must use a safe temporary-file then rename flow.
-- Invalid or empty workspace tab state must fall back to one default tab while
-  preserving otherwise valid terminal and shell settings.
+- Legacy workspace/tab-layout data from earlier builds must be ignored while
+  preserving otherwise valid terminal, shell, and recording settings.
 
 ## Persisted Data
 
 The settings store can persist:
 
 - App settings.
+- UI theme preference.
 - Shell profiles.
 - Agent gateway settings.
 - Policy settings.

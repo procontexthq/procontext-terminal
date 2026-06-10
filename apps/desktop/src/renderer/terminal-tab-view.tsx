@@ -32,6 +32,7 @@ export function TerminalTabView({
 }): ReactElement {
   const terminalElement = useRef<HTMLDivElement | null>(null);
   const controller = useRef<TerminalController | null>(null);
+  const terminalFinished = tab.status === "exited" || tab.status === "failed";
 
   useEffect(() => {
     let disposed = false;
@@ -121,11 +122,27 @@ export function TerminalTabView({
 
   return (
     <div
-      ref={terminalElement}
-      className={`terminal-host${active ? " is-active" : ""}`}
-      data-testid={active && tab.status === "running" ? "terminal-ready" : "terminal-host"}
-      data-session-id={tab.sessionId ?? ""}
+      className={`terminal-session-view${active ? " is-active" : ""}${
+        terminalFinished ? " is-finished" : ""
+      }`}
       aria-hidden={!active}
-    />
+    >
+      <div
+        ref={terminalElement}
+        className={`terminal-host${active ? " is-active" : ""}`}
+        data-testid={active && tab.status === "running" ? "terminal-ready" : "terminal-host"}
+        data-session-id={tab.sessionId ?? ""}
+      />
+      {active && terminalFinished ? (
+        <div
+          className={`terminal-exit-banner is-${tab.status}`}
+          data-testid="terminal-exit-message"
+          role="status"
+        >
+          {tab.status === "failed" ? "Terminal failed." : "Process exited."}
+          <span>Close this tab or open a new terminal.</span>
+        </div>
+      ) : null}
+    </div>
   );
 }

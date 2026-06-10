@@ -65,8 +65,8 @@ export function createRendererTerminalApi({
     exportRecording: (request) =>
       invokeCommand(invoke, createRendererCommand("recording.export", request)),
     getConfig: () => invokeCommand(invoke, createRendererCommand("settings.get", {})),
-    saveWorkspace: (workspace) =>
-      invokeCommand(invoke, createRendererCommand("settings.saveWorkspace", { workspace })),
+    saveUiTheme: (theme) =>
+      invokeCommand(invoke, createRendererCommand("settings.saveUiTheme", { theme })),
     onTerminalEvent: (handler) =>
       subscribe((payload) => {
         if (isRendererSessionEvent(payload)) {

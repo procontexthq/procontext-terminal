@@ -43,12 +43,8 @@ describe("renderer terminal api", () => {
     );
     await expect(api.reportBell({ sessionId })).resolves.toBe("session.bell");
     await expect(api.startRecording({ sessionId })).resolves.toBe("recording.start");
-    await expect(
-      api.saveWorkspace({
-        tabs: [{ cwd: "/tmp", shell: null }],
-        activeTabIndex: 0,
-      }),
-    ).resolves.toBe("settings.saveWorkspace");
+    await expect(api.saveUiTheme("gamer")).resolves.toBe("settings.saveUiTheme");
+    expect(Object.prototype.hasOwnProperty.call(api, "saveWorkspace")).toBe(false);
 
     expect(invoke).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -64,13 +60,8 @@ describe("renderer terminal api", () => {
     );
     expect(invoke).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "settings.saveWorkspace",
-        payload: {
-          workspace: {
-            tabs: [{ cwd: "/tmp", shell: null }],
-            activeTabIndex: 0,
-          },
-        },
+        type: "settings.saveUiTheme",
+        payload: { theme: "gamer" },
       }),
     );
   });

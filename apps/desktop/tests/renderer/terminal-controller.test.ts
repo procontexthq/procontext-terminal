@@ -118,10 +118,7 @@ function fakeApi(): RendererTerminalApi & {
       },
     },
     shell: { defaultProfile: null, profiles: [] },
-    workspace: {
-      tabs: [{ cwd: null, shell: null }],
-      activeTabIndex: 0,
-    },
+    ui: { theme: "coder" as const },
     recording: {
       state: "disabled" as const,
       redactedPatterns: [],
@@ -191,11 +188,8 @@ function fakeApi(): RendererTerminalApi & {
     ),
     getSession: vi.fn<RendererTerminalApi["getSession"]>(() => Promise.resolve(snapshot)),
     getConfig: vi.fn<RendererTerminalApi["getConfig"]>(() => Promise.resolve(terminalConfig)),
-    saveWorkspace: vi.fn<RendererTerminalApi["saveWorkspace"]>((workspace) =>
-      Promise.resolve({
-        ...terminalConfig,
-        workspace,
-      }),
+    saveUiTheme: vi.fn<RendererTerminalApi["saveUiTheme"]>((theme) =>
+      Promise.resolve({ ...terminalConfig, ui: { theme } }),
     ),
     releaseSession: vi.fn<RendererTerminalApi["releaseSession"]>(() => Promise.resolve()),
     onTerminalEvent: vi.fn<RendererTerminalApi["onTerminalEvent"]>((nextHandler) => {

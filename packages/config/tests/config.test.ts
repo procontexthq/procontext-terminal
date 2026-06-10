@@ -24,9 +24,8 @@ describe("terminal config", () => {
         defaultProfile: null,
         profiles: [],
       },
-      workspace: {
-        tabs: [{ cwd: null, shell: null }],
-        activeTabIndex: 0,
+      ui: {
+        theme: "coder",
       },
       recording: {
         state: "disabled",
@@ -47,12 +46,10 @@ describe("terminal config", () => {
       schemaVersion: 2,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh", profiles: [] },
+      ui: { theme: "coder" },
       recording: { redactedPatterns: ["token"] },
-      workspace: {
-        tabs: [{ cwd: null, shell: null }],
-        activeTabIndex: 0,
-      },
     });
+    expect(parsed.config).not.toHaveProperty("workspace");
   });
 
   it("drops invalid recording redaction patterns without discarding valid settings", () => {
@@ -83,14 +80,12 @@ describe("terminal config", () => {
       schemaVersion: 2,
       terminal: { fontSize: 15 },
       shell: { defaultProfile: "/bin/bash" },
-      workspace: {
-        tabs: [{ cwd: null, shell: null }],
-        activeTabIndex: 0,
-      },
+      ui: { theme: "coder" },
     });
+    expect(parsed.config).not.toHaveProperty("workspace");
   });
 
-  it("falls back to a default workspace for invalid or empty workspace state", () => {
+  it("ignores legacy workspace state without restoring tab layout", () => {
     const parsed = parseTerminalConfig({
       schemaVersion: 2,
       terminal: { fontSize: 14 },
@@ -98,16 +93,14 @@ describe("terminal config", () => {
       workspace: { tabs: [], activeTabIndex: 0 },
     });
 
-    expect(parsed.warnings).toHaveLength(1);
+    expect(parsed.warnings).toHaveLength(0);
     expect(parsed.config).toMatchObject({
       schemaVersion: 2,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh" },
-      workspace: {
-        tabs: [{ cwd: null, shell: null }],
-        activeTabIndex: 0,
-      },
+      ui: { theme: "coder" },
     });
+    expect(parsed.config).not.toHaveProperty("workspace");
   });
 
   it("falls back to defaults for invalid settings", () => {
@@ -142,6 +135,7 @@ describe("terminal config", () => {
 
       const config = {
         ...defaultTerminalConfig(),
+        ui: { theme: "gamer" as const },
         terminal: {
           ...defaultTerminalConfig().terminal,
           fontSize: 16,
@@ -153,6 +147,7 @@ describe("terminal config", () => {
         warnings: [],
       });
       await expect(readFile(settingsPath, "utf8")).resolves.toContain('"schemaVersion": 2');
+      await expect(readFile(settingsPath, "utf8")).resolves.not.toContain('"workspace"');
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

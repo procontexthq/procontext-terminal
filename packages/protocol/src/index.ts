@@ -9,21 +9,12 @@ export type DecisionId = Brand<string, "DecisionId">;
 export type SessionState = "creating" | "running" | "detached" | "exiting" | "exited" | "failed";
 export type InputOrigin = "human" | "agent" | "system";
 export type RecordingState = "disabled" | "enabled";
+export type UiThemePreference = "coder" | "gamer" | "classic";
 
 export type TerminalTheme = {
   background: string;
   foreground: string;
   cursor: string;
-};
-
-export type TerminalWorkspaceTab = {
-  cwd: string | null;
-  shell: string | null;
-};
-
-export type TerminalWorkspaceState = {
-  tabs: TerminalWorkspaceTab[];
-  activeTabIndex: number;
 };
 
 export type TerminalShellProfile = {
@@ -39,6 +30,10 @@ export type RecordingConfig = {
   redactedPatterns: string[];
 };
 
+export type UiConfig = {
+  theme: UiThemePreference;
+};
+
 export type TerminalConfig = {
   schemaVersion: 2;
   terminal: {
@@ -51,7 +46,7 @@ export type TerminalConfig = {
     defaultProfile: string | null;
     profiles: TerminalShellProfile[];
   };
-  workspace: TerminalWorkspaceState;
+  ui: UiConfig;
   recording: RecordingConfig;
 };
 
@@ -368,8 +363,8 @@ export type TerminalRecordingExport = {
   events: TerminalRecordingEvent[];
 };
 
-export type SaveWorkspaceRequest = {
-  workspace: TerminalWorkspaceState;
+export type SaveUiThemeRequest = {
+  theme: UiThemePreference;
 };
 
 export type TerminalSessionSnapshot = {
@@ -447,7 +442,7 @@ export type RendererCommand =
   | { type: "recording.stop"; requestId: RequestId; payload: RecordingControlRequest }
   | { type: "recording.export"; requestId: RequestId; payload: RecordingExportRequest }
   | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> }
-  | { type: "settings.saveWorkspace"; requestId: RequestId; payload: SaveWorkspaceRequest };
+  | { type: "settings.saveUiTheme"; requestId: RequestId; payload: SaveUiThemeRequest };
 
 export type RendererCommandType = RendererCommand["type"];
 
@@ -490,7 +485,7 @@ export type RendererTerminalApi = {
   stopRecording(request: RecordingControlRequest): Promise<void>;
   exportRecording(request: RecordingExportRequest): Promise<TerminalRecordingExport>;
   getConfig(): Promise<TerminalConfig>;
-  saveWorkspace(workspace: TerminalWorkspaceState): Promise<TerminalConfig>;
+  saveUiTheme(theme: UiThemePreference): Promise<TerminalConfig>;
   onTerminalEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe;
   onSessionEvent(sessionId: SessionId, handler: (event: RendererSessionEvent) => void): Unsubscribe;
 };
@@ -530,25 +525,7 @@ export const terminalThemeSchema = z.object({
   cursor: z.string().min(1),
 });
 
-export const terminalWorkspaceTabSchema = z.object({
-  cwd: z.string().min(1).nullable(),
-  shell: z.string().min(1).nullable(),
-});
-
-export const terminalWorkspaceStateSchema = z
-  .object({
-    tabs: z.array(terminalWorkspaceTabSchema).min(1),
-    activeTabIndex: z.number().int().min(0),
-  })
-  .superRefine((workspace, context) => {
-    if (workspace.activeTabIndex >= workspace.tabs.length) {
-      context.addIssue({
-        code: "custom",
-        message: "activeTabIndex must point to an existing workspace tab.",
-        path: ["activeTabIndex"],
-      });
-    }
-  });
+export const uiThemePreferenceSchema = z.enum(["coder", "gamer", "classic"]);
 
 export const terminalShellProfileSchema = z.object({
   id: z.string().min(1),
@@ -563,6 +540,10 @@ export const recordingConfigSchema = z.object({
   redactedPatterns: z.array(z.string()),
 });
 
+export const uiConfigSchema = z.object({
+  theme: uiThemePreferenceSchema,
+});
+
 export const terminalConfigSchema = z.object({
   schemaVersion: z.literal(2),
   terminal: z.object({
@@ -575,7 +556,7 @@ export const terminalConfigSchema = z.object({
     defaultProfile: z.string().min(1).nullable(),
     profiles: z.array(terminalShellProfileSchema),
   }),
-  workspace: terminalWorkspaceStateSchema,
+  ui: uiConfigSchema,
   recording: recordingConfigSchema,
 });
 
@@ -815,8 +796,8 @@ export const terminalRecordingExportSchema = z.object({
   events: z.array(terminalRecordingEventSchema),
 });
 
-export const saveWorkspaceRequestSchema = z.object({
-  workspace: terminalWorkspaceStateSchema,
+export const saveUiThemeRequestSchema = z.object({
+  theme: uiThemePreferenceSchema,
 });
 
 export const agentGatewayDescriptorSchema = z.object({
@@ -1145,9 +1126,9 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     payload: z.object({}),
   }),
   z.object({
-    type: z.literal("settings.saveWorkspace"),
+    type: z.literal("settings.saveUiTheme"),
     requestId: requestIdSchema,
-    payload: saveWorkspaceRequestSchema,
+    payload: saveUiThemeRequestSchema,
   }),
 ]);
 
@@ -1267,8 +1248,8 @@ export function parseTerminalRecordingExport(value: unknown): TerminalRecordingE
   return terminalRecordingExportSchema.parse(value);
 }
 
-export function parseSaveWorkspaceRequest(value: unknown): SaveWorkspaceRequest {
-  return saveWorkspaceRequestSchema.parse(value);
+export function parseSaveUiThemeRequest(value: unknown): SaveUiThemeRequest {
+  return saveUiThemeRequestSchema.parse(value);
 }
 
 export function parseTerminalConfig(value: unknown): TerminalConfig {

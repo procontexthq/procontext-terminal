@@ -71,7 +71,6 @@ const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
 let agentGateway: AgentGateway | null = null;
 let terminalConfig: TerminalConfig = defaultTerminalConfig();
-let terminalConfigPath: string | null = null;
 let quitAfterShutdown = false;
 let suppressNextWindowAllClosedQuit = false;
 
@@ -175,7 +174,7 @@ void app
       logFilePath: resolveMainLogPath(logDirectory),
     });
 
-    terminalConfigPath = resolveTerminalConfigPath(app.getPath("userData"));
+    const terminalConfigPath = resolveTerminalConfigPath(app.getPath("userData"));
     logger.info("settings", "load_started", { settingsPath: terminalConfigPath });
     const loadedConfig = await loadTerminalConfig(terminalConfigPath);
     terminalConfig = loadedConfig.config;
@@ -296,10 +295,7 @@ function resolveLogLevel() {
 }
 
 async function saveConfig(config: TerminalConfig): Promise<TerminalConfig> {
-  if (!terminalConfigPath) {
-    throw new Error("Terminal settings path is not initialized.");
-  }
-
+  const terminalConfigPath = resolveTerminalConfigPath(app.getPath("userData"));
   await saveTerminalConfig(terminalConfigPath, config);
   terminalConfig = config;
   const redactors = [createPatternRedactor(terminalConfig.recording.redactedPatterns)];
@@ -313,8 +309,7 @@ async function saveConfig(config: TerminalConfig): Promise<TerminalConfig> {
   }
   logger.info("settings", "saved", {
     settingsPath: terminalConfigPath,
-    workspaceTabs: config.workspace.tabs.length,
-    activeTabIndex: config.workspace.activeTabIndex,
+    uiTheme: config.ui.theme,
   });
   return terminalConfig;
 }

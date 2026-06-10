@@ -250,44 +250,57 @@ describe("terminal command handler", () => {
     expect(exportRecording).toHaveBeenCalledWith({ sessionId });
   });
 
-  it("handles session release and workspace persistence commands", async () => {
+  it("handles session release and rejects removed workspace persistence commands", async () => {
     const sessionId = createSessionId("session-1");
     const releaseSession = vi.fn(() => Promise.resolve());
-    const saveConfig = vi.fn((config: TerminalConfig) => Promise.resolve(config));
     const result = await handleRendererCommandPayload(
       createRendererCommand("session.release", { sessionId }),
-      services({ releaseSession, saveConfig }),
+      services({ releaseSession }),
     );
 
     expect(result).toMatchObject({ ok: true, value: null });
     expect(releaseSession).toHaveBeenCalledWith({ sessionId });
 
-    const saved = await handleRendererCommandPayload(
-      createRendererCommand("settings.saveWorkspace", {
-        workspace: {
-          tabs: [{ cwd: "/tmp", shell: null }],
-          activeTabIndex: 0,
+    const removed = await handleRendererCommandPayload(
+      {
+        type: "settings.saveWorkspace",
+        requestId: createRequestId("removed-workspace-save"),
+        payload: {
+          workspace: {
+            tabs: [{ cwd: "/tmp", shell: null }],
+            activeTabIndex: 0,
+          },
         },
-      }),
-      services({ releaseSession, saveConfig }),
+      },
+      services({ releaseSession }),
     );
 
-    expect(saved).toMatchObject({
+    expect(removed).toMatchObject({
+      ok: false,
+      error: {
+        type: "invalid_request",
+        operation: "ipc",
+      },
+    });
+  });
+
+  it("persists UI theme settings without restoring workspace layout", async () => {
+    const saveConfig = vi.fn((config: TerminalConfig) => Promise.resolve(config));
+    const result = await handleRendererCommandPayload(
+      createRendererCommand("settings.saveUiTheme", { theme: "gamer" }),
+      services({ saveConfig }),
+    );
+
+    expect(result).toMatchObject({
       ok: true,
       value: {
-        schemaVersion: 2,
-        workspace: {
-          tabs: [{ cwd: "/tmp", shell: null }],
-          activeTabIndex: 0,
-        },
+        ...defaultTerminalConfig(),
+        ui: { theme: "gamer" },
       },
     });
     expect(saveConfig).toHaveBeenCalledWith({
       ...defaultTerminalConfig(),
-      workspace: {
-        tabs: [{ cwd: "/tmp", shell: null }],
-        activeTabIndex: 0,
-      },
+      ui: { theme: "gamer" },
     });
   });
 

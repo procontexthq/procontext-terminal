@@ -19,10 +19,13 @@ import {
   type SessionId,
   type TerminalScreenSnapshot,
   type TerminalSessionSnapshot,
+  type UiThemePreference,
 } from "@terminal/protocol";
 
 const require = createRequire(import.meta.url);
 const electronPath = require("electron") as string;
+const e2eUiTimeoutMs = process.platform === "win32" ? 30000 : 10000;
+const e2eAppLaunchTimeoutMs = process.platform === "linux" && process.env.CI ? 60000 : 30000;
 
 let electronProcess: ChildProcessWithoutNullStreams | null = null;
 let browser: Browser | null = null;
@@ -81,9 +84,55 @@ describe("desktop terminal smoke", () => {
     );
     await typeCommand(page, "exit");
     await waitForStatus(page, "exited");
+    await page.getByTestId("terminal-exit-message").waitFor();
   });
 
-  it("creates, switches, closes, and restores terminal tabs", async () => {
+  it("closes the app window when the final tab close button is accepted", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    await expectTabCount(page, 1);
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await Promise.all([page.waitForEvent("close"), page.getByTestId("close-tab-0").click()]);
+  });
+
+  it("applies persisted UI themes without changing terminal sessions", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    let page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    const sessionId = await activeSessionId(page);
+    await expectTerminalBackgroundConsistent(page);
+
+    await page.getByTestId("theme-select").selectOption("gamer");
+    await page.waitForFunction(
+      () => document.querySelector(".app-shell")?.getAttribute("data-theme") === "gamer",
+      undefined,
+      { timeout: e2eUiTimeoutMs },
+    );
+    await expectTerminalBackgroundConsistent(page);
+    await waitForPersistedUiTheme(userDataDir, "gamer");
+
+    if ((await activeSessionId(page)) !== sessionId) {
+      throw new Error("Changing UI theme should not replace the active terminal session.");
+    }
+
+    await closeRunningApp();
+    browser = await launchApp(userDataDir);
+    page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    await expectTabCount(page, 1);
+    await page.waitForFunction(
+      () => document.querySelector(".app-shell")?.getAttribute("data-theme") === "gamer",
+      undefined,
+      { timeout: e2eUiTimeoutMs },
+    );
+    await expectTerminalBackgroundConsistent(page);
+  });
+
+  it("creates, switches, closes, and does not restore terminal tabs after restart", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
     let page = await firstPage(browser);
@@ -126,20 +175,16 @@ describe("desktop terminal smoke", () => {
     await page.getByTestId("new-tab-button").click();
     await expectTabCount(page, 2);
     await page.getByTestId("terminal-tab-1").click();
-    await waitForPersistedWorkspace(userDataDir, 2, 1);
     await closeRunningApp();
 
     browser = await launchApp(userDataDir);
     page = await firstPage(browser);
     await page.waitForSelector("[data-testid='terminal-ready']");
-    await expectTabCount(page, 2);
-    await page.getByTestId("terminal-tab-1").waitFor();
-    await waitForActiveTab(page, 1);
-
-    await waitForPersistedWorkspace(userDataDir, 2, 1);
+    await expectTabCount(page, 1);
+    await waitForActiveTab(page, 0);
   });
 
-  it("launches restored workspace tabs as fresh sessions", async () => {
+  it("ignores legacy workspace settings when launching fresh sessions", async () => {
     const userDataDir = await createTempUserDataDir();
     const restoredCwd = await mkdtemp(join(tmpdir(), "terminal-restored-cwd-"));
     tempUserDataDirs.push(restoredCwd);
@@ -165,23 +210,44 @@ describe("desktop terminal smoke", () => {
     const page = await firstPage(browser);
     await page.waitForSelector("[data-testid='terminal-ready']");
 
-    await expectTabCount(page, 2);
-    await waitForActiveTab(page, 1);
-    await page.getByTestId("terminal-tab-0").click();
+    await expectTabCount(page, 1);
     await waitForActiveTab(page, 0);
+    const sessionId = await activeSessionId(page);
+
+    const snapshot = await page.evaluate(
+      (activeSessionId) => window.terminalApi.getSession({ sessionId: activeSessionId }),
+      sessionId,
+    );
+    if (snapshot.cwd === restoredCwd) {
+      throw new Error("Legacy workspace cwd should not be restored into the fresh startup tab.");
+    }
+  });
+
+  it("keeps the bottom terminal row visible after scrolling to latest output", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
     await page.waitForSelector("[data-testid='terminal-ready']");
-    const restoredSessionId = await activeSessionId(page);
+    const sessionId = await activeSessionId(page);
 
     await page.evaluate(
-      ({ sessionId: activeSessionId, command }) =>
+      ({ activeSessionId, command }) =>
         window.terminalApi.write({
           sessionId: activeSessionId,
           data: `${command}\r`,
           origin: "agent",
         }),
-      { sessionId: restoredSessionId, command: platformCwdCommand() },
+      { activeSessionId: sessionId, command: platformManyLinesCommand("BOTTOM_ROW", 120) },
     );
-    await waitForRecentOutput(page, restoredSessionId, restoredCwd);
+    await waitForActiveTerminalText(page, "BOTTOM_ROW_120");
+    await page.evaluate(() => {
+      const viewport = document.querySelector(".xterm-viewport");
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    });
+
+    await expectTerminalBottomRowVisible(page);
   });
 
   it("reconciles detached human-created sessions into visible renderer tabs", async () => {
@@ -341,22 +407,16 @@ describe("desktop terminal smoke", () => {
           data: `${command}\r`,
           origin: "agent",
         }),
-      { sessionId, command: platformPrintCommand("BEFORE_SAVE_SECRET_TOKEN") },
+      { sessionId, command: platformPrintCommand("FIRST_SECRET_TOKEN") },
     );
     await page.evaluate(
       (activeSessionId) =>
         window.terminalApi.waitForText({
           sessionId: activeSessionId,
-          text: "BEFORE_SAVE_SECRET_TOKEN",
+          text: "FIRST_SECRET_TOKEN",
           timeoutMs: 5000,
         }),
       sessionId,
-    );
-    await page.evaluate(() =>
-      window.terminalApi.saveWorkspace({
-        tabs: [{ cwd: null, shell: null }],
-        activeTabIndex: 0,
-      }),
     );
     await page.evaluate(
       ({ sessionId: activeSessionId, command }) =>
@@ -365,13 +425,13 @@ describe("desktop terminal smoke", () => {
           data: `${command}\r`,
           origin: "agent",
         }),
-      { sessionId, command: platformPrintCommand("AFTER_SAVE_SECRET_TOKEN") },
+      { sessionId, command: platformPrintCommand("SECOND_SECRET_TOKEN") },
     );
     await page.evaluate(
       (activeSessionId) =>
         window.terminalApi.waitForText({
           sessionId: activeSessionId,
-          text: "AFTER_SAVE_SECRET_TOKEN",
+          text: "SECOND_SECRET_TOKEN",
           timeoutMs: 5000,
         }),
       sessionId,
@@ -386,13 +446,11 @@ describe("desktop terminal smoke", () => {
     );
     const recordingText = JSON.stringify(recording.events);
     if (
-      !recordingText.includes("BEFORE_SAVE_[redacted]") ||
-      !recordingText.includes("AFTER_SAVE_[redacted]") ||
+      !recordingText.includes("FIRST_[redacted]") ||
+      !recordingText.includes("SECOND_[redacted]") ||
       recordingText.includes("SECRET_TOKEN")
     ) {
-      throw new Error(
-        "Expected recording export to survive workspace saves and redact configured transcript patterns.",
-      );
+      throw new Error("Expected recording export to redact configured transcript patterns.");
     }
   });
 
@@ -595,7 +653,7 @@ async function stopElectronProcess(): Promise<void> {
 
 async function connectToElectron(port: number): Promise<Browser> {
   const endpoint = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + e2eAppLaunchTimeoutMs;
   let lastError: unknown;
 
   while (Date.now() < deadline) {
@@ -634,7 +692,7 @@ async function waitForTerminalText(page: Page, text: string): Promise<void> {
   await page.waitForFunction(
     (expected) => document.querySelector(".xterm-rows")?.textContent?.includes(expected),
     text,
-    { timeout: 10000 },
+    { timeout: e2eUiTimeoutMs },
   );
 }
 
@@ -645,7 +703,44 @@ async function waitForActiveTerminalText(page: Page, text: string): Promise<void
         .querySelector("[data-testid='terminal-ready'] .xterm-rows")
         ?.textContent?.includes(expected),
     text,
-    { timeout: 10000 },
+    { timeout: e2eUiTimeoutMs },
+  );
+}
+
+async function expectTerminalBottomRowVisible(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const viewport = document.querySelector(".xterm-viewport");
+      const lastRow = Array.from(document.querySelectorAll(".xterm-rows > div")).at(-1);
+      if (!viewport || !lastRow) {
+        return false;
+      }
+      const viewportRect = viewport.getBoundingClientRect();
+      const rowRect = lastRow.getBoundingClientRect();
+      return rowRect.top >= viewportRect.top && rowRect.bottom <= viewportRect.bottom + 0.5;
+    },
+    undefined,
+    { timeout: e2eUiTimeoutMs },
+  );
+}
+
+async function expectTerminalBackgroundConsistent(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const shell = document.querySelector(".terminal-session-view.is-active");
+      const terminal = document.querySelector(".terminal-host > .xterm");
+      const screen = document.querySelector(".xterm-screen");
+      const viewport = document.querySelector(".xterm-viewport");
+      if (!shell || !terminal || !screen || !viewport) {
+        return false;
+      }
+      const expected = getComputedStyle(shell).backgroundColor;
+      return [terminal, screen, viewport].every(
+        (element) => getComputedStyle(element).backgroundColor === expected,
+      );
+    },
+    undefined,
+    { timeout: e2eUiTimeoutMs },
   );
 }
 
@@ -664,33 +759,6 @@ async function expectTabCount(page: Page, count: number): Promise<void> {
     count,
     { timeout: 10000 },
   );
-}
-
-async function waitForPersistedWorkspace(
-  userDataDir: string,
-  tabCount: number,
-  activeTabIndex: number,
-): Promise<void> {
-  const settingsPath = join(userDataDir, "settings.json");
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    try {
-      const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
-        workspace?: { tabs?: unknown[]; activeTabIndex?: number };
-      };
-      if (
-        settings.workspace?.tabs?.length === tabCount &&
-        settings.workspace.activeTabIndex === activeTabIndex
-      ) {
-        return;
-      }
-    } catch {
-      // Settings may not exist yet; keep polling until the explicit timeout.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-
-  throw new Error("Timed out waiting for persisted workspace state.");
 }
 
 async function waitForAgentDescriptor(userDataDir: string): Promise<AgentGatewayDescriptor> {
@@ -719,24 +787,27 @@ async function waitForActiveTab(page: Page, index: number): Promise<void> {
   );
 }
 
-async function waitForRecentOutput(
-  page: Page,
-  sessionId: SessionId,
-  expectedText: string,
+async function waitForPersistedUiTheme(
+  userDataDir: string,
+  theme: UiThemePreference,
 ): Promise<void> {
-  const expected = normalizeTerminalText(expectedText);
-  await page.waitForFunction(
-    async ({ activeSessionId, expectedOutput }) => {
-      const recentOutput = await window.terminalApi.readRecentOutput({
-        sessionId: activeSessionId,
-        maxBytes: 4000,
-      });
-      const normalizedOutput = recentOutput.data.toLowerCase().replaceAll("\\", "/");
-      return normalizedOutput.includes(expectedOutput);
-    },
-    { activeSessionId: sessionId, expectedOutput: expected },
-    { timeout: 10000 },
-  );
+  const settingsPath = join(userDataDir, "settings.json");
+  const deadline = Date.now() + e2eUiTimeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
+        ui?: { theme?: unknown };
+      };
+      if (settings.ui?.theme === theme) {
+        return;
+      }
+    } catch {
+      // Settings may not exist yet; keep polling until the explicit timeout.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(`Timed out waiting for persisted UI theme ${theme}.`);
 }
 
 async function activeSessionId(page: Page): Promise<SessionId> {
@@ -838,8 +909,10 @@ function platformPrintCommand(text: string): string {
   return process.platform === "win32" ? `echo ${text}` : `printf '${text}\\n'`;
 }
 
-function platformCwdCommand(): string {
-  return process.platform === "win32" ? "cd" : "pwd";
+function platformManyLinesCommand(prefix: string, count: number): string {
+  const quotedPrefix = prefix.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
+  const script = `for (let i = 1; i <= ${count}; i += 1) console.log('${quotedPrefix}_' + i)`;
+  return `node -e ${JSON.stringify(script)}`;
 }
 
 function platformLongRunningCommand(): string {
@@ -895,10 +968,6 @@ function appendElectronOutput(source: string, chunk: Buffer): void {
   if (electronOutput.length > 12000) {
     electronOutput = electronOutput.slice(-12000);
   }
-}
-
-function normalizeTerminalText(text: string): string {
-  return text.toLowerCase().replaceAll("\\", "/");
 }
 
 function delay(ms: number): Promise<void> {
