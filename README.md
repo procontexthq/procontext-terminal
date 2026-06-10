@@ -8,17 +8,6 @@ plain terminal: secure Electron process separation, xterm.js rendering,
 node-pty-backed shells, typed IPC, persisted settings, and end-to-end smoke
 coverage.
 
-## Status
-
-Phase 2 is complete: tabs, workspace restore, internal agent-useful terminal
-observation, waits, detach/attach, recording export, and cross-platform CI are
-implemented on top of the PTY-backed desktop terminal.
-
-Phase 3 is complete: authenticated loopback WebSocket access, explicit policy
-decisions, audit events, descriptor discovery, and visible agent activity are
-implemented and covered by local and CI checks. Later phases add human terminal
-UX polish and packaging.
-
 ## Architecture
 
 - Electron main process owns native capabilities and PTY lifecycle.
@@ -101,6 +90,11 @@ packages/protocol   Shared IPC, event, config, and error contracts
 packages/pty-host   node-pty adapter and shell resolution
 packages/session-core
                     Terminal session lifecycle and routing
+packages/agent-gateway
+                    Local authenticated agent control gateway
+packages/policy-engine
+                    Policy decision points for agent and sensitive actions
+packages/recorder   Append-only recording storage and export
 packages/config     Versioned settings parsing and persistence
 docs/specs          Architecture and implementation specs
 ```
