@@ -35,12 +35,6 @@
 
   <rect x="188" y="296" width="648" height="432" rx="92" fill="url(#screen)" opacity="0.96" />
   <path
-    d="M188 388C188 337.2 229.2 296 280 296H744C794.8 296 836 337.2 836 388V402H188V388Z"
-    fill="#ffffff"
-    opacity="0.06"
-  />
-
-  <path
     d="M300 444L440 532L300 620"
     fill="none"
     stroke="#ffffff"
