@@ -1,19 +1,110 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <rect x="124" y="132" width="776" height="776" rx="172" fill="#22d3ee" />
+  <defs>
+    <linearGradient id="base" x1="178" y1="102" x2="846" y2="922" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#23373f" />
+      <stop offset="0.46" stop-color="#111b21" />
+      <stop offset="1" stop-color="#05080c" />
+    </linearGradient>
+    <linearGradient id="screen" x1="224" y1="242" x2="804" y2="768" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#102328" />
+      <stop offset="1" stop-color="#020707" />
+    </linearGradient>
+    <linearGradient id="chrome" x1="232" y1="242" x2="792" y2="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#25444c" />
+      <stop offset="1" stop-color="#13242b" />
+    </linearGradient>
+    <linearGradient id="accent" x1="290" y1="326" x2="762" y2="664" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22d3ee" />
+      <stop offset="0.52" stop-color="#61f6a0" />
+      <stop offset="1" stop-color="#a7f3d0" />
+    </linearGradient>
+    <radialGradient id="glow" cx="352" cy="238" r="548" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.65" />
+      <stop offset="0.46" stop-color="#22d3ee" stop-opacity="0.16" />
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0" />
+    </radialGradient>
+    <filter id="shadow" x="72" y="72" width="880" height="900" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="36" flood-color="#020509" flood-opacity="0.34" />
+    </filter>
+    <filter
+      id="softGlow"
+      x="184"
+      y="278"
+      width="680"
+      height="456"
+      color-interpolation-filters="sRGB"
+    >
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="108" y="112" width="808" height="808" rx="192" fill="url(#base)" filter="url(#shadow)" />
+  <rect x="108" y="112" width="808" height="808" rx="192" fill="url(#glow)" />
   <path
-    d="M188 306C188 246 236 198 296 198H728C788 198 836 246 836 306V332H188V306Z"
+    d="M184 276C184 214 234 164 296 164H728C790 164 840 214 840 276V306H184V276Z"
     fill="#ffffff"
-    opacity="0.12"
+    opacity="0.035"
   />
+  <rect
+    x="146"
+    y="150"
+    width="732"
+    height="732"
+    rx="162"
+    fill="none"
+    stroke="#22d3ee"
+    stroke-opacity="0.16"
+    stroke-width="8"
+  />
+
+  <rect x="202" y="250" width="620" height="516" rx="92" fill="#020607" opacity="0.42" />
+  <rect
+    x="212"
+    y="238"
+    width="600"
+    height="504"
+    rx="88"
+    fill="url(#screen)"
+    stroke="#3fe7d8"
+    stroke-opacity="0.22"
+    stroke-width="5"
+  />
+  <path
+    d="M212 326V326C212 277.4 251.4 238 300 238H724C772.6 238 812 277.4 812 326V326H212Z"
+    fill="url(#chrome)"
+  />
+  <circle cx="300" cy="284" r="16" fill="#ff5f57" opacity="0.92" />
+  <circle cx="350" cy="284" r="16" fill="#ffbd2e" opacity="0.92" />
+  <circle cx="400" cy="284" r="16" fill="#28c840" opacity="0.92" />
   <text
-    x="512"
-    y="568"
-    fill="#060810"
+    x="738"
+    y="299"
+    fill="#a7f3d0"
     font-family="Inter, Arial, Helvetica, sans-serif"
-    font-size="258"
-    font-weight="850"
-    letter-spacing="-22"
-    text-anchor="middle"
-  >pTx</text>
-  <rect x="390" y="682" width="244" height="32" rx="16" fill="#060810" opacity="0.9" />
+    font-size="54"
+    font-weight="800"
+    text-anchor="end"
+    letter-spacing="-2"
+  >
+    pTx
+  </text>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M342 438L458 520L342 602" stroke="#22d3ee" stroke-opacity="0.34" stroke-width="82" />
+    <path d="M526 608H676" stroke="#22d3ee" stroke-opacity="0.34" stroke-width="82" />
+    <path d="M342 438L458 520L342 602" stroke="#65f6ae" stroke-width="54" />
+    <path d="M526 608H676" stroke="#22d3ee" stroke-width="54" />
+  </g>
+  <rect x="628" y="556" width="48" height="104" rx="22" fill="#d9fff1" opacity="0.88" />
+  <path
+    d="M286 686H738"
+    stroke="#22d3ee"
+    stroke-opacity="0.26"
+    stroke-width="10"
+    stroke-linecap="round"
+  />
 </svg>
