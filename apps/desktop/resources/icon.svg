@@ -1,19 +1,65 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <rect x="124" y="132" width="776" height="776" rx="172" fill="#22d3ee" />
-  <path
-    d="M188 306C188 246 236 198 296 198H728C788 198 836 246 836 306V332H188V306Z"
-    fill="#ffffff"
-    opacity="0.12"
+  <defs>
+    <linearGradient id="base" x1="150" y1="96" x2="872" y2="918" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#20bdd2" />
+      <stop offset="0.54" stop-color="#0a6673" />
+      <stop offset="1" stop-color="#062a31" />
+    </linearGradient>
+    <linearGradient id="screen" x1="188" y1="296" x2="836" y2="728" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#06151a" />
+      <stop offset="1" stop-color="#02070a" />
+    </linearGradient>
+    <radialGradient id="glow" cx="330" cy="168" r="650" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7af7ff" stop-opacity="0.55" />
+      <stop offset="0.46" stop-color="#22d3ee" stop-opacity="0.18" />
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0" />
+    </radialGradient>
+    <filter id="shadow" x="16" y="28" width="992" height="988" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="30" flood-color="#020609" flood-opacity="0.32" />
+    </filter>
+  </defs>
+
+  <rect x="60" y="60" width="888" height="888" rx="212" fill="url(#base)" filter="url(#shadow)" />
+  <rect x="60" y="60" width="888" height="888" rx="212" fill="url(#glow)" />
+  <rect
+    x="100"
+    y="100"
+    width="808"
+    height="808"
+    rx="178"
+    fill="none"
+    stroke="#ffffff"
+    stroke-opacity="0.18"
+    stroke-width="10"
   />
+
+  <rect x="188" y="296" width="648" height="432" rx="92" fill="url(#screen)" opacity="0.96" />
+  <path
+    d="M188 388C188 337.2 229.2 296 280 296H744C794.8 296 836 337.2 836 388V402H188V388Z"
+    fill="#ffffff"
+    opacity="0.06"
+  />
+
+  <path
+    d="M300 444L440 532L300 620"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="56"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <rect x="504" y="608" width="192" height="48" rx="24" fill="#22d3ee" />
   <text
-    x="512"
-    y="568"
-    fill="#060810"
+    x="712"
+    y="412"
+    fill="#ffffff"
+    fill-opacity="0.88"
     font-family="Inter, Arial, Helvetica, sans-serif"
-    font-size="258"
-    font-weight="850"
-    letter-spacing="-22"
+    font-size="84"
+    font-weight="800"
+    letter-spacing="-3"
     text-anchor="middle"
-  >pTx</text>
-  <rect x="390" y="682" width="244" height="32" rx="16" fill="#060810" opacity="0.9" />
+  >
+    pTx
+  </text>
 </svg>
