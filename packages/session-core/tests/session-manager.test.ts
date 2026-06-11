@@ -433,6 +433,27 @@ describe("TerminalSessionManager", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("rejects new writes after kill is accepted while preserving recent output", async () => {
+    const host = new FakePtyHost();
+    host.pty.kill.mockImplementationOnce(() => undefined);
+    const manager = new TerminalSessionManager(host);
+    const snapshot = await manager.createSession(request);
+    host.pty.emitData("before kill");
+
+    await manager.kill({ sessionId: snapshot.sessionId });
+
+    expect(manager.getSession({ sessionId: snapshot.sessionId }).state).toBe("exiting");
+    await expect(
+      manager.write({ sessionId: snapshot.sessionId, data: "echo after-kill\r" }),
+    ).rejects.toMatchObject({
+      type: "session_not_running",
+      sessionId: snapshot.sessionId,
+    });
+    expect(
+      manager.readRecentOutput({ sessionId: snapshot.sessionId, maxBytes: 100 }).data,
+    ).toContain("before kill");
+  });
+
   it("kills running sessions during bounded shutdown and clears session records", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);

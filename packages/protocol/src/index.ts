@@ -293,7 +293,8 @@ export type AgentCommand =
     }
   | { type: "terminal.waitForQuiet"; requestId: RequestId; payload: WaitForQuietRequest }
   | { type: "terminal.waitForPrompt"; requestId: RequestId; payload: WaitForPromptRequest }
-  | { type: "terminal.kill"; requestId: RequestId; payload: KillSessionRequest };
+  | { type: "terminal.kill"; requestId: RequestId; payload: KillSessionRequest }
+  | { type: "terminal.release"; requestId: RequestId; payload: ReleaseSessionRequest };
 
 export type AgentCommandType = AgentCommand["type"];
 
@@ -934,6 +935,11 @@ export const agentCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("terminal.kill"),
     requestId: requestIdSchema,
     payload: killSessionRequestSchema,
+  }),
+  z.object({
+    type: z.literal("terminal.release"),
+    requestId: requestIdSchema,
+    payload: releaseSessionRequestSchema,
   }),
 ]);
 

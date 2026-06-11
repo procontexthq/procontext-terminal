@@ -527,6 +527,31 @@ describe("desktop terminal smoke", () => {
     }
   });
 
+  it("publishes the agent gateway only after the startup terminal is listable", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const descriptor = await waitForAgentDescriptor(userDataDir, { pollMs: 5 });
+    const agent = await E2EAgentClient.connect(descriptor.url);
+
+    try {
+      await expectAgentOk(
+        agent.request(createAgentCommand("agent.authenticate", { token: descriptor.token })),
+      );
+      const sessions = (await expectAgentOk(
+        agent.request(createAgentCommand("terminal.list", {})),
+      )) as TerminalSessionSnapshot[];
+      if (!sessions.some((session) => session.createdBy === "human")) {
+        throw new Error(
+          `Expected startup human session to be visible after descriptor publication: ${JSON.stringify(
+            sessions,
+          )}`,
+        );
+      }
+    } finally {
+      agent.close();
+    }
+  });
+
   it("exposes an authenticated local agent gateway that shares the visible PTY session", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
@@ -873,16 +898,20 @@ async function expectTabCount(page: Page, count: number): Promise<void> {
   );
 }
 
-async function waitForAgentDescriptor(userDataDir: string): Promise<AgentGatewayDescriptor> {
+async function waitForAgentDescriptor(
+  userDataDir: string,
+  options: { pollMs?: number } = {},
+): Promise<AgentGatewayDescriptor> {
   const descriptorPath = join(userDataDir, "agent-gateway.json");
   const deadline = Date.now() + 10000;
+  const pollMs = options.pollMs ?? 100;
   while (Date.now() < deadline) {
     try {
       return parseAgentGatewayDescriptor(
         JSON.parse(await readFile(descriptorPath, "utf8")) as unknown,
       );
     } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
   }
   throw new Error("Timed out waiting for agent gateway descriptor.");

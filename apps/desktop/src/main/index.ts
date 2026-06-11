@@ -19,7 +19,7 @@ import { createDefaultAgentPolicy, createDefaultTerminalPolicy } from "@terminal
 import { NodePtyHost } from "@terminal/pty-host";
 import { FileTerminalRecorder, createPatternRedactor } from "@terminal/recorder";
 import { TerminalSessionManager } from "@terminal/session-core";
-import type { TerminalConfig } from "@terminal/protocol";
+import type { TerminalConfig, TerminalSessionSnapshot } from "@terminal/protocol";
 
 import {
   broadcastRendererEvent,
@@ -252,11 +252,29 @@ void app
       saveConfig,
       screenSnapshotService,
     );
-    await createMainWindow().catch((error: unknown) => {
-      logger.warn("window", "startup_create_failed", {
-        cause: error instanceof Error ? error.message : String(error),
+    let startupWindowCreated = false;
+    await createMainWindow()
+      .then(() => {
+        startupWindowCreated = true;
+      })
+      .catch((error: unknown) => {
+        logger.warn("window", "startup_create_failed", {
+          cause: error instanceof Error ? error.message : String(error),
+        });
       });
-    });
+    if (startupWindowCreated) {
+      const startupSession = await waitForInitialHumanSessionSettled(sessionManager, 5000);
+      if (startupSession.status === "settled") {
+        logger.info("agent", "gateway_startup_session_ready", {
+          sessionId: startupSession.session.sessionId,
+          sessionState: startupSession.session.state,
+        });
+      } else {
+        logger.warn("agent", "gateway_startup_session_timeout", {
+          timeoutMs: startupSession.timeoutMs,
+        });
+      }
+    }
     const agentSessionDisplay = createAgentSessionDisplayService({
       getWindows: () => BrowserWindow.getAllWindows(),
       createWindow: createMainWindow,
@@ -432,8 +450,55 @@ function createAgentGatewayServices(
     waitForScreenChange: (request) => waitForScreenChange(request, waitServices),
     waitForPrompt: (request) => waitForPrompt(request, waitServices),
     kill: (request) => manager.kill(request),
+    release: (request) => manager.releaseSession(request),
     onSessionEvent: (handler) => manager.onSessionEvent(handler),
   };
+}
+
+type InitialHumanSessionWaitResult =
+  | { status: "settled"; session: TerminalSessionSnapshot }
+  | { status: "timed_out"; timeoutMs: number };
+
+function waitForInitialHumanSessionSettled(
+  manager: TerminalSessionManager,
+  timeoutMs: number,
+): Promise<InitialHumanSessionWaitResult> {
+  const settled = findSettledHumanSession(manager);
+  if (settled) {
+    return Promise.resolve({ status: "settled", session: settled });
+  }
+
+  return new Promise((resolve) => {
+    let unsubscribe: (() => void) | null = null;
+    let finished = false;
+    const finish = (result: InitialHumanSessionWaitResult): void => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      unsubscribe?.();
+      clearTimeout(timeout);
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      finish({ status: "timed_out", timeoutMs });
+    }, timeoutMs);
+
+    unsubscribe = manager.onSessionEvent(() => {
+      const nextSettled = findSettledHumanSession(manager);
+      if (nextSettled) {
+        finish({ status: "settled", session: nextSettled });
+      }
+    });
+  });
+}
+
+function findSettledHumanSession(
+  manager: TerminalSessionManager,
+): TerminalSessionSnapshot | undefined {
+  return manager
+    .listSessions()
+    .find((session) => session.createdBy === "human" && session.state !== "creating");
 }
 
 function sanitizeUrlForLog(value: string): string {

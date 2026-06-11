@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,6 +76,24 @@ describe("agent gateway", () => {
     });
   });
 
+  it("rewrites stale descriptors with owner-only permissions on POSIX", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempDir = await createTempDir();
+    const services = createFakeServices();
+    const descriptorPath = resolveAgentGatewayDescriptorPath(tempDir);
+    await writeFile(descriptorPath, "stale descriptor", { encoding: "utf8", mode: 0o644 });
+
+    const gateway = await startTestGateway({
+      descriptorPath,
+      services,
+    });
+
+    expect((await stat(gateway.descriptorPath)).mode & 0o777).toBe(0o600);
+  });
+
   it("authenticates and maps terminal commands to services with agent origin", async () => {
     const tempDir = await createTempDir();
     const services = createFakeServices();
@@ -108,6 +126,7 @@ describe("agent gateway", () => {
       createAgentCommand("terminal.waitForQuiet", { sessionId, quietMs: 1, timeoutMs: 50 }),
     );
     await client.request(createAgentCommand("terminal.kill", { sessionId }));
+    await client.request(createAgentCommand("terminal.release", { sessionId }));
 
     expect(services.createSession).toHaveBeenCalledWith({
       cols: 80,
@@ -125,6 +144,7 @@ describe("agent gateway", () => {
     expect(services.sendKey).toHaveBeenCalledWith({ sessionId, key: "Ctrl+C", origin: "agent" });
     expect(services.resize).toHaveBeenCalledWith({ sessionId, cols: 100, rows: 30 });
     expect(services.kill).toHaveBeenCalledWith({ sessionId });
+    expect(services.release).toHaveBeenCalledWith({ sessionId });
     client.close();
   });
 
@@ -395,6 +415,14 @@ describe("agent gateway", () => {
       error: { type: "policy_denied", sessionId: secondSession },
     });
     expect(services.kill).not.toHaveBeenCalled();
+    const releaseDenied = await client.request(
+      createAgentCommand("terminal.release", { sessionId: secondSession }),
+    );
+    expect(releaseDenied).toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", sessionId: secondSession },
+    });
+    expect(services.release).not.toHaveBeenCalled();
 
     services.emit({
       type: "session.output",
@@ -582,6 +610,7 @@ function createFakeServices(): AgentGatewayTerminalServices & {
   sendKey: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["sendKey"]>>;
   resize: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["resize"]>>;
   kill: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["kill"]>>;
+  release: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["release"]>>;
   captureScreen: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["captureScreen"]>>;
   displaySession: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["displaySession"]>>;
 } {
@@ -648,6 +677,10 @@ function createFakeServices(): AgentGatewayTerminalServices & {
       Promise.resolve({ sessionId, matchedAt: "2026-05-11T00:00:00.000Z" }),
     ),
     kill: vi.fn<AgentGatewayTerminalServices["kill"]>(() => Promise.resolve()),
+    release: vi.fn<AgentGatewayTerminalServices["release"]>(({ sessionId }) => {
+      sessions.delete(sessionId);
+      return Promise.resolve();
+    }),
     onSessionEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe {
       handlers.add(handler);
       return () => handlers.delete(handler);

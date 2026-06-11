@@ -410,7 +410,8 @@ type AgentCommand =
   | { type: "terminal.waitForQuiet"; requestId: RequestId; payload: WaitForQuietPayload }
   | { type: "terminal.waitForScreenChange"; requestId: RequestId; payload: WaitForScreenChangePayload }
   | { type: "terminal.waitForPrompt"; requestId: RequestId; payload: WaitForPromptPayload }
-  | { type: "terminal.kill"; requestId: RequestId; payload: { sessionId: SessionId } };
+  | { type: "terminal.kill"; requestId: RequestId; payload: { sessionId: SessionId } }
+  | { type: "terminal.release"; requestId: RequestId; payload: { sessionId: SessionId } };
 ```
 
 Agent events:
