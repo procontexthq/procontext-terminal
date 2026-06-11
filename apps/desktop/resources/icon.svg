@@ -1,110 +1,65 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="base" x1="178" y1="102" x2="846" y2="922" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#23373f" />
-      <stop offset="0.46" stop-color="#111b21" />
-      <stop offset="1" stop-color="#05080c" />
+    <linearGradient id="base" x1="150" y1="96" x2="872" y2="918" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#20bdd2" />
+      <stop offset="0.54" stop-color="#0a6673" />
+      <stop offset="1" stop-color="#062a31" />
     </linearGradient>
-    <linearGradient id="screen" x1="224" y1="242" x2="804" y2="768" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#102328" />
-      <stop offset="1" stop-color="#020707" />
+    <linearGradient id="screen" x1="188" y1="296" x2="836" y2="728" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#06151a" />
+      <stop offset="1" stop-color="#02070a" />
     </linearGradient>
-    <linearGradient id="chrome" x1="232" y1="242" x2="792" y2="330" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#25444c" />
-      <stop offset="1" stop-color="#13242b" />
-    </linearGradient>
-    <linearGradient id="accent" x1="290" y1="326" x2="762" y2="664" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#22d3ee" />
-      <stop offset="0.52" stop-color="#61f6a0" />
-      <stop offset="1" stop-color="#a7f3d0" />
-    </linearGradient>
-    <radialGradient id="glow" cx="352" cy="238" r="548" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.65" />
-      <stop offset="0.46" stop-color="#22d3ee" stop-opacity="0.16" />
+    <radialGradient id="glow" cx="330" cy="168" r="650" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7af7ff" stop-opacity="0.55" />
+      <stop offset="0.46" stop-color="#22d3ee" stop-opacity="0.18" />
       <stop offset="1" stop-color="#22d3ee" stop-opacity="0" />
     </radialGradient>
-    <filter id="shadow" x="72" y="72" width="880" height="900" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="28" stdDeviation="36" flood-color="#020509" flood-opacity="0.34" />
-    </filter>
-    <filter
-      id="softGlow"
-      x="184"
-      y="278"
-      width="680"
-      height="456"
-      color-interpolation-filters="sRGB"
-    >
-      <feGaussianBlur stdDeviation="12" result="blur" />
-      <feMerge>
-        <feMergeNode in="blur" />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
+    <filter id="shadow" x="16" y="28" width="992" height="988" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="30" flood-color="#020609" flood-opacity="0.32" />
     </filter>
   </defs>
 
-  <rect x="108" y="112" width="808" height="808" rx="192" fill="url(#base)" filter="url(#shadow)" />
-  <rect x="108" y="112" width="808" height="808" rx="192" fill="url(#glow)" />
-  <path
-    d="M184 276C184 214 234 164 296 164H728C790 164 840 214 840 276V306H184V276Z"
-    fill="#ffffff"
-    opacity="0.035"
-  />
+  <rect x="60" y="60" width="888" height="888" rx="212" fill="url(#base)" filter="url(#shadow)" />
+  <rect x="60" y="60" width="888" height="888" rx="212" fill="url(#glow)" />
   <rect
-    x="146"
-    y="150"
-    width="732"
-    height="732"
-    rx="162"
+    x="100"
+    y="100"
+    width="808"
+    height="808"
+    rx="178"
     fill="none"
-    stroke="#22d3ee"
-    stroke-opacity="0.16"
-    stroke-width="8"
+    stroke="#ffffff"
+    stroke-opacity="0.18"
+    stroke-width="10"
   />
 
-  <rect x="202" y="250" width="620" height="516" rx="92" fill="#020607" opacity="0.42" />
-  <rect
-    x="212"
-    y="238"
-    width="600"
-    height="504"
-    rx="88"
-    fill="url(#screen)"
-    stroke="#3fe7d8"
-    stroke-opacity="0.22"
-    stroke-width="5"
-  />
+  <rect x="188" y="296" width="648" height="432" rx="92" fill="url(#screen)" opacity="0.96" />
   <path
-    d="M212 326V326C212 277.4 251.4 238 300 238H724C772.6 238 812 277.4 812 326V326H212Z"
-    fill="url(#chrome)"
+    d="M188 388C188 337.2 229.2 296 280 296H744C794.8 296 836 337.2 836 388V402H188V388Z"
+    fill="#ffffff"
+    opacity="0.06"
   />
-  <circle cx="300" cy="284" r="16" fill="#ff5f57" opacity="0.92" />
-  <circle cx="350" cy="284" r="16" fill="#ffbd2e" opacity="0.92" />
-  <circle cx="400" cy="284" r="16" fill="#28c840" opacity="0.92" />
+
+  <path
+    d="M300 444L440 532L300 620"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="56"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <rect x="504" y="608" width="192" height="48" rx="24" fill="#22d3ee" />
   <text
-    x="738"
-    y="299"
-    fill="#a7f3d0"
+    x="712"
+    y="412"
+    fill="#ffffff"
+    fill-opacity="0.88"
     font-family="Inter, Arial, Helvetica, sans-serif"
-    font-size="54"
+    font-size="84"
     font-weight="800"
-    text-anchor="end"
-    letter-spacing="-2"
+    letter-spacing="-3"
+    text-anchor="middle"
   >
     pTx
   </text>
-
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M342 438L458 520L342 602" stroke="#22d3ee" stroke-opacity="0.34" stroke-width="82" />
-    <path d="M526 608H676" stroke="#22d3ee" stroke-opacity="0.34" stroke-width="82" />
-    <path d="M342 438L458 520L342 602" stroke="#65f6ae" stroke-width="54" />
-    <path d="M526 608H676" stroke="#22d3ee" stroke-width="54" />
-  </g>
-  <rect x="628" y="556" width="48" height="104" rx="22" fill="#d9fff1" opacity="0.88" />
-  <path
-    d="M286 686H738"
-    stroke="#22d3ee"
-    stroke-opacity="0.26"
-    stroke-width="10"
-    stroke-linecap="round"
-  />
 </svg>
