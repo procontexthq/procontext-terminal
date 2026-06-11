@@ -101,6 +101,17 @@ describe("protocol schemas", () => {
         payload: { sessionId, cols: 0, rows: 24 },
       }),
     ).toThrow();
+    expect(
+      parseAgentCommand({
+        type: "terminal.release",
+        requestId,
+        payload: { sessionId },
+      }),
+    ).toEqual({
+      type: "terminal.release",
+      requestId,
+      payload: { sessionId },
+    });
 
     expect(parseAgentCommandResult(createAgentCommandSuccess(requestId, { ok: true }))).toEqual({
       ok: true,

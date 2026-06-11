@@ -117,6 +117,12 @@ process directory only as a last-resort availability fallback.
 - Shutdown terminates running or exiting sessions without leaving orphaned PTY handles.
 - Shutdown must not clear still-active session records when termination fails or times out; keeping the PTY handle available lets callers retry, inspect, or escalate cleanup.
 - Releasing a session is distinct from killing it. Only exited and failed sessions can be released; running or exiting sessions must first be explicitly terminated or allowed to exit.
+- After a kill request is accepted, new writes, key input, paste, mouse input,
+  resize, and interrupt operations must fail while the session is `exiting`,
+  `exited`, or `failed`. Recent output remains readable until the session
+  record is released. A second kill request may be accepted while the session is
+  still `exiting` so callers can retry termination if the process does not exit
+  promptly.
 - Policy-enforcing callers stop sensitive operations before PTY writes,
   lifecycle changes, or recorder control/export side effects.
 - Recorder events are emitted in stable order.

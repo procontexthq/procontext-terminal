@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 
@@ -27,6 +27,7 @@ import {
   type ReadRecentOutputRequest,
   type RecentOutputSnapshot,
   type RendererSessionEvent,
+  type ReleaseSessionRequest,
   type RequestId,
   type ResizeSessionRequest,
   type SendKeyRequest,
@@ -58,6 +59,7 @@ export type AgentGatewayTerminalServices = {
   waitForScreenChange(request: WaitForScreenChangeRequest): Promise<TerminalWaitResult>;
   waitForPrompt(request: WaitForPromptRequest): Promise<TerminalWaitResult>;
   kill(request: KillSessionRequest): Promise<void>;
+  release(request: ReleaseSessionRequest): Promise<void>;
   onSessionEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe;
 };
 
@@ -377,6 +379,12 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       case "terminal.kill":
         await options.services.kill(command.payload);
         return null;
+      case "terminal.release":
+        await options.services.release(command.payload);
+        for (const activeConnection of connections.values()) {
+          activeConnection.ownedSessionIds.delete(command.payload.sessionId);
+        }
+        return null;
     }
   }
 
@@ -469,6 +477,7 @@ function commandSessionId(command: AgentCommand): SessionId | undefined {
     case "terminal.waitForQuiet":
     case "terminal.waitForPrompt":
     case "terminal.kill":
+    case "terminal.release":
       return command.payload.sessionId;
     case "terminal.sendText":
       return command.payload.sessionId;
@@ -533,6 +542,8 @@ function policyOperationForCommand(command: AgentCommand): AgentPolicyOperation 
       };
     case "terminal.kill":
       return { type: command.type, sessionId: command.payload.sessionId, inputKind: "kill" };
+    case "terminal.release":
+      return { type: command.type, sessionId: command.payload.sessionId };
   }
 }
 
@@ -632,10 +643,19 @@ function extractRequestIdFromRaw(data: RawData): RequestId {
 
 async function writeDescriptor(path: string, descriptor: AgentGatewayDescriptor): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(descriptor, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  const temporaryPath = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(descriptor, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    await chmod(temporaryPath, 0o600);
+    await rename(temporaryPath, path);
+    await chmod(path, 0o600);
+  } catch (error: unknown) {
+    await rm(temporaryPath, { force: true });
+    throw error;
+  }
 }
 
 function listen(server: Server, port: number, host: string): Promise<void> {
