@@ -22,7 +22,7 @@ You must:
 2. If you believe a commit is necessary, say "I think we should commit these changes. Should I commit and push them?" and wait for the user's response.
 3. Never mention `co-authored-by` or similar commit metadata. In particular, never mention the tool used to create the commit message or PR.
 4. **Commit by intent.** If something is a coherent unit, such as a feature, fix, refactor, or doc update, it deserves its own commit. Avoid one giant commit for unrelated work and avoid a commit for every tiny edit.
-5. Make a branch for features, refactors, experiments, migrations, or anything that may take more than one sitting.
+5. Make a branch for features, refactors, experiments, migrations, or anything that may take more than one sitting. Do not start branch names with codex/cursor or agent, as the branch is for human organization, not agent attribution. Use descriptive names like `fix/pty-lifecycle`, `feature/tabbed-ui`, or `refactor/session-management`.
 6. Commit only the changes relevant to the current session. If there are other pending changes, ask the user whether you should commit them as well.
 7. **Run all relevant checks before pushing.** Once the TypeScript project is scaffolded, the expected checks are:
    ```bash

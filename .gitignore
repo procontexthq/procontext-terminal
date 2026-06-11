@@ -42,3 +42,4 @@ Thumbs.db
 # Private
 docs/private/
 .obsidian/
+outputs/

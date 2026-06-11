@@ -8,6 +8,68 @@ Follow these rules when writing or reviewing any code in this repository.
 
 ---
 
+## Agent Operating Discipline
+
+### Think before coding
+
+Do not assume. Do not hide confusion. Surface tradeoffs.
+
+Before implementing:
+
+- State assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them. Do not pick silently.
+- If a simpler approach exists, say so.
+- If something is unclear, stop, name what is unclear, and ask.
+
+### Simplicity first
+
+Minimum code that solves the problem. Nothing speculative.
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No configurability that is not needed now or clearly justified by the design.
+- No error handling for impossible scenarios.
+- Error handling must still cover realistic failures, external boundaries, user input, IPC, filesystem, PTY, and process lifecycle failures.
+- If the code is hard to understand because it is trying to handle too much, simplify it.
+
+### Abstractions and configurability
+
+Add structure when it helps. Do not add structure because it might help someday.
+
+- Create an abstraction when it removes real duplication, clarifies ownership, isolates a boundary, or makes future changes easier in a concrete way.
+- Do not create an abstraction only to make the code look flexible.
+- Do not add configuration knobs without a current use case or a documented design reason.
+- When the need for an abstraction becomes clear later, change direction then. Prefer a structured correction over guessing too early.
+- Keep the path adaptable, not fixed.
+
+### Surgical changes
+
+Touch only what you must. Clean up only your own changes.
+
+- Do not improve adjacent code, comments, or formatting unless the task requires it.
+- Do not refactor unrelated code.
+- Match existing style, even if you would write it differently.
+- If you notice unrelated dead code, mention it. Do not delete it unless asked.
+- Remove imports, variables, functions, or tests that your own change made unused.
+
+Every changed line should trace directly to the user request, the spec, or the implementation needed to satisfy them.
+
+### Goal-driven execution
+
+Define success criteria. Loop until verified.
+
+For non-trivial work:
+
+- State what success means before implementing.
+- Prefer tests first for features and bug fixes.
+- For bug fixes, write a regression test when practical.
+- For refactors, verify behavior before and after.
+- Run the relevant project checks after making changes.
+
+Apply this with judgment. Obvious typo fixes, one-line corrections, and mechanical updates do not need a full plan, but they still must stay scoped and verifiable.
+
+---
+
 ## API Design
 
 ### 1. Make correct usage the easiest path
