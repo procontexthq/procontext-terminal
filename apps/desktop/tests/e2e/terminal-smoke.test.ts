@@ -554,6 +554,22 @@ describe("desktop terminal smoke", () => {
 
   it("exposes an authenticated local agent gateway that shares the visible PTY session", async () => {
     const userDataDir = await createTempUserDataDir();
+    await writeFile(
+      join(userDataDir, "settings.json"),
+      `${JSON.stringify(
+        {
+          ...defaultTerminalConfig(),
+          recording: {
+            state: "disabled",
+            redactedPatterns: ["AGENT_SECRET"],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
     browser = await launchApp(userDataDir);
     const page = await firstPage(browser);
     await page.waitForSelector("[data-testid='terminal-ready']");
@@ -583,6 +599,72 @@ describe("desktop terminal smoke", () => {
         undefined,
         { timeout: 10000 },
       );
+
+      await expectAgentOk(
+        agent.request(createAgentCommand("terminal.startRecording", { sessionId })),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.sendMouse", {
+            sessionId,
+            data: "\u001b[M   ",
+          }),
+        ),
+      );
+      await expectAgentOk(agent.request(createAgentCommand("terminal.interrupt", { sessionId })));
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.sendText", {
+            sessionId,
+            text: `${platformLongRunningCommand()}\r`,
+          }),
+        ),
+      );
+      await delay(250);
+      await expectAgentOk(agent.request(createAgentCommand("terminal.interrupt", { sessionId })));
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForQuiet", {
+            sessionId,
+            quietMs: 100,
+            timeoutMs: 5000,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.paste", {
+            sessionId,
+            text: `${platformPrintCommand("PHASE3_AGENT_PASTE_AGENCY_AGENTS")}\r${platformPrintCommand(
+              "PHASE3_AGENT_RECORDING_AGENT_SECRET",
+            )}\r`,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForText", {
+            sessionId,
+            text: "PHASE3_AGENT_RECORDING_AGENT_SECRET",
+            timeoutMs: 10000,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(createAgentCommand("terminal.stopRecording", { sessionId })),
+      );
+      const exportedRecording = await expectAgentOk(
+        agent.request(createAgentCommand("terminal.exportRecording", { sessionId })),
+      );
+      const recordingText = JSON.stringify(exportedRecording);
+      if (
+        !recordingText.includes("PHASE3_AGENT_RECORDING_[redacted]") ||
+        recordingText.includes("AGENT_SECRET")
+      ) {
+        throw new Error(
+          "Expected agent recording export to redact configured transcript patterns.",
+        );
+      }
 
       await typeCommand(page, platformPrintCommand("PHASE3_UI_TO_AGENT"));
       await expectAgentOk(

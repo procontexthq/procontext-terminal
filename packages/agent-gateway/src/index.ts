@@ -23,9 +23,13 @@ import {
   type CaptureScreenRequest,
   type CreateSessionRequest,
   type KillSessionRequest,
+  type MouseInputRequest,
+  type PasteInputRequest,
   type PolicyDenial,
   type ReadRecentOutputRequest,
   type RecentOutputSnapshot,
+  type RecordingControlRequest,
+  type RecordingExportRequest,
   type RendererSessionEvent,
   type ReleaseSessionRequest,
   type RequestId,
@@ -33,6 +37,7 @@ import {
   type SendKeyRequest,
   type SessionId,
   type TerminalError,
+  type TerminalRecordingExport,
   type TerminalScreenSnapshot,
   type TerminalSessionSnapshot,
   type TerminalWaitResult,
@@ -51,6 +56,9 @@ export type AgentGatewayTerminalServices = {
   getSession(request: AttachSessionRequest): TerminalSessionSnapshot;
   write(request: WriteInputRequest): Promise<void>;
   sendKey(request: SendKeyRequest): Promise<void>;
+  paste(request: PasteInputRequest): Promise<void>;
+  sendMouse(request: MouseInputRequest): Promise<void>;
+  interrupt(request: KillSessionRequest): Promise<void>;
   resize(request: ResizeSessionRequest): Promise<void>;
   readRecentOutput(request: ReadRecentOutputRequest): RecentOutputSnapshot;
   captureScreen(request: CaptureScreenRequest): Promise<TerminalScreenSnapshot>;
@@ -60,6 +68,9 @@ export type AgentGatewayTerminalServices = {
   waitForPrompt(request: WaitForPromptRequest): Promise<TerminalWaitResult>;
   kill(request: KillSessionRequest): Promise<void>;
   release(request: ReleaseSessionRequest): Promise<void>;
+  startRecording(request: RecordingControlRequest): Promise<void>;
+  stopRecording(request: RecordingControlRequest): Promise<void>;
+  exportRecording(request: RecordingExportRequest): Promise<TerminalRecordingExport>;
   onSessionEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe;
 };
 
@@ -361,6 +372,23 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
           origin: "agent",
         });
         return null;
+      case "terminal.paste":
+        await options.services.paste({
+          sessionId: command.payload.sessionId,
+          text: command.payload.text,
+          origin: "agent",
+        });
+        return null;
+      case "terminal.sendMouse":
+        await options.services.sendMouse({
+          sessionId: command.payload.sessionId,
+          data: command.payload.data,
+          origin: "agent",
+        });
+        return null;
+      case "terminal.interrupt":
+        await options.services.interrupt(command.payload);
+        return null;
       case "terminal.resize":
         await options.services.resize(command.payload);
         return null;
@@ -385,6 +413,14 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
           activeConnection.ownedSessionIds.delete(command.payload.sessionId);
         }
         return null;
+      case "terminal.startRecording":
+        await options.services.startRecording(command.payload);
+        return null;
+      case "terminal.stopRecording":
+        await options.services.stopRecording(command.payload);
+        return null;
+      case "terminal.exportRecording":
+        return options.services.exportRecording(command.payload);
     }
   }
 
@@ -469,6 +505,9 @@ function commandSessionId(command: AgentCommand): SessionId | undefined {
       return undefined;
     case "terminal.attach":
     case "terminal.sendKey":
+    case "terminal.paste":
+    case "terminal.sendMouse":
+    case "terminal.interrupt":
     case "terminal.resize":
     case "terminal.readRecentOutput":
     case "terminal.captureScreen":
@@ -478,6 +517,9 @@ function commandSessionId(command: AgentCommand): SessionId | undefined {
     case "terminal.waitForPrompt":
     case "terminal.kill":
     case "terminal.release":
+    case "terminal.startRecording":
+    case "terminal.stopRecording":
+    case "terminal.exportRecording":
       return command.payload.sessionId;
     case "terminal.sendText":
       return command.payload.sessionId;
@@ -502,6 +544,12 @@ function policyOperationForCommand(command: AgentCommand): AgentPolicyOperation 
       return { type: command.type, sessionId: command.payload.sessionId, inputKind: "text" };
     case "terminal.sendKey":
       return { type: command.type, sessionId: command.payload.sessionId, inputKind: "key" };
+    case "terminal.paste":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "paste" };
+    case "terminal.sendMouse":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "mouse" };
+    case "terminal.interrupt":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "interrupt" };
     case "terminal.resize":
       return { type: command.type, sessionId: command.payload.sessionId, inputKind: "resize" };
     case "terminal.readRecentOutput":
@@ -544,6 +592,12 @@ function policyOperationForCommand(command: AgentCommand): AgentPolicyOperation 
       return { type: command.type, sessionId: command.payload.sessionId, inputKind: "kill" };
     case "terminal.release":
       return { type: command.type, sessionId: command.payload.sessionId };
+    case "terminal.startRecording":
+      return { type: command.type, sessionId: command.payload.sessionId, recordingKind: "start" };
+    case "terminal.stopRecording":
+      return { type: command.type, sessionId: command.payload.sessionId, recordingKind: "stop" };
+    case "terminal.exportRecording":
+      return { type: command.type, sessionId: command.payload.sessionId, recordingKind: "export" };
   }
 }
 

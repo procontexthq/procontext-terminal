@@ -403,6 +403,9 @@ type AgentCommand =
   | { type: "terminal.attach"; requestId: RequestId; payload: { sessionId: SessionId } }
   | { type: "terminal.sendText"; requestId: RequestId; payload: { sessionId: SessionId; text: string } }
   | { type: "terminal.sendKey"; requestId: RequestId; payload: { sessionId: SessionId; key: TerminalKey } }
+  | { type: "terminal.paste"; requestId: RequestId; payload: { sessionId: SessionId; text: string } }
+  | { type: "terminal.sendMouse"; requestId: RequestId; payload: { sessionId: SessionId; data: string } }
+  | { type: "terminal.interrupt"; requestId: RequestId; payload: { sessionId: SessionId } }
   | { type: "terminal.resize"; requestId: RequestId; payload: { sessionId: SessionId; cols: number; rows: number } }
   | { type: "terminal.captureScreen"; requestId: RequestId; payload: CaptureScreenPayload }
   | { type: "terminal.readRecentOutput"; requestId: RequestId; payload: { sessionId: SessionId; maxBytes: number } }
@@ -411,7 +414,10 @@ type AgentCommand =
   | { type: "terminal.waitForScreenChange"; requestId: RequestId; payload: WaitForScreenChangePayload }
   | { type: "terminal.waitForPrompt"; requestId: RequestId; payload: WaitForPromptPayload }
   | { type: "terminal.kill"; requestId: RequestId; payload: { sessionId: SessionId } }
-  | { type: "terminal.release"; requestId: RequestId; payload: { sessionId: SessionId } };
+  | { type: "terminal.release"; requestId: RequestId; payload: { sessionId: SessionId } }
+  | { type: "terminal.startRecording"; requestId: RequestId; payload: { sessionId: SessionId } }
+  | { type: "terminal.stopRecording"; requestId: RequestId; payload: { sessionId: SessionId } }
+  | { type: "terminal.exportRecording"; requestId: RequestId; payload: { sessionId: SessionId } };
 ```
 
 Agent events:

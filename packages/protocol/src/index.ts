@@ -278,6 +278,9 @@ export type AgentCommand =
       payload: { sessionId: SessionId; text: string };
     }
   | { type: "terminal.sendKey"; requestId: RequestId; payload: SendKeyRequest }
+  | { type: "terminal.paste"; requestId: RequestId; payload: PasteInputRequest }
+  | { type: "terminal.sendMouse"; requestId: RequestId; payload: MouseInputRequest }
+  | { type: "terminal.interrupt"; requestId: RequestId; payload: KillSessionRequest }
   | { type: "terminal.resize"; requestId: RequestId; payload: ResizeSessionRequest }
   | {
       type: "terminal.readRecentOutput";
@@ -294,7 +297,10 @@ export type AgentCommand =
   | { type: "terminal.waitForQuiet"; requestId: RequestId; payload: WaitForQuietRequest }
   | { type: "terminal.waitForPrompt"; requestId: RequestId; payload: WaitForPromptRequest }
   | { type: "terminal.kill"; requestId: RequestId; payload: KillSessionRequest }
-  | { type: "terminal.release"; requestId: RequestId; payload: ReleaseSessionRequest };
+  | { type: "terminal.release"; requestId: RequestId; payload: ReleaseSessionRequest }
+  | { type: "terminal.startRecording"; requestId: RequestId; payload: RecordingControlRequest }
+  | { type: "terminal.stopRecording"; requestId: RequestId; payload: RecordingControlRequest }
+  | { type: "terminal.exportRecording"; requestId: RequestId; payload: RecordingExportRequest };
 
 export type AgentCommandType = AgentCommand["type"];
 
@@ -897,6 +903,21 @@ export const agentCommandSchema = z.discriminatedUnion("type", [
     payload: sendKeyRequestSchema,
   }),
   z.object({
+    type: z.literal("terminal.paste"),
+    requestId: requestIdSchema,
+    payload: pasteInputRequestSchema,
+  }),
+  z.object({
+    type: z.literal("terminal.sendMouse"),
+    requestId: requestIdSchema,
+    payload: mouseInputRequestSchema,
+  }),
+  z.object({
+    type: z.literal("terminal.interrupt"),
+    requestId: requestIdSchema,
+    payload: killSessionRequestSchema,
+  }),
+  z.object({
     type: z.literal("terminal.resize"),
     requestId: requestIdSchema,
     payload: resizeSessionRequestSchema,
@@ -940,6 +961,21 @@ export const agentCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("terminal.release"),
     requestId: requestIdSchema,
     payload: releaseSessionRequestSchema,
+  }),
+  z.object({
+    type: z.literal("terminal.startRecording"),
+    requestId: requestIdSchema,
+    payload: recordingControlRequestSchema,
+  }),
+  z.object({
+    type: z.literal("terminal.stopRecording"),
+    requestId: requestIdSchema,
+    payload: recordingControlRequestSchema,
+  }),
+  z.object({
+    type: z.literal("terminal.exportRecording"),
+    requestId: requestIdSchema,
+    payload: recordingExportRequestSchema,
   }),
 ]);
 

@@ -31,14 +31,14 @@ boundaries.
 | --- | --- | --- | --- | --- | --- |
 | ACT-001 | P1 | Fixed pending review | Startup session listing is racy | Main startup, renderer startup, session manager, gateway readiness | Can be handled independently from API shape work. |
 | ACT-002 | P1 | Partially fixed pending review | Agent cannot release or close session records | Protocol, agent gateway, session manager, renderer tabs | `terminal.release` is fixed; visible tab close remains with ACT-006. |
-| ACT-003 | P1 | Open | Agent cannot drive mouse-enabled TUIs | Protocol, agent gateway input routing, terminal view/xterm input model | Can be handled independently after input contract is chosen. |
-| ACT-004 | P2 | Open | Agent lacks first-class paste semantics | Protocol, gateway, input router, PTY/session input | Can be handled independently from mouse input. |
-| ACT-005 | P2 | Open | Agent lacks explicit interrupt command | Protocol, gateway, session manager/input helper | Small, self-contained if scoped to Ctrl+C first. |
+| ACT-003 | P1 | Fixed pending review | Agent cannot drive mouse-enabled TUIs | Protocol, agent gateway input routing, terminal view/xterm input model | V1 exposes raw terminal mouse bytes. Structured mouse input remains future work. |
+| ACT-004 | P2 | Fixed pending review | Agent lacks first-class paste semantics | Protocol, gateway, input router, PTY/session input | V1 exposes a plain-text paste alias; bracketed paste remains future work. |
+| ACT-005 | P2 | Fixed pending review | Agent lacks explicit interrupt command | Protocol, gateway, session manager/input helper | V1 maps interrupt to Ctrl+C. |
 | ACT-006 | P2 | Open | Agent cannot focus/select/open visible terminal surfaces | Agent display service, renderer tabs, window manager, gateway | Coordinate with ACT-002 tab close/release behavior. |
-| ACT-007 | P2 | Open | Recording is not exposed through the public agent gateway | Protocol, gateway, recorder, session manager | Can be handled independently from terminal input work. |
+| ACT-007 | P2 | Fixed pending review | Recording is not exposed through the public agent gateway | Protocol, gateway, recorder, session manager | Agent can start, stop, and export recordings for owned sessions. |
 | ACT-008 | P2 | Fixed pending review | Kill/write/capture/wait races are survivable but underspecified | Specs, protocol errors, gateway/session manager tests | Post-kill write/recent-output behavior is specified and tested. |
 | ACT-009 | P3 | Needs triage | Mixed human/agent Computer Use simulation was inconclusive | Accessibility/test tooling, terminal input focus | Testability issue; not yet proven product defect. |
-| ACT-010 | P3 | Needs triage | macOS `open` launch with isolated user data hung during test setup | Packaging, app startup, renderer load, gateway startup | Inconclusive; direct executable launch worked. |
+| ACT-010 | P3 | Triaged pending review | macOS `open` launch with isolated user data hung during test setup | Packaging, app startup, renderer load, gateway startup | Direct executable launch remains the supported automated test path; `open` is a manual triage path. |
 
 ## Reproduction Setup
 
@@ -263,16 +263,12 @@ support is not enough.
 
 ### Expected Behavior
 
-The agent API should expose a documented mouse operation. The contract should
-decide whether agents send:
-
-- Structured coordinates/buttons/modifiers that the app encodes according to
-  the terminal mode, or
-- Raw terminal mouse escape sequences, or
-- A renderer-mediated mouse event that reuses xterm.js behavior.
-
-The safer long-term direction is structured mouse input because it can be
-validated and audited without logging terminal payloads.
+The agent API should expose `terminal.sendMouse` with raw terminal mouse bytes
+in v1. This matches the current session-core input path and lets agents
+exercise mouse-aware TUIs without requiring renderer state or a terminal mode
+encoder. Structured coordinates/buttons/modifiers remain the safer long-term
+direction because they can be validated and audited without logging terminal
+payloads.
 
 ### Suggested Implementation Areas
 
@@ -287,15 +283,16 @@ validated and audited without logging terminal payloads.
 
 - Mouse-enabled TUI can opt into mouse tracking and receive an agent-generated
   mouse event.
-- Invalid coordinates/buttons are rejected before mutation.
+- The raw mouse payload is schema-validated before mutation.
 - Mouse input is policy-checkable and audited without logging sensitive payloads.
-- Headless behavior is documented if mouse input requires renderer state.
+- Headless behavior works the same as other PTY writes because v1 does not
+  require renderer state.
 
 ### Suggested Tests
 
 - Unit/protocol tests for command validation.
-- Integration test with a small PTY program that enables mouse tracking and
-  prints received mouse bytes.
+- Integration test or e2e smoke proving raw mouse bytes pass through the agent
+  gateway without requiring renderer state.
 - E2E test that uses an actual TUI only if stable and available on CI.
 
 ## ACT-004: Agent Lacks First-Class Paste Semantics
@@ -331,15 +328,10 @@ partial lines in the wrong mode.
 
 ### Expected Behavior
 
-Expose a paste operation that preserves paste intent. The implementation should
-decide whether it:
-
-- Wraps content in bracketed paste sequences when the terminal has enabled
-  bracketed paste, or
-- Always uses bracketed paste for paste operations, or
-- Lets the caller choose a paste mode.
-
-The behavior must be documented because it affects shells and editors.
+Expose `terminal.paste` as a semantic convenience over text input in v1. It
+writes the supplied text exactly as provided and does not add bracketed paste
+markers. Bracketed paste remains future work if the product needs editor-aware
+paste behavior.
 
 ### Suggested Implementation Areas
 
@@ -354,16 +346,16 @@ The behavior must be documented because it affects shells and editors.
 - `terminal.paste` exists and is validated.
 - Multi-line pasted text reaches the PTY without being split into separate
   agent commands.
-- Bracketed paste behavior is tested and documented.
+- Plain-text v1 behavior is tested and documented.
 - Policy/audit can distinguish paste from normal typing without logging pasted
   content.
 
 ### Suggested Tests
 
-- PTY test that enables bracketed paste and verifies paste start/end markers.
+- Gateway/e2e test proving multi-line paste reaches the PTY as one agent
+  command.
 - Gateway test proving `terminal.paste` is policy-checked as paste input, not
   plain text input.
-- Regression test for large paste payload bounds.
 
 ## ACT-005: Agent Lacks Explicit Interrupt Command
 
@@ -523,6 +515,10 @@ Expose recording operations in the agent gateway with explicit policy checks:
 
 Recording payloads must remain distinct from diagnostic logs and should respect
 configured redaction.
+
+V1 uses agent command names `terminal.startRecording`,
+`terminal.stopRecording`, and `terminal.exportRecording`. Export returns the
+existing schema-versioned recorder envelope with redacted events.
 
 ### Suggested Implementation Areas
 
@@ -738,6 +734,16 @@ Both normal packaged launch paths should either:
 - Package smoke test that launches via the supported macOS user launch path.
 - Test that descriptor appears under the intended `userData` path.
 - Log assertion that startup does not stop after `window create_requested`.
+
+### Current Triage Decision
+
+Automated packaged smoke tests should continue launching the packaged
+executable directly with `--user-data-dir`. The macOS `open -n ... --args`
+path is not a guaranteed supported automation path until a focused manual
+triage proves it is a product bug rather than app identity, argument handling,
+or duplicate bundle state. Manual triage should capture the process command
+line, descriptor path, `main.log`, renderer responsiveness state, and whether
+the same app bundle works through direct `Contents/MacOS/...` execution.
 
 ## Known Strong Behaviors From The Break Run
 

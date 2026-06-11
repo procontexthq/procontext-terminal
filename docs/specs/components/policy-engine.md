@@ -75,7 +75,7 @@ type TerminalPolicyOperation = {
   sessionId?: SessionId;
   cwd?: string;
   shell?: string;
-  inputKind?: "text" | "key" | "resize" | "kill";
+  inputKind?: "text" | "key" | "paste" | "mouse" | "interrupt" | "resize" | "kill";
   observationKind?:
     | "list"
     | "get"

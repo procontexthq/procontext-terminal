@@ -441,6 +441,9 @@ function createAgentGatewayServices(
     getSession: (request) => manager.getSession(request),
     write: (request) => manager.write(request),
     sendKey: (request) => manager.sendKey(request),
+    paste: (request) => manager.paste(request),
+    sendMouse: (request) => manager.sendMouse(request),
+    interrupt: (request) => manager.interrupt(request),
     resize: (request) => manager.resize(request),
     readRecentOutput: (request) => manager.readRecentOutput(request),
     captureScreen: (request) =>
@@ -451,6 +454,9 @@ function createAgentGatewayServices(
     waitForPrompt: (request) => waitForPrompt(request, waitServices),
     kill: (request) => manager.kill(request),
     release: (request) => manager.releaseSession(request),
+    startRecording: (request) => manager.startRecording(request),
+    stopRecording: (request) => manager.stopRecording(request),
+    exportRecording: (request) => manager.exportRecording(request),
     onSessionEvent: (handler) => manager.onSessionEvent(handler),
   };
 }
