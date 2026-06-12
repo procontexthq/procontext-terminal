@@ -605,34 +605,6 @@ describe("desktop terminal smoke", () => {
       );
       await expectAgentOk(
         agent.request(
-          createAgentCommand("terminal.sendMouse", {
-            sessionId,
-            data: "\u001b[M   ",
-          }),
-        ),
-      );
-      await expectAgentOk(agent.request(createAgentCommand("terminal.interrupt", { sessionId })));
-      await expectAgentOk(
-        agent.request(
-          createAgentCommand("terminal.sendText", {
-            sessionId,
-            text: `${platformLongRunningCommand()}\r`,
-          }),
-        ),
-      );
-      await delay(250);
-      await expectAgentOk(agent.request(createAgentCommand("terminal.interrupt", { sessionId })));
-      await expectAgentOk(
-        agent.request(
-          createAgentCommand("terminal.waitForQuiet", {
-            sessionId,
-            quietMs: 100,
-            timeoutMs: 5000,
-          }),
-        ),
-      );
-      await expectAgentOk(
-        agent.request(
           createAgentCommand("terminal.paste", {
             sessionId,
             text: `${platformPrintCommand("PHASE3_AGENT_PASTE_AGENCY_AGENTS")}\r${platformPrintCommand(
@@ -665,6 +637,69 @@ describe("desktop terminal smoke", () => {
           "Expected agent recording export to redact configured transcript patterns.",
         );
       }
+
+      const interruptReadyText = "PHASE3_AGENT_INTERRUPT_READY";
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.sendText", {
+            sessionId,
+            text: `${interruptFixtureCommand(interruptReadyText)}\r`,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForText", {
+            sessionId,
+            text: interruptReadyText,
+            timeoutMs: 10000,
+          }),
+        ),
+      );
+      await expectAgentOk(agent.request(createAgentCommand("terminal.interrupt", { sessionId })));
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForPrompt", {
+            sessionId,
+            timeoutMs: 10000,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.sendText", {
+            sessionId,
+            text: `${platformPrintCommand("PHASE3_AGENT_AFTER_INTERRUPT")}\r`,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForText", {
+            sessionId,
+            text: "PHASE3_AGENT_AFTER_INTERRUPT",
+            timeoutMs: 10000,
+          }),
+        ),
+      );
+
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.sendMouse", {
+            sessionId,
+            data: "\u001b[M   ",
+          }),
+        ),
+      );
+      await expectAgentOk(agent.request(createAgentCommand("terminal.interrupt", { sessionId })));
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForPrompt", {
+            sessionId,
+            timeoutMs: 10000,
+          }),
+        ),
+      );
 
       await typeCommand(page, platformPrintCommand("PHASE3_UI_TO_AGENT"));
       await expectAgentOk(
@@ -1145,6 +1180,11 @@ function platformPrintCommand(text: string): string {
 function platformManyLinesCommand(prefix: string, count: number): string {
   const quotedPrefix = prefix.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
   const script = `for (let i = 1; i <= ${count}; i += 1) console.log('${quotedPrefix}_' + i)`;
+  return `node -e ${JSON.stringify(script)}`;
+}
+
+function interruptFixtureCommand(marker: string): string {
+  const script = `console.log(${JSON.stringify(marker)}); setTimeout(() => {}, 5000)`;
   return `node -e ${JSON.stringify(script)}`;
 }
 
