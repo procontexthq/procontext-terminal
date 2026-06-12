@@ -55,6 +55,7 @@ describe("desktop terminal smoke", () => {
     await expectTabCount(page, 1);
     const sessionId = await activeSessionId(page);
     await expectSessionCwd(page, sessionId, homedir());
+    await waitForShellPrompt(page, sessionId);
 
     await typeCommand(page, platformPrintCommand("PHASE1_E2E_OK"));
     await waitForTerminalText(page, "PHASE1_E2E_OK");
@@ -66,6 +67,7 @@ describe("desktop terminal smoke", () => {
         (command) => navigator.clipboard.writeText(command),
         platformPrintCommand("PHASE1_PASTE_OK"),
       );
+      await focusActiveTerminal(page);
       await page.keyboard.press(pasteShortcut());
       await page.keyboard.press("Enter");
     }
@@ -1007,6 +1009,17 @@ async function waitForStatus(page: Page, status: string): Promise<void> {
   );
 }
 
+async function waitForShellPrompt(page: Page, sessionId: SessionId): Promise<void> {
+  await page.evaluate(
+    (activeSessionId) =>
+      window.terminalApi.waitForPrompt({
+        sessionId: activeSessionId,
+        timeoutMs: 10000,
+      }),
+    sessionId,
+  );
+}
+
 async function expectTabCount(page: Page, count: number): Promise<void> {
   await page.waitForFunction(
     (expected) => document.querySelectorAll("[data-terminal-tab='true']").length === expected,
@@ -1107,6 +1120,27 @@ async function captureScreen(page: Page, sessionId: SessionId): Promise<Terminal
   );
 }
 
+async function focusActiveTerminal(page: Page): Promise<void> {
+  await page.locator("[data-testid='terminal-ready'] .xterm-helper-textarea").waitFor({
+    state: "attached",
+    timeout: e2eUiTimeoutMs,
+  });
+  await page.locator("[data-testid='terminal-ready'] .xterm-screen").click();
+  await page.waitForFunction(
+    () => {
+      const host = document.querySelector("[data-testid='terminal-ready']");
+      const activeElement = document.activeElement;
+      return (
+        activeElement instanceof HTMLTextAreaElement &&
+        activeElement.classList.contains("xterm-helper-textarea") &&
+        Boolean(host?.contains(activeElement))
+      );
+    },
+    undefined,
+    { timeout: e2eUiTimeoutMs },
+  );
+}
+
 async function waitForAlternateScreenSnapshot(
   page: Page,
   sessionId: SessionId,
@@ -1137,7 +1171,7 @@ async function typeCommand(page: Page, command: string): Promise<void> {
     return;
   }
 
-  await page.locator("[data-testid='terminal-ready'] .xterm").click();
+  await focusActiveTerminal(page);
   await page.keyboard.type(command);
   await page.keyboard.press("Enter");
 }
@@ -1156,6 +1190,7 @@ async function interruptCommand(page: Page, sessionId: SessionId): Promise<void>
     return;
   }
 
+  await focusActiveTerminal(page);
   await page.keyboard.press("Control+C");
 }
 
