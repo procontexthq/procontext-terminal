@@ -55,6 +55,7 @@ describe("desktop terminal smoke", () => {
     await expectTabCount(page, 1);
     const sessionId = await activeSessionId(page);
     await expectSessionCwd(page, sessionId, homedir());
+    await waitForShellPrompt(page, sessionId);
 
     await typeCommand(page, platformPrintCommand("PHASE1_E2E_OK"));
     await waitForTerminalText(page, "PHASE1_E2E_OK");
@@ -66,6 +67,7 @@ describe("desktop terminal smoke", () => {
         (command) => navigator.clipboard.writeText(command),
         platformPrintCommand("PHASE1_PASTE_OK"),
       );
+      await focusActiveTerminal(page);
       await page.keyboard.press(pasteShortcut());
       await page.keyboard.press("Enter");
     }
@@ -527,8 +529,49 @@ describe("desktop terminal smoke", () => {
     }
   });
 
+  it("publishes the agent gateway only after the startup terminal is listable", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const descriptor = await waitForAgentDescriptor(userDataDir, { pollMs: 5 });
+    const agent = await E2EAgentClient.connect(descriptor.url);
+
+    try {
+      await expectAgentOk(
+        agent.request(createAgentCommand("agent.authenticate", { token: descriptor.token })),
+      );
+      const sessions = (await expectAgentOk(
+        agent.request(createAgentCommand("terminal.list", {})),
+      )) as TerminalSessionSnapshot[];
+      if (!sessions.some((session) => session.createdBy === "human")) {
+        throw new Error(
+          `Expected startup human session to be visible after descriptor publication: ${JSON.stringify(
+            sessions,
+          )}`,
+        );
+      }
+    } finally {
+      agent.close();
+    }
+  });
+
   it("exposes an authenticated local agent gateway that shares the visible PTY session", async () => {
     const userDataDir = await createTempUserDataDir();
+    await writeFile(
+      join(userDataDir, "settings.json"),
+      `${JSON.stringify(
+        {
+          ...defaultTerminalConfig(),
+          recording: {
+            state: "disabled",
+            redactedPatterns: ["AGENT_SECRET"],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
     browser = await launchApp(userDataDir);
     const page = await firstPage(browser);
     await page.waitForSelector("[data-testid='terminal-ready']");
@@ -557,6 +600,107 @@ describe("desktop terminal smoke", () => {
           document.querySelector("[data-testid='agent-activity']")?.textContent === "Agent active",
         undefined,
         { timeout: 10000 },
+      );
+
+      await expectAgentOk(
+        agent.request(createAgentCommand("terminal.startRecording", { sessionId })),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.paste", {
+            sessionId,
+            text: `${platformPrintCommand("PHASE3_AGENT_PASTE_AGENCY_AGENTS")}\r${platformPrintCommand(
+              "PHASE3_AGENT_RECORDING_AGENT_SECRET",
+            )}\r`,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForText", {
+            sessionId,
+            text: "PHASE3_AGENT_RECORDING_AGENT_SECRET",
+            timeoutMs: 10000,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(createAgentCommand("terminal.stopRecording", { sessionId })),
+      );
+      const exportedRecording = await expectAgentOk(
+        agent.request(createAgentCommand("terminal.exportRecording", { sessionId })),
+      );
+      const recordingText = JSON.stringify(exportedRecording);
+      if (
+        !recordingText.includes("PHASE3_AGENT_RECORDING_[redacted]") ||
+        recordingText.includes("AGENT_SECRET")
+      ) {
+        throw new Error(
+          "Expected agent recording export to redact configured transcript patterns.",
+        );
+      }
+
+      const interruptReadyText = "PHASE3_AGENT_INTERRUPT_READY";
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.sendText", {
+            sessionId,
+            text: `${interruptFixtureCommand(interruptReadyText)}\r`,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForText", {
+            sessionId,
+            text: interruptReadyText,
+            timeoutMs: 10000,
+          }),
+        ),
+      );
+      await expectAgentOk(agent.request(createAgentCommand("terminal.interrupt", { sessionId })));
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForPrompt", {
+            sessionId,
+            timeoutMs: 10000,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.sendText", {
+            sessionId,
+            text: `${platformPrintCommand("PHASE3_AGENT_AFTER_INTERRUPT")}\r`,
+          }),
+        ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForText", {
+            sessionId,
+            text: "PHASE3_AGENT_AFTER_INTERRUPT",
+            timeoutMs: 10000,
+          }),
+        ),
+      );
+
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.sendMouse", {
+            sessionId,
+            data: "\u001b[M   ",
+          }),
+        ),
+      );
+      await expectAgentOk(agent.request(createAgentCommand("terminal.interrupt", { sessionId })));
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.waitForPrompt", {
+            sessionId,
+            timeoutMs: 10000,
+          }),
+        ),
       );
 
       await typeCommand(page, platformPrintCommand("PHASE3_UI_TO_AGENT"));
@@ -865,6 +1009,17 @@ async function waitForStatus(page: Page, status: string): Promise<void> {
   );
 }
 
+async function waitForShellPrompt(page: Page, sessionId: SessionId): Promise<void> {
+  await page.evaluate(
+    (activeSessionId) =>
+      window.terminalApi.waitForPrompt({
+        sessionId: activeSessionId,
+        timeoutMs: 10000,
+      }),
+    sessionId,
+  );
+}
+
 async function expectTabCount(page: Page, count: number): Promise<void> {
   await page.waitForFunction(
     (expected) => document.querySelectorAll("[data-terminal-tab='true']").length === expected,
@@ -873,16 +1028,20 @@ async function expectTabCount(page: Page, count: number): Promise<void> {
   );
 }
 
-async function waitForAgentDescriptor(userDataDir: string): Promise<AgentGatewayDescriptor> {
+async function waitForAgentDescriptor(
+  userDataDir: string,
+  options: { pollMs?: number } = {},
+): Promise<AgentGatewayDescriptor> {
   const descriptorPath = join(userDataDir, "agent-gateway.json");
   const deadline = Date.now() + 10000;
+  const pollMs = options.pollMs ?? 100;
   while (Date.now() < deadline) {
     try {
       return parseAgentGatewayDescriptor(
         JSON.parse(await readFile(descriptorPath, "utf8")) as unknown,
       );
     } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
   }
   throw new Error("Timed out waiting for agent gateway descriptor.");
@@ -961,6 +1120,27 @@ async function captureScreen(page: Page, sessionId: SessionId): Promise<Terminal
   );
 }
 
+async function focusActiveTerminal(page: Page): Promise<void> {
+  await page.locator("[data-testid='terminal-ready'] .xterm-helper-textarea").waitFor({
+    state: "attached",
+    timeout: e2eUiTimeoutMs,
+  });
+  await page.locator("[data-testid='terminal-ready'] .xterm-screen").click();
+  await page.waitForFunction(
+    () => {
+      const host = document.querySelector("[data-testid='terminal-ready']");
+      const activeElement = document.activeElement;
+      return (
+        activeElement instanceof HTMLTextAreaElement &&
+        activeElement.classList.contains("xterm-helper-textarea") &&
+        Boolean(host?.contains(activeElement))
+      );
+    },
+    undefined,
+    { timeout: e2eUiTimeoutMs },
+  );
+}
+
 async function waitForAlternateScreenSnapshot(
   page: Page,
   sessionId: SessionId,
@@ -991,7 +1171,7 @@ async function typeCommand(page: Page, command: string): Promise<void> {
     return;
   }
 
-  await page.locator("[data-testid='terminal-ready'] .xterm").click();
+  await focusActiveTerminal(page);
   await page.keyboard.type(command);
   await page.keyboard.press("Enter");
 }
@@ -1010,6 +1190,7 @@ async function interruptCommand(page: Page, sessionId: SessionId): Promise<void>
     return;
   }
 
+  await focusActiveTerminal(page);
   await page.keyboard.press("Control+C");
 }
 
@@ -1034,6 +1215,11 @@ function platformPrintCommand(text: string): string {
 function platformManyLinesCommand(prefix: string, count: number): string {
   const quotedPrefix = prefix.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
   const script = `for (let i = 1; i <= ${count}; i += 1) console.log('${quotedPrefix}_' + i)`;
+  return `node -e ${JSON.stringify(script)}`;
+}
+
+function interruptFixtureCommand(marker: string): string {
+  const script = `console.log(${JSON.stringify(marker)}); setTimeout(() => {}, 5000)`;
   return `node -e ${JSON.stringify(script)}`;
 }
 

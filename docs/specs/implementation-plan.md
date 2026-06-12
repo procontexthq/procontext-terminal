@@ -187,8 +187,9 @@ Implementation:
 - Add short-lived token authentication before terminal commands are accepted.
 - Add policy engine decision points for authenticated local agent control and
   session ownership.
-- Add agent commands for list, create, attach, send text, send key, resize,
-  read output, capture screen, wait, and kill.
+- Add agent commands for list, create, attach, send text, send key, paste,
+  mouse bytes, interrupt, resize, read output, capture screen, wait, kill,
+  release, and recording start/stop/export.
 - Treat renderer-dependent observation honestly: recent output works through
   session-core, while capture-screen and screen-based waits return structured
   observation errors when no renderer window can provide a snapshot.

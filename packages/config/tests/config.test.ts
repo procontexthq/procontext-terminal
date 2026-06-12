@@ -57,7 +57,7 @@ describe("terminal config", () => {
     const parsed = parseTerminalConfig({
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh" },
-      recording: { redactedPatterns: ["token", "("] },
+      recording: { redactedPatterns: ["token", "(", ""] },
     });
 
     expect(parsed.config).toMatchObject({
@@ -66,7 +66,10 @@ describe("terminal config", () => {
       shell: { defaultProfile: "/bin/zsh", profiles: [] },
       recording: { redactedPatterns: ["token"] },
     });
-    expect(parsed.warnings).toEqual(["Invalid recording redaction pattern ignored: ("]);
+    expect(parsed.warnings).toEqual([
+      "Invalid recording redaction pattern ignored: (",
+      "Invalid recording redaction pattern ignored: ",
+    ]);
   });
 
   it("migrates explicit schema version 1 settings to schema version 2", () => {

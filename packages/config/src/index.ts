@@ -142,7 +142,7 @@ function parseRecordingConfig(
 
   const warnings: string[] = [];
   const redactedPatterns = merged.redactedPatterns.filter((pattern): pattern is string => {
-    if (typeof pattern !== "string" || !isValidRegexPattern(pattern)) {
+    if (typeof pattern !== "string" || pattern.length === 0 || !isValidRegexPattern(pattern)) {
       warnings.push(`Invalid recording redaction pattern ignored: ${String(pattern)}`);
       return false;
     }

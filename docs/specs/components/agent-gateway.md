@@ -51,6 +51,9 @@ Phase 3 exposes the first external command set:
 - `terminal.attach`
 - `terminal.sendText`
 - `terminal.sendKey`
+- `terminal.paste`
+- `terminal.sendMouse`
+- `terminal.interrupt`
 - `terminal.resize`
 - `terminal.readRecentOutput`
 - `terminal.captureScreen`
@@ -59,6 +62,28 @@ Phase 3 exposes the first external command set:
 - `terminal.waitForScreenChange`
 - `terminal.waitForPrompt`
 - `terminal.kill`
+- `terminal.release`
+- `terminal.startRecording`
+- `terminal.stopRecording`
+- `terminal.exportRecording`
+
+`terminal.paste` is a semantic convenience over PTY text input in this phase:
+it writes the supplied text exactly as provided and does not add bracketed paste
+markers. `terminal.interrupt` maps to Ctrl+C. `terminal.sendMouse` accepts raw
+terminal mouse bytes so agents can exercise mouse-aware TUIs before a structured
+coordinate/button encoder exists.
+
+`terminal.release` removes an exited or failed session record from the
+agent-visible session list. It is distinct from `terminal.kill`: killing asks
+the PTY to terminate, while releasing removes only an already-finished record.
+Releasing a running, detached, creating, or exiting session fails with a typed
+session release error from the session manager.
+
+`terminal.startRecording`, `terminal.stopRecording`, and
+`terminal.exportRecording` expose the existing recorder through the agent
+gateway for owned sessions. Recording exports use the recorder schema and
+configured redaction. Recording payloads remain transcript data and must not be
+written to diagnostic logs.
 
 Owned session title and bell events are streamed as `terminal.title` and
 `terminal.bell` observations. Title text is observation data, not app
@@ -80,6 +105,21 @@ Policy requests include safe operation metadata such as `cwd`, `shell`,
 They intentionally exclude raw terminal input text, PTY output, tokens,
 clipboard contents, and transcript payloads unless a future policy explicitly
 opts into that sensitive data.
+
+## Startup Readiness
+
+The desktop app must not publish the agent gateway descriptor while the normal
+startup terminal is still pending creation. During ordinary window startup, the
+first renderer-owned human terminal must settle into a non-`creating` lifecycle
+state before the descriptor appears. This prevents agents from observing a
+false empty `terminal.list` result while the startup tab is still being
+created.
+
+If the startup window cannot create or settle the initial terminal within the
+bounded startup wait, the app may publish the descriptor in degraded mode after
+logging a structured warning. In that case, an empty list means no startup
+session reached the session manager within the wait window, not that a known
+session was hidden from the agent.
 
 ## Boundaries
 
@@ -122,4 +162,11 @@ report the same non-fatal display error.
 - Denied requests produce policy denial events without side effects.
 - Authentication denial by policy leaves the connection unauthenticated.
 - Input authorization includes only safe metadata by default.
+- Agent paste, mouse, interrupt, and recording commands are policy-checked and
+  audited without logging raw input, mouse bytes, PTY output, or exported
+  recording events.
 - Event streams preserve session identity and lifecycle ordering.
+- Descriptor publication does not race ahead of the initial startup terminal in
+  the normal desktop startup path.
+- Releasing finished sessions is policy-checked, audited, and distinct from
+  killing running PTYs.

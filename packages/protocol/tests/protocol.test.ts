@@ -20,6 +20,8 @@ import {
   parseRendererCommand,
   parseRendererCommandResult,
   parseKillSessionRequest,
+  parseMouseInputRequest,
+  parsePasteInputRequest,
   parseReadRecentOutputRequest,
   parseReleaseSessionRequest,
   parseResizeSessionRequest,
@@ -99,6 +101,75 @@ describe("protocol schemas", () => {
         type: "terminal.resize",
         requestId,
         payload: { sessionId, cols: 0, rows: 24 },
+      }),
+    ).toThrow();
+    expect(
+      parseAgentCommand({
+        type: "terminal.release",
+        requestId,
+        payload: { sessionId },
+      }),
+    ).toEqual({
+      type: "terminal.release",
+      requestId,
+      payload: { sessionId },
+    });
+    expect(
+      parseAgentCommand({
+        type: "terminal.paste",
+        requestId,
+        payload: { sessionId, text: "line one\nline two", origin: "human" },
+      }),
+    ).toEqual({
+      type: "terminal.paste",
+      requestId,
+      payload: { sessionId, text: "line one\nline two", origin: "human" },
+    });
+    expect(
+      parseAgentCommand({
+        type: "terminal.sendMouse",
+        requestId,
+        payload: { sessionId, data: "\u001b[M   ", origin: "system" },
+      }),
+    ).toEqual({
+      type: "terminal.sendMouse",
+      requestId,
+      payload: { sessionId, data: "\u001b[M   ", origin: "system" },
+    });
+    expect(
+      parseAgentCommand({
+        type: "terminal.interrupt",
+        requestId,
+        payload: { sessionId },
+      }),
+    ).toEqual({
+      type: "terminal.interrupt",
+      requestId,
+      payload: { sessionId },
+    });
+    expect(
+      parseAgentCommand({
+        type: "terminal.exportRecording",
+        requestId,
+        payload: { sessionId },
+      }),
+    ).toEqual({
+      type: "terminal.exportRecording",
+      requestId,
+      payload: { sessionId },
+    });
+    expect(() =>
+      parseAgentCommand({
+        type: "terminal.startRecording",
+        requestId,
+        payload: { sessionId: "" },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseAgentCommand({
+        type: "terminal.sendMouse",
+        requestId,
+        payload: { sessionId, data: 123 },
       }),
     ).toThrow();
 
@@ -232,6 +303,18 @@ describe("protocol schemas", () => {
       key: "Ctrl+C",
       origin: "agent",
     });
+    expect(parsePasteInputRequest({ sessionId, text: "pasted", origin: "agent" })).toEqual({
+      sessionId,
+      text: "pasted",
+      origin: "agent",
+    });
+    expect(parseMouseInputRequest({ sessionId, data: "\u001b[M   ", origin: "agent" })).toEqual({
+      sessionId,
+      data: "\u001b[M   ",
+      origin: "agent",
+    });
+    expect(() => parsePasteInputRequest({ sessionId: "", text: "pasted" })).toThrow();
+    expect(() => parseMouseInputRequest({ sessionId, data: 1 })).toThrow();
     expect(parseDetachSessionRequest({ sessionId })).toEqual({ sessionId });
     expect(
       parseTerminalRecordingExport({

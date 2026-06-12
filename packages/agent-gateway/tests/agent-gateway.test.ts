@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,6 +76,24 @@ describe("agent gateway", () => {
     });
   });
 
+  it("rewrites stale descriptors with owner-only permissions on POSIX", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempDir = await createTempDir();
+    const services = createFakeServices();
+    const descriptorPath = resolveAgentGatewayDescriptorPath(tempDir);
+    await writeFile(descriptorPath, "stale descriptor", { encoding: "utf8", mode: 0o644 });
+
+    const gateway = await startTestGateway({
+      descriptorPath,
+      services,
+    });
+
+    expect((await stat(gateway.descriptorPath)).mode & 0o777).toBe(0o600);
+  });
+
   it("authenticates and maps terminal commands to services with agent origin", async () => {
     const tempDir = await createTempDir();
     const services = createFakeServices();
@@ -100,6 +118,21 @@ describe("agent gateway", () => {
       }),
     );
     await client.request(createAgentCommand("terminal.sendKey", { sessionId, key: "Ctrl+C" }));
+    await client.request(
+      createAgentCommand("terminal.paste", {
+        sessionId,
+        text: "pasted input",
+        origin: "human",
+      }),
+    );
+    await client.request(
+      createAgentCommand("terminal.sendMouse", {
+        sessionId,
+        data: "\u001b[M   ",
+        origin: "system",
+      }),
+    );
+    await client.request(createAgentCommand("terminal.interrupt", { sessionId }));
     await client.request(createAgentCommand("terminal.resize", { sessionId, cols: 100, rows: 30 }));
     await client.request(
       createAgentCommand("terminal.readRecentOutput", { sessionId, maxBytes: 50 }),
@@ -107,7 +140,13 @@ describe("agent gateway", () => {
     await client.request(
       createAgentCommand("terminal.waitForQuiet", { sessionId, quietMs: 1, timeoutMs: 50 }),
     );
+    await client.request(createAgentCommand("terminal.startRecording", { sessionId }));
+    await client.request(createAgentCommand("terminal.stopRecording", { sessionId }));
+    const exportedRecording = await client.request(
+      createAgentCommand("terminal.exportRecording", { sessionId }),
+    );
     await client.request(createAgentCommand("terminal.kill", { sessionId }));
+    await client.request(createAgentCommand("terminal.release", { sessionId }));
 
     expect(services.createSession).toHaveBeenCalledWith({
       cols: 80,
@@ -123,8 +162,31 @@ describe("agent gateway", () => {
       origin: "agent",
     });
     expect(services.sendKey).toHaveBeenCalledWith({ sessionId, key: "Ctrl+C", origin: "agent" });
+    expect(services.paste).toHaveBeenCalledWith({
+      sessionId,
+      text: "pasted input",
+      origin: "agent",
+    });
+    expect(services.sendMouse).toHaveBeenCalledWith({
+      sessionId,
+      data: "\u001b[M   ",
+      origin: "agent",
+    });
+    expect(services.interrupt).toHaveBeenCalledWith({ sessionId });
     expect(services.resize).toHaveBeenCalledWith({ sessionId, cols: 100, rows: 30 });
+    expect(services.startRecording).toHaveBeenCalledWith({ sessionId });
+    expect(services.stopRecording).toHaveBeenCalledWith({ sessionId });
+    expect(services.exportRecording).toHaveBeenCalledWith({ sessionId });
+    expect(exportedRecording).toMatchObject({
+      ok: true,
+      value: {
+        schemaVersion: 1,
+        sessionId,
+        events: [{ type: "pty.output", data: "recorded output" }],
+      },
+    });
     expect(services.kill).toHaveBeenCalledWith({ sessionId });
+    expect(services.release).toHaveBeenCalledWith({ sessionId });
     client.close();
   });
 
@@ -297,6 +359,22 @@ describe("agent gateway", () => {
         text: "SECRET_INPUT\r",
       }),
     );
+    await client.request(
+      createAgentCommand("terminal.paste", {
+        sessionId,
+        text: "SECRET_PASTE",
+      }),
+    );
+    await client.request(
+      createAgentCommand("terminal.sendMouse", {
+        sessionId,
+        data: "SECRET_MOUSE_BYTES",
+      }),
+    );
+    await client.request(createAgentCommand("terminal.interrupt", { sessionId }));
+    await client.request(createAgentCommand("terminal.startRecording", { sessionId }));
+    await client.request(createAgentCommand("terminal.stopRecording", { sessionId }));
+    await client.request(createAgentCommand("terminal.exportRecording", { sessionId }));
 
     const operations = vi
       .mocked(policy.authorize)
@@ -317,6 +395,50 @@ describe("agent gateway", () => {
       inputKind: "text",
     });
     expect(JSON.stringify(sendTextOperation)).not.toContain("SECRET_INPUT");
+    expect(operations).toContainEqual(
+      expect.objectContaining({
+        type: "terminal.paste",
+        sessionId,
+        inputKind: "paste",
+      }),
+    );
+    expect(operations).toContainEqual(
+      expect.objectContaining({
+        type: "terminal.sendMouse",
+        sessionId,
+        inputKind: "mouse",
+      }),
+    );
+    expect(operations).toContainEqual(
+      expect.objectContaining({
+        type: "terminal.interrupt",
+        sessionId,
+        inputKind: "interrupt",
+      }),
+    );
+    expect(operations).toContainEqual(
+      expect.objectContaining({
+        type: "terminal.startRecording",
+        sessionId,
+        recordingKind: "start",
+      }),
+    );
+    expect(operations).toContainEqual(
+      expect.objectContaining({
+        type: "terminal.stopRecording",
+        sessionId,
+        recordingKind: "stop",
+      }),
+    );
+    expect(operations).toContainEqual(
+      expect.objectContaining({
+        type: "terminal.exportRecording",
+        sessionId,
+        recordingKind: "export",
+      }),
+    );
+    expect(JSON.stringify(operations)).not.toContain("SECRET_PASTE");
+    expect(JSON.stringify(operations)).not.toContain("SECRET_MOUSE_BYTES");
     client.close();
   });
 
@@ -395,6 +517,46 @@ describe("agent gateway", () => {
       error: { type: "policy_denied", sessionId: secondSession },
     });
     expect(services.kill).not.toHaveBeenCalled();
+    const releaseDenied = await client.request(
+      createAgentCommand("terminal.release", { sessionId: secondSession }),
+    );
+    expect(releaseDenied).toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", sessionId: secondSession },
+    });
+    expect(services.release).not.toHaveBeenCalled();
+    const pasteDenied = await client.request(
+      createAgentCommand("terminal.paste", { sessionId: secondSession, text: "pasted" }),
+    );
+    expect(pasteDenied).toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", sessionId: secondSession },
+    });
+    expect(services.paste).not.toHaveBeenCalled();
+    const mouseDenied = await client.request(
+      createAgentCommand("terminal.sendMouse", { sessionId: secondSession, data: "\u001b[M   " }),
+    );
+    expect(mouseDenied).toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", sessionId: secondSession },
+    });
+    expect(services.sendMouse).not.toHaveBeenCalled();
+    const interruptDenied = await client.request(
+      createAgentCommand("terminal.interrupt", { sessionId: secondSession }),
+    );
+    expect(interruptDenied).toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", sessionId: secondSession },
+    });
+    expect(services.interrupt).not.toHaveBeenCalled();
+    const recordingDenied = await client.request(
+      createAgentCommand("terminal.exportRecording", { sessionId: secondSession }),
+    );
+    expect(recordingDenied).toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", sessionId: secondSession },
+    });
+    expect(services.exportRecording).not.toHaveBeenCalled();
 
     services.emit({
       type: "session.output",
@@ -421,12 +583,42 @@ describe("agent gateway", () => {
       type: "terminal.bell",
       payload: { sessionId: firstSession },
     });
+    await client.request(
+      createAgentCommand("terminal.paste", { sessionId: firstSession, text: "SECRET_PASTE" }),
+    );
+    await client.request(
+      createAgentCommand("terminal.sendMouse", {
+        sessionId: firstSession,
+        data: "SECRET_MOUSE_BYTES",
+      }),
+    );
+    services.exportRecording.mockResolvedValueOnce({
+      schemaVersion: 1,
+      sessionId: firstSession,
+      exportedAt: "2026-05-11T00:00:00.000Z",
+      events: [
+        {
+          type: "pty.output",
+          sessionId: firstSession,
+          at: "2026-05-11T00:00:00.000Z",
+          data: "SECRET_RECORDING_OUTPUT",
+        },
+      ],
+    });
+    await client.request(
+      createAgentCommand("terminal.exportRecording", { sessionId: firstSession }),
+    );
 
     const auditText = JSON.stringify(auditEvents);
     expect(auditText).toContain("terminal.kill");
+    expect(auditText).toContain("terminal.paste");
+    expect(auditText).toContain("terminal.sendMouse");
+    expect(auditText).toContain("terminal.exportRecording");
     expect(auditText).not.toContain("test-token");
     expect(auditText).not.toContain("owned output");
-    expect(auditText).not.toContain("SECRET_INPUT");
+    expect(auditText).not.toContain("SECRET_PASTE");
+    expect(auditText).not.toContain("SECRET_MOUSE_BYTES");
+    expect(auditText).not.toContain("SECRET_RECORDING_OUTPUT");
     client.close();
     otherClient.close();
   });
@@ -580,8 +772,15 @@ function createFakeServices(): AgentGatewayTerminalServices & {
   createSession: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["createSession"]>>;
   write: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["write"]>>;
   sendKey: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["sendKey"]>>;
+  paste: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["paste"]>>;
+  sendMouse: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["sendMouse"]>>;
+  interrupt: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["interrupt"]>>;
   resize: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["resize"]>>;
   kill: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["kill"]>>;
+  release: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["release"]>>;
+  startRecording: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["startRecording"]>>;
+  stopRecording: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["stopRecording"]>>;
+  exportRecording: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["exportRecording"]>>;
   captureScreen: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["captureScreen"]>>;
   displaySession: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["displaySession"]>>;
 } {
@@ -623,6 +822,9 @@ function createFakeServices(): AgentGatewayTerminalServices & {
     }),
     write: vi.fn<AgentGatewayTerminalServices["write"]>(() => Promise.resolve()),
     sendKey: vi.fn<AgentGatewayTerminalServices["sendKey"]>(() => Promise.resolve()),
+    paste: vi.fn<AgentGatewayTerminalServices["paste"]>(() => Promise.resolve()),
+    sendMouse: vi.fn<AgentGatewayTerminalServices["sendMouse"]>(() => Promise.resolve()),
+    interrupt: vi.fn<AgentGatewayTerminalServices["interrupt"]>(() => Promise.resolve()),
     resize: vi.fn<AgentGatewayTerminalServices["resize"]>(() => Promise.resolve()),
     readRecentOutput: vi.fn<AgentGatewayTerminalServices["readRecentOutput"]>(
       ({ sessionId, maxBytes }) => ({
@@ -648,6 +850,27 @@ function createFakeServices(): AgentGatewayTerminalServices & {
       Promise.resolve({ sessionId, matchedAt: "2026-05-11T00:00:00.000Z" }),
     ),
     kill: vi.fn<AgentGatewayTerminalServices["kill"]>(() => Promise.resolve()),
+    release: vi.fn<AgentGatewayTerminalServices["release"]>(({ sessionId }) => {
+      sessions.delete(sessionId);
+      return Promise.resolve();
+    }),
+    startRecording: vi.fn<AgentGatewayTerminalServices["startRecording"]>(() => Promise.resolve()),
+    stopRecording: vi.fn<AgentGatewayTerminalServices["stopRecording"]>(() => Promise.resolve()),
+    exportRecording: vi.fn<AgentGatewayTerminalServices["exportRecording"]>(({ sessionId }) =>
+      Promise.resolve({
+        schemaVersion: 1,
+        sessionId,
+        exportedAt: "2026-05-11T00:00:00.000Z",
+        events: [
+          {
+            type: "pty.output",
+            sessionId,
+            at: "2026-05-11T00:00:00.000Z",
+            data: "recorded output",
+          },
+        ],
+      }),
+    ),
     onSessionEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe {
       handlers.add(handler);
       return () => handlers.delete(handler);
