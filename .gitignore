@@ -22,7 +22,6 @@ test-results/
 .env.*
 !.env.example
 AGENTS.local.md
-docs/private/
 
 # Logs
 *.log
