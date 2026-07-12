@@ -15,6 +15,10 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Create and manage `BrowserWindow` instances through the window manager.
 - Use packaged app icon resources for BrowserWindow and desktop shell branding
   when those resources are available.
+- Set the internal product name before resolving app-specific data and log paths.
+- On macOS, rely on the native bundle icon for packaged apps. Development may
+  replace the stock Electron Dock image as soon as the app is ready, but must
+  not override the packaged multi-resolution `.icns` resource at runtime.
 - Configure secure renderer settings.
 - Register typed IPC handlers.
 - Start and stop the local agent gateway.
@@ -71,3 +75,5 @@ The main process must not:
   sessions without killing their PTYs.
 - Phase 1 app shutdown terminates active sessions with a bounded timeout; later restore or detach policies must preserve the view/session distinction.
 - Main-process services can be wired without renderer imports or circular dependencies.
+- Packaged app verification checks native product name, identifier, executable,
+  and icon metadata in addition to checking that icon files exist.
