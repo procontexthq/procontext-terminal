@@ -33,6 +33,7 @@ import {
   createAgentSessionDisplayService,
   type AgentSessionDisplayService,
 } from "./agent-session-display";
+import { PRODUCT_NAME, shouldSetDevelopmentDockIcon } from "./app-branding";
 import { resolveDefaultTerminalCwd } from "./default-terminal-cwd";
 import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
 import {
@@ -43,6 +44,8 @@ import {
   type TerminalCommandServices,
 } from "./terminal-command-handler";
 import { attachWindowCloseSessionCleanup } from "./window-lifecycle";
+
+app.setName(PRODUCT_NAME);
 
 let logger = createAppLogger({
   isDevelopment: !app.isPackaged,
@@ -101,9 +104,6 @@ function safeAppHome(): string {
 async function createMainWindow(): Promise<BrowserWindow> {
   logger.info("window", "create_requested");
   const appIconPath = resolveAppIconPath();
-  if (process.platform === "darwin" && appIconPath && app.dock) {
-    app.dock.setIcon(nativeImage.createFromPath(appIconPath));
-  }
   const window = new BrowserWindow({
     width: 1000,
     height: 700,
@@ -216,6 +216,7 @@ process.on("unhandledRejection", (reason) => {
 void app
   .whenReady()
   .then(async () => {
+    applyDevelopmentDockIcon();
     const logDirectory = app.getPath("logs");
     logger = createAppLogger({
       isDevelopment: !app.isPackaged,
@@ -372,6 +373,16 @@ function resolveAppIconPath(): string | null {
     : [join(__dirname, "../../resources/icon.png")];
 
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function applyDevelopmentDockIcon(): void {
+  if (!shouldSetDevelopmentDockIcon(process.platform, app.isPackaged) || !app.dock) {
+    return;
+  }
+  const appIconPath = resolveAppIconPath();
+  if (appIconPath) {
+    app.dock.setIcon(nativeImage.createFromPath(appIconPath));
+  }
 }
 
 function appShortcutPlatform(): AppShortcutPlatform | null {

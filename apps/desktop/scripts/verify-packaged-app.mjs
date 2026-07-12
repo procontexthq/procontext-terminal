@@ -1,14 +1,18 @@
-import { access, readdir, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, readFile, readdir, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const desktopRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = join(desktopRoot, "dist");
+const execFileAsync = promisify(execFile);
 
 const layout = await resolvePackagedLayout(distDir, process.platform);
 await assertFile(layout.executable, "packaged executable");
 await assertFile(join(layout.resourcesDir, "icon.png"), "packaged app icon");
 await assertPackagedAppResources(layout.resourcesDir);
+const bundleMetadata = process.platform === "darwin" ? await assertMacBundleMetadata(layout) : null;
 
 const nativeModules = await findFiles(layout.resourcesDir, (path) => {
   return (
@@ -39,6 +43,7 @@ console.log(
       executable: layout.executable,
       resourcesDir: layout.resourcesDir,
       appIcon: join(layout.resourcesDir, "icon.png"),
+      bundleMetadata,
       nodePtyNativeModules: nativeModules,
     },
     null,
@@ -61,6 +66,7 @@ async function resolvePackagedLayout(root, platform) {
       }
       const executableName = basename(appBundle, ".app");
       return {
+        appBundle,
         executable: join(appBundle, "Contents", "MacOS", executableName),
         resourcesDir: join(appBundle, "Contents", "Resources"),
       };
@@ -71,6 +77,7 @@ async function resolvePackagedLayout(root, platform) {
     const unpacked = await firstMatchingDirectory(root, (name) => name.endsWith("-unpacked"));
     if (unpacked) {
       return {
+        appBundle: null,
         executable: join(unpacked, "procontext-terminal"),
         resourcesDir: join(unpacked, "resources"),
       };
@@ -86,6 +93,7 @@ async function resolvePackagedLayout(root, platform) {
       });
       if (executable) {
         return {
+          appBundle: null,
           executable,
           resourcesDir: join(unpacked, "resources"),
         };
@@ -94,6 +102,47 @@ async function resolvePackagedLayout(root, platform) {
   }
 
   throw new Error(`Could not find packaged app layout for ${platform} in ${root}.`);
+}
+
+async function assertMacBundleMetadata(layout) {
+  if (!layout.appBundle) {
+    throw new Error("Packaged macOS layout is missing its app bundle path.");
+  }
+
+  const packageJson = JSON.parse(await readFile(join(desktopRoot, "package.json"), "utf8"));
+  if (typeof packageJson.productName !== "string" || packageJson.productName.length === 0) {
+    throw new Error("Desktop package.json must declare a non-empty productName.");
+  }
+
+  const infoPlistPath = join(layout.appBundle, "Contents", "Info.plist");
+  await assertFile(infoPlistPath, "packaged macOS Info.plist");
+  await assertFile(join(layout.resourcesDir, "icon.icns"), "packaged macOS native icon");
+
+  const { stdout } = await execFileAsync("/usr/bin/plutil", [
+    "-convert",
+    "json",
+    "-o",
+    "-",
+    infoPlistPath,
+  ]);
+  const info = JSON.parse(stdout);
+  const expected = {
+    CFBundleName: packageJson.productName,
+    CFBundleDisplayName: packageJson.productName,
+    CFBundleExecutable: packageJson.productName,
+    CFBundleIdentifier: "com.procontext.terminal",
+    CFBundleIconFile: "icon.icns",
+  };
+
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    if (info[key] !== expectedValue) {
+      throw new Error(
+        `Packaged macOS ${key} must be ${JSON.stringify(expectedValue)}, received ${JSON.stringify(info[key])}.`,
+      );
+    }
+  }
+
+  return expected;
 }
 
 async function firstMatchingDirectory(root, predicate) {
