@@ -22,9 +22,11 @@ import {
   type UiThemePreference,
 } from "@terminal/protocol";
 
+import { terminalUiTimeoutMs } from "./e2e-timeouts";
+
 const require = createRequire(import.meta.url);
 const electronPath = require("electron") as string;
-const e2eUiTimeoutMs = process.platform === "win32" ? 30000 : 10000;
+const e2eUiTimeoutMs = terminalUiTimeoutMs(process.platform);
 const e2eAppLaunchTimeoutMs = process.platform === "linux" && process.env.CI ? 60000 : 30000;
 
 let electronProcess: ChildProcessWithoutNullStreams | null = null;
@@ -1010,14 +1012,43 @@ async function waitForStatus(page: Page, status: string): Promise<void> {
 }
 
 async function waitForShellPrompt(page: Page, sessionId: SessionId): Promise<void> {
-  await page.evaluate(
-    (activeSessionId) =>
-      window.terminalApi.waitForPrompt({
-        sessionId: activeSessionId,
-        timeoutMs: 10000,
-      }),
-    sessionId,
-  );
+  try {
+    await page.evaluate(
+      ({ activeSessionId, timeoutMs }) =>
+        window.terminalApi.waitForPrompt({
+          sessionId: activeSessionId,
+          timeoutMs,
+        }),
+      { activeSessionId: sessionId, timeoutMs: e2eUiTimeoutMs },
+    );
+  } catch (error: unknown) {
+    let snapshot: TerminalScreenSnapshot;
+    try {
+      snapshot = await captureScreen(page, sessionId);
+    } catch (snapshotError: unknown) {
+      throw new Error(
+        `Timed out waiting for the startup shell prompt and could not capture diagnostic screen metadata. promptError=${String(error)}`,
+        { cause: snapshotError },
+      );
+    }
+
+    const populatedRows = snapshot.viewport.filter((row) => row.text.trim().length > 0);
+    const lastPopulatedRow = populatedRows.at(-1);
+    throw new Error(
+      `Timed out waiting for the startup shell prompt. screen=${JSON.stringify({
+        cols: snapshot.cols,
+        rows: snapshot.rows,
+        cursor: snapshot.cursor,
+        alternateScreen: snapshot.alternateScreen,
+        populatedRowCount: populatedRows.length,
+        lastPopulatedRow: lastPopulatedRow?.row ?? null,
+        lastLineMatchesPromptHeuristic: lastPopulatedRow
+          ? /[$#>]\s*$/.test(lastPopulatedRow.text)
+          : false,
+      })}`,
+      { cause: error },
+    );
+  }
 }
 
 async function expectTabCount(page: Page, count: number): Promise<void> {
