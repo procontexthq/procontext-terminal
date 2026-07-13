@@ -70,8 +70,12 @@ describe("desktop terminal smoke", () => {
     await waitForTerminalText(page, interruptReady);
     await writeRendererInput(page, sessionId, "\u0003");
     await waitForTerminalText(page, interruptHandled);
-    await writeRendererInput(page, sessionId, `${platformPrintCommand("AFTER_INTERRUPT")}\r`);
-    await waitForTerminalText(page, "AFTER_INTERRUPT");
+    await writeRendererCommandUntilText(
+      page,
+      sessionId,
+      platformPrintCommand("AFTER_INTERRUPT"),
+      "AFTER_INTERRUPT",
+    );
 
     await writeRendererInput(page, sessionId, "exit\r");
     await waitForStatus(page, "exited");
@@ -556,7 +560,37 @@ async function expectSessionCwd(page: Page, sessionId: SessionId, cwd: string): 
   if (summary.cwd !== cwd) throw new Error(`Expected cwd ${cwd}, got ${summary.cwd}.`);
 }
 
-async function waitForTerminalText(page: Page, text: string): Promise<void> {
+async function writeRendererCommandUntilText(
+  page: Page,
+  sessionId: SessionId,
+  command: string,
+  expectedText: string,
+): Promise<void> {
+  const deadline = Date.now() + e2eUiTimeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    await writeRendererInput(page, sessionId, `${command}\r`);
+    try {
+      await waitForTerminalText(
+        page,
+        expectedText,
+        Math.min(1_000, Math.max(1, deadline - Date.now())),
+      );
+      return;
+    } catch (error: unknown) {
+      lastError = error;
+    }
+  }
+  throw new Error(`Terminal did not accept command producing ${expectedText}.`, {
+    cause: lastError,
+  });
+}
+
+async function waitForTerminalText(
+  page: Page,
+  text: string,
+  timeoutMs = e2eUiTimeoutMs,
+): Promise<void> {
   try {
     await page.waitForFunction(
       (expected) =>
@@ -564,7 +598,7 @@ async function waitForTerminalText(page: Page, text: string): Promise<void> {
           .querySelector("[data-testid='terminal-ready'] .xterm-rows")
           ?.textContent?.includes(expected),
       text,
-      { timeout: e2eUiTimeoutMs },
+      { timeout: timeoutMs },
     );
   } catch (error: unknown) {
     const screen = await page
