@@ -29,11 +29,11 @@ Sensitive operations include:
 
 - Creating terminals in protected directories.
 - Sending input from agents.
-- Sending paste blocks from agents.
+- Sending raw terminal input from agents.
 - Enabling recording.
 - Exporting transcripts.
 - Enabling external agent gateway access.
-- Killing sessions not owned by the caller.
+- Closing sessions not controlled by the caller.
 
 ## Boundaries
 
@@ -75,16 +75,8 @@ type TerminalPolicyOperation = {
   sessionId?: SessionId;
   cwd?: string;
   shell?: string;
-  inputKind?: "text" | "key" | "paste" | "mouse" | "interrupt" | "resize" | "kill";
-  observationKind?:
-    | "list"
-    | "get"
-    | "recentOutput"
-    | "screen"
-    | "waitText"
-    | "waitScreenChange"
-    | "waitQuiet"
-    | "waitPrompt";
+  inputKind?: "input" | "resize" | "scroll" | "close";
+  observationKind?: "list" | "get" | "observe";
   recordingKind?: "start" | "stop" | "export";
 };
 

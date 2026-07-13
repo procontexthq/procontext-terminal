@@ -1,487 +1,262 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  TERMINAL_PROTOCOL_VERSION,
   TerminalApiError,
-  createRendererCommandFailure,
-  createRendererCommandSuccess,
   createAgentCommand,
   createAgentCommandFailure,
   createAgentCommandSuccess,
+  createRendererCommand,
+  createRendererCommandFailure,
+  createRendererCommandSuccess,
   createRequestId,
   createSessionId,
   createTerminalError,
-  isAgentEvent,
   isRendererSessionEvent,
   parseAgentCommand,
   parseAgentCommandResult,
   parseAgentGatewayDescriptor,
-  parseCreateSessionRequest,
-  parseDetachSessionRequest,
+  parseCreateTerminalRequest,
+  parseObserveTerminalRequest,
   parseRendererCommand,
   parseRendererCommandResult,
-  parseKillSessionRequest,
-  parseMouseInputRequest,
-  parsePasteInputRequest,
-  parseReadRecentOutputRequest,
-  parseReleaseSessionRequest,
-  parseResizeSessionRequest,
-  parseSendKeyRequest,
-  parseSaveUiThemeRequest,
-  parseTerminalRecordingExport,
-  parseTerminalScreenSnapshot,
-  parseWaitForQuietRequest,
-  parseWaitForTextRequest,
+  parseScrollTerminalRequest,
   parseTerminalConfig,
-  parseWriteInputRequest,
+  parseTerminalInputRequest,
+  parseTerminalObservation,
+  parseTerminalRecordingExport,
   unwrapRendererCommandResult,
 } from "../src/index";
 
-describe("protocol schemas", () => {
-  it("accepts valid session lifecycle requests", () => {
+describe("terminal protocol", () => {
+  it("validates the foundation session requests", () => {
     const sessionId = createSessionId("session-1");
 
-    expect(parseCreateSessionRequest({ cwd: "/tmp", cols: 80, rows: 24 })).toEqual({
-      cwd: "/tmp",
-      cols: 80,
-      rows: 24,
-    });
-    expect(parseWriteInputRequest({ sessionId, data: "echo ok\r" })).toEqual({
+    expect(parseCreateTerminalRequest({ cwd: "/tmp" })).toEqual({ cwd: "/tmp" });
+    expect(parseTerminalInputRequest({ sessionId, input: "echo ok\r" })).toEqual({
       sessionId,
-      data: "echo ok\r",
+      input: "echo ok\r",
     });
-    expect(parseResizeSessionRequest({ sessionId, cols: 100, rows: 30 })).toEqual({
+    expect(
+      parseScrollTerminalRequest({
+        sessionId,
+        scroll: { type: "page", direction: "up" },
+      }),
+    ).toEqual({
       sessionId,
-      cols: 100,
-      rows: 30,
+      scroll: { type: "page", direction: "up" },
     });
-    expect(parseKillSessionRequest({ sessionId })).toEqual({ sessionId });
+    expect(parseObserveTerminalRequest({ sessionId, afterVersion: 3, timeoutMs: 1_000 })).toEqual({
+      sessionId,
+      afterVersion: 3,
+      timeoutMs: 1_000,
+    });
+
+    expect(() => parseCreateTerminalRequest({ cols: 0 })).toThrow();
+    expect(() => parseTerminalInputRequest({ sessionId: "", input: "x" })).toThrow();
+    expect(() =>
+      parseScrollTerminalRequest({ sessionId, scroll: { type: "lines", delta: 0 } }),
+    ).toThrow();
+    expect(() => parseObserveTerminalRequest({ sessionId, timeoutMs: 0 })).toThrow();
   });
 
-  it("rejects invalid request payloads", () => {
-    expect(() => parseCreateSessionRequest({ cols: 0, rows: 24 })).toThrow();
-    expect(() => parseWriteInputRequest({ sessionId: "", data: "x" })).toThrow();
-    expect(() => parseResizeSessionRequest({ sessionId: "s", cols: 80, rows: -1 })).toThrow();
-    expect(() => parseKillSessionRequest({ sessionId: "" })).toThrow();
+  it("validates canonical observations", () => {
+    const sessionId = createSessionId("session-observation");
+    const observation = {
+      sessionId,
+      version: 7,
+      lifecycle: "running",
+      dimensions: { cols: 80, rows: 24 },
+      viewport: {
+        rows: [{ row: 0, text: "hello", wrapped: false }],
+        offsetFromBottom: 0,
+        atTop: true,
+        atBottom: true,
+        scrollbackRows: 0,
+        unseenRows: 0,
+      },
+      cursor: { x: 5, y: 0, visible: true },
+      alternateScreen: false,
+      title: "Terminal",
+      shellIntegration: {
+        status: "unavailable",
+        capabilities: {
+          prompt: false,
+          commandStart: false,
+          commandFinish: false,
+          commandLine: false,
+          exitCode: false,
+          cwd: false,
+        },
+      },
+      command: { state: "unknown" },
+      presentation: {
+        state: "headless",
+        windowVisible: false,
+        windowFocused: false,
+      },
+      recording: { state: "inactive" },
+    } as const;
+
+    expect(parseTerminalObservation(observation)).toEqual(observation);
+    expect(() => parseTerminalObservation({ ...observation, version: -1 })).toThrow();
+    expect(() =>
+      parseTerminalObservation({
+        ...observation,
+        viewport: { ...observation.viewport, offsetFromBottom: -1 },
+      }),
+    ).toThrow();
   });
 
-  it("validates agent command envelopes, auth, and structured result envelopes", () => {
-    const requestId = createRequestId("agent-request-1");
-    const sessionId = createSessionId("session-agent-1");
+  it("accepts only the new agent command surface and fixed protocol version", () => {
+    const requestId = createRequestId("request-agent");
+    const sessionId = createSessionId("session-agent");
 
     expect(
       parseAgentCommand({
         type: "agent.authenticate",
         requestId,
-        payload: { token: "token-value" },
+        payload: { token: "token", protocolVersion: TERMINAL_PROTOCOL_VERSION },
       }),
-    ).toEqual({
+    ).toMatchObject({
       type: "agent.authenticate",
-      requestId,
-      payload: { token: "token-value" },
+      payload: { protocolVersion: TERMINAL_PROTOCOL_VERSION },
     });
+    expect(createAgentCommand("terminal.input", { sessionId, input: "\u0003" }, requestId)).toEqual(
+      {
+        type: "terminal.input",
+        requestId,
+        payload: { sessionId, input: "\u0003" },
+      },
+    );
     expect(
-      createAgentCommand("terminal.sendText", { sessionId, text: "echo from agent\r" }, requestId),
-    ).toEqual({
-      type: "terminal.sendText",
-      requestId,
-      payload: { sessionId, text: "echo from agent\r" },
-    });
-    expect(
-      parseAgentCommand({
-        type: "terminal.create",
+      createAgentCommand(
+        "terminal.observe",
+        { sessionId, afterVersion: 4, timeoutMs: 500 },
         requestId,
-        payload: { cols: 80, rows: 24, cwd: "/tmp" },
-      }),
-    ).toMatchObject({
-      type: "terminal.create",
-      payload: { cols: 80, rows: 24, cwd: "/tmp" },
-    });
-    expect(() =>
-      parseAgentCommand({
-        type: "terminal.resize",
-        requestId,
-        payload: { sessionId, cols: 0, rows: 24 },
-      }),
-    ).toThrow();
-    expect(
-      parseAgentCommand({
-        type: "terminal.release",
-        requestId,
-        payload: { sessionId },
-      }),
-    ).toEqual({
-      type: "terminal.release",
-      requestId,
-      payload: { sessionId },
-    });
-    expect(
-      parseAgentCommand({
-        type: "terminal.paste",
-        requestId,
-        payload: { sessionId, text: "line one\nline two", origin: "human" },
-      }),
-    ).toEqual({
-      type: "terminal.paste",
-      requestId,
-      payload: { sessionId, text: "line one\nline two", origin: "human" },
-    });
-    expect(
-      parseAgentCommand({
-        type: "terminal.sendMouse",
-        requestId,
-        payload: { sessionId, data: "\u001b[M   ", origin: "system" },
-      }),
-    ).toEqual({
-      type: "terminal.sendMouse",
-      requestId,
-      payload: { sessionId, data: "\u001b[M   ", origin: "system" },
-    });
-    expect(
-      parseAgentCommand({
-        type: "terminal.interrupt",
-        requestId,
-        payload: { sessionId },
-      }),
-    ).toEqual({
-      type: "terminal.interrupt",
-      requestId,
-      payload: { sessionId },
-    });
-    expect(
-      parseAgentCommand({
-        type: "terminal.exportRecording",
-        requestId,
-        payload: { sessionId },
-      }),
-    ).toEqual({
-      type: "terminal.exportRecording",
-      requestId,
-      payload: { sessionId },
-    });
-    expect(() =>
-      parseAgentCommand({
-        type: "terminal.startRecording",
-        requestId,
-        payload: { sessionId: "" },
-      }),
-    ).toThrow();
-    expect(() =>
-      parseAgentCommand({
-        type: "terminal.sendMouse",
-        requestId,
-        payload: { sessionId, data: 123 },
-      }),
-    ).toThrow();
-
-    expect(parseAgentCommandResult(createAgentCommandSuccess(requestId, { ok: true }))).toEqual({
-      ok: true,
-      requestId,
-      value: { ok: true },
-    });
-    expect(
-      parseAgentCommandResult(
-        createAgentCommandFailure(
-          requestId,
-          createTerminalError("auth_required", "Authentication is required.", {
-            operation: "terminal.sendText",
-          }),
-        ),
       ),
-    ).toMatchObject({
-      ok: false,
-      requestId,
-      error: { type: "auth_required", operation: "terminal.sendText" },
-    });
+    ).toMatchObject({ type: "terminal.observe" });
+    expect(createAgentCommand("terminal.recording.export", { sessionId }, requestId)).toMatchObject(
+      { type: "terminal.recording.export" },
+    );
+
+    expect(() =>
+      parseAgentCommand({
+        type: "agent.authenticate",
+        requestId,
+        payload: { token: "token", protocolVersion: 2 },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseAgentCommand({
+        type: "terminal.sendText",
+        requestId,
+        payload: { sessionId, text: "echo old\r" },
+      }),
+    ).toThrow();
   });
 
-  it("validates agent gateway descriptor and agent events without secrets", () => {
-    const sessionId = createSessionId("session-agent-2");
+  it("validates result envelopes and loopback descriptors", () => {
+    const requestId = createRequestId("request-result");
     const descriptor = {
       url: "ws://127.0.0.1:34567",
       token: "short-lived-token",
       tokenExpiresAt: "2026-05-11T00:05:00.000Z",
       pid: 1234,
+      protocolVersion: TERMINAL_PROTOCOL_VERSION,
     };
 
     expect(parseAgentGatewayDescriptor(descriptor)).toEqual(descriptor);
     expect(() =>
-      parseAgentGatewayDescriptor({
-        ...descriptor,
-        url: "ws://0.0.0.0:34567",
-      }),
+      parseAgentGatewayDescriptor({ ...descriptor, url: "ws://0.0.0.0:34567" }),
     ).toThrow();
     expect(
-      isAgentEvent({
-        type: "terminal.output",
-        payload: { sessionId, data: "output" },
+      parseAgentCommandResult(createAgentCommandSuccess(requestId, { accepted: true })),
+    ).toEqual({
+      ok: true,
+      requestId,
+      value: { accepted: true },
+    });
+    expect(
+      parseAgentCommandResult(
+        createAgentCommandFailure(
+          requestId,
+          createTerminalError("auth_required", "Authentication is required."),
+        ),
+      ),
+    ).toMatchObject({ ok: false, error: { type: "auth_required" } });
+  });
+
+  it("validates renderer bootstrap and sequenced events", () => {
+    const requestId = createRequestId("request-renderer");
+    const sessionId = createSessionId("session-renderer");
+
+    expect(createRendererCommand("session.openView", { sessionId }, requestId)).toMatchObject({
+      type: "session.openView",
+    });
+    expect(
+      parseRendererCommand({
+        type: "session.reportViewport",
+        requestId,
+        payload: { sessionId, viewportY: 12 },
+      }),
+    ).toMatchObject({ type: "session.reportViewport" });
+    expect(
+      isRendererSessionEvent({
+        type: "session.output",
+        payload: { sessionId, sequence: 4, data: "output" },
       }),
     ).toBe(true);
     expect(
-      isAgentEvent({
-        type: "terminal.denied",
-        payload: {
-          decisionId: "decision-1",
-          code: "auth_required",
-          message: "Authentication is required.",
-          operation: "terminal.sendText",
-          sessionId,
-        },
+      isRendererSessionEvent({
+        type: "session.viewport",
+        payload: { sessionId, viewportY: 2, observationVersion: 8 },
       }),
     ).toBe(true);
   });
 
-  it("validates terminal config schema version 2 and ignores legacy workspace state", () => {
-    const parsed = parseTerminalConfig({
-      schemaVersion: 2,
-      terminal: {
-        fontFamily: "monospace",
-        fontSize: 13,
-        scrollback: 5000,
-        theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
-      },
-      shell: {
-        defaultProfile: null,
-        profiles: [
-          {
-            id: "zsh",
-            name: "Zsh",
-            shell: "/bin/zsh",
-            cwd: null,
-            env: { TERM: "xterm-256color" },
-          },
-        ],
-      },
-      workspace: {
-        tabs: [{ cwd: "/tmp", shell: null }],
-        activeTabIndex: 0,
-      },
-      recording: { state: "disabled", redactedPatterns: [] },
-      ui: { theme: "gamer" },
-    });
-
-    expect(parsed).toMatchObject({
-      schemaVersion: 2,
-      ui: { theme: "gamer" },
-      shell: {
-        profiles: [{ id: "zsh", shell: "/bin/zsh" }],
-      },
-    });
-    expect(parsed).not.toHaveProperty("workspace");
-  });
-
-  it("validates observation, wait, input, and recording contracts", () => {
-    const requestId = createRequestId("request-2");
-    const sessionId = createSessionId("session-2");
-    const snapshot = {
-      sessionId,
-      cols: 80,
-      rows: 24,
-      cursor: { x: 3, y: 2, visible: true },
-      alternateScreen: false,
-      title: "Terminal",
-      viewport: [{ row: 0, text: "hello", wrapped: false }],
-      capturedAt: "2026-05-11T00:00:00.000Z",
-    };
-
-    expect(parseTerminalScreenSnapshot(snapshot)).toEqual(snapshot);
-    expect(parseReadRecentOutputRequest({ sessionId, maxBytes: 1024 })).toEqual({
-      sessionId,
-      maxBytes: 1024,
-    });
-    expect(parseWaitForTextRequest({ sessionId, text: "ready", timeoutMs: 1000 })).toEqual({
-      sessionId,
-      text: "ready",
-      timeoutMs: 1000,
-    });
-    expect(parseWaitForQuietRequest({ sessionId, quietMs: 200, timeoutMs: 1000 })).toEqual({
-      sessionId,
-      quietMs: 200,
-      timeoutMs: 1000,
-    });
-    expect(parseSendKeyRequest({ sessionId, key: "Ctrl+C", origin: "agent" })).toEqual({
-      sessionId,
-      key: "Ctrl+C",
-      origin: "agent",
-    });
-    expect(parsePasteInputRequest({ sessionId, text: "pasted", origin: "agent" })).toEqual({
-      sessionId,
-      text: "pasted",
-      origin: "agent",
-    });
-    expect(parseMouseInputRequest({ sessionId, data: "\u001b[M   ", origin: "agent" })).toEqual({
-      sessionId,
-      data: "\u001b[M   ",
-      origin: "agent",
-    });
-    expect(() => parsePasteInputRequest({ sessionId: "", text: "pasted" })).toThrow();
-    expect(() => parseMouseInputRequest({ sessionId, data: 1 })).toThrow();
-    expect(parseDetachSessionRequest({ sessionId })).toEqual({ sessionId });
+  it("keeps configuration and recording formats compatible", () => {
+    const sessionId = createSessionId("session-recording");
+    expect(
+      parseTerminalConfig({
+        schemaVersion: 2,
+        terminal: {
+          fontFamily: "monospace",
+          fontSize: 13,
+          scrollback: 5000,
+          theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+        },
+        shell: { defaultProfile: null, profiles: [] },
+        recording: { state: "disabled", redactedPatterns: [] },
+        ui: { theme: "default" },
+      }),
+    ).toMatchObject({ schemaVersion: 2, terminal: { scrollback: 5000 } });
     expect(
       parseTerminalRecordingExport({
         schemaVersion: 1,
         sessionId,
         exportedAt: "2026-05-11T00:00:00.000Z",
-        events: [{ type: "pty.output", sessionId, at: "2026-05-11T00:00:00.000Z", data: "x" }],
+        events: [
+          {
+            type: "pty.output",
+            sessionId,
+            at: "2026-05-11T00:00:00.000Z",
+            data: "x",
+          },
+        ],
       }),
     ).toMatchObject({ schemaVersion: 1, sessionId });
-    expect(
-      parseRendererCommand({
-        type: "session.snapshot.response",
-        requestId,
-        payload: { requestId, snapshot },
-      }),
-    ).toMatchObject({ type: "session.snapshot.response" });
-    expect(
-      parseRendererCommand({
-        type: "session.snapshot.unavailable",
-        requestId,
-        payload: { requestId, sessionId, reason: "No terminal view owns this session." },
-      }),
-    ).toMatchObject({ type: "session.snapshot.unavailable" });
-    expect(
-      parseRendererCommand({
-        type: "session.setTitle",
-        requestId,
-        payload: { sessionId, title: "vim package.json" },
-      }),
-    ).toMatchObject({ type: "session.setTitle" });
-    expect(
-      parseRendererCommand({
-        type: "session.bell",
-        requestId,
-        payload: { sessionId },
-      }),
-    ).toMatchObject({ type: "session.bell" });
-    expect(
-      isRendererSessionEvent({
-        type: "session.snapshot.request",
-        requestId,
-        payload: { sessionId },
-      }),
-    ).toBe(true);
   });
 
-  it("creates branded ids from explicit values", () => {
-    expect(createSessionId("abc")).toBe("abc");
-    expect(createRequestId("request-1")).toBe("request-1");
-  });
+  it("unwraps renderer results into values or typed errors", () => {
+    const requestId = createRequestId("request-renderer-result");
+    expect(unwrapRendererCommandResult(createRendererCommandSuccess(requestId, 42))).toBe(42);
 
-  it("serializes domain errors and narrows renderer events", () => {
-    const error = createTerminalError("session_not_found", "Missing session", {
-      sessionId: createSessionId("missing"),
-    });
-
-    expect(error).toEqual({
-      type: "session_not_found",
-      message: "Missing session",
-      sessionId: "missing",
-    });
-    expect(
-      isRendererSessionEvent({
-        type: "session.error",
-        payload: error,
-      }),
-    ).toBe(true);
-    expect(
-      isRendererSessionEvent({
-        type: "session.title",
-        payload: { sessionId: createSessionId("session-title"), title: "vim" },
-      }),
-    ).toBe(true);
-    expect(
-      isRendererSessionEvent({
-        type: "session.bell",
-        payload: { sessionId: createSessionId("session-bell") },
-      }),
-    ).toBe(true);
-    expect(isRendererSessionEvent({ type: "unknown", payload: {} })).toBe(false);
-  });
-
-  it("validates renderer command envelopes and typed command results", () => {
-    const requestId = createRequestId("request-1");
-    const sessionId = createSessionId("session-1");
-
-    expect(
-      parseRendererCommand({
-        type: "session.list",
-        requestId,
-        payload: {},
-      }),
-    ).toEqual({
-      type: "session.list",
+    const failure = createRendererCommandFailure(
       requestId,
-      payload: {},
-    });
-    expect(
-      parseRendererCommand({
-        type: "session.write",
-        requestId,
-        payload: { sessionId, data: "echo ok\r" },
-      }),
-    ).toEqual({
-      type: "session.write",
-      requestId,
-      payload: { sessionId, data: "echo ok\r" },
-    });
-    expect(() =>
-      parseRendererCommand({
-        type: "session.resize",
-        requestId,
-        payload: { sessionId, cols: 0, rows: 24 },
-      }),
-    ).toThrow();
-    expect(
-      parseRendererCommand({
-        type: "settings.saveUiTheme",
-        requestId,
-        payload: { theme: "gamer" },
-      }),
-    ).toMatchObject({
-      type: "settings.saveUiTheme",
-      payload: { theme: "gamer" },
-    });
-    expect(parseSaveUiThemeRequest({ theme: "default" })).toEqual({ theme: "default" });
-    expect(parseSaveUiThemeRequest({ theme: "classic" })).toEqual({ theme: "classic" });
-    expect(() => parseSaveUiThemeRequest({ theme: "unknown" })).toThrow();
-    expect(
-      parseRendererCommand({
-        type: "session.release",
-        requestId,
-        payload: { sessionId },
-      }),
-    ).toMatchObject({
-      type: "session.release",
-      payload: { sessionId },
-    });
-    expect(() =>
-      parseRendererCommand({
-        type: "settings.saveWorkspace",
-        requestId,
-        payload: {
-          workspace: {
-            tabs: [{ cwd: "/tmp", shell: null }],
-            activeTabIndex: 0,
-          },
-        },
-      }),
-    ).toThrow();
-    expect(parseReleaseSessionRequest({ sessionId })).toEqual({ sessionId });
-    expect(() => parseReleaseSessionRequest({ sessionId: "" })).toThrow();
-
-    const success = createRendererCommandSuccess(requestId, null);
-    expect(parseRendererCommandResult(success)).toEqual(success);
-    expect(unwrapRendererCommandResult(success)).toBeNull();
-
-    const terminalError = createTerminalError("session_not_found", "Missing", { sessionId });
-    const failure = createRendererCommandFailure(requestId, terminalError);
-    expect(parseRendererCommandResult(failure)).toEqual(failure);
+      createTerminalError("session_not_found", "Missing."),
+    );
     expect(() => unwrapRendererCommandResult(failure)).toThrow(TerminalApiError);
-    try {
-      unwrapRendererCommandResult(failure);
-    } catch (error: unknown) {
-      expect(error).toBeInstanceOf(TerminalApiError);
-      expect((error as TerminalApiError).terminalError).toEqual(terminalError);
-      expect((error as TerminalApiError).requestId).toBe(requestId);
-    }
+    expect(parseRendererCommandResult(failure)).toEqual(failure);
   });
 });

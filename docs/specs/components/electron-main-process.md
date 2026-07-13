@@ -20,7 +20,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Start and stop the local agent gateway.
 - Own Electron app lifecycle events.
 - Own settings, logs, transcripts, recordings, and app data path resolution.
-- Coordinate shutdown so PTY sessions are terminated, detached, or restored according to policy.
+- Coordinate shutdown so active PTY sessions are terminated or retained for
+  explicit cleanup when termination times out.
 - Wire the session manager, PTY host, policy engine, recorder, settings store, app logger, and agent gateway.
 - Authorize renderer-triggered sensitive operations such as recording control
   before invoking recorder or session-manager side effects.

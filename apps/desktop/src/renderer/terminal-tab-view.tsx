@@ -79,7 +79,7 @@ export function TerminalTabView({
         });
 
         if (disposed) {
-          void nextController.dispose({ sessionLifecycle: "terminate" });
+          void nextController.dispose();
           return;
         }
 
@@ -109,7 +109,7 @@ export function TerminalTabView({
       disposed = true;
       resizeObserver.disconnect();
       registerController(tab.id, null);
-      void controller.current?.dispose({ sessionLifecycle: "terminate" });
+      void controller.current?.dispose();
       controller.current = null;
     };
   }, [

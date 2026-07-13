@@ -6,85 +6,39 @@ Accepted component architecture.
 
 ## Purpose
 
-The terminal view wraps xterm.js and owns terminal rendering behavior in the renderer. It displays PTY output, captures terminal input, and exposes observable screen state to the screen observer.
-
-This component is part of the [Terminal Architecture Spec](../terminal-architecture.md).
+The renderer terminal view is a human-visible projection of canonical
+main-process terminal state. It uses xterm.js for rendering and input capture
+but does not define terminal truth.
 
 ## Responsibilities
 
-- Create and dispose xterm.js `Terminal` instances.
-- Load required xterm.js addons.
-- Render PTY output using `terminal.write`.
-- Capture user input using xterm.js input events.
-- Support copy, paste, selection, links, search, bell, title changes, and accessibility settings.
-- Fit terminal rows and columns to container size.
-- Report terminal resize events to the main process.
-- Surface visible buffer state to the [Screen Observer](./screen-observer.md).
+- Create and dispose a renderer xterm.js instance.
+- Bootstrap from a serialized canonical framebuffer and output sequence.
+- Apply later output events in sequence without duplication.
+- Forward xterm-generated input bytes through the preload bridge.
+- Fit the terminal and request canonical resize.
+- Report human viewport scrolling.
+- Apply canonical viewport changes requested by an agent.
+- Preserve selection, copy, paste, mouse reporting, accessibility, and focus.
 
-## Boundaries
+The canonical model derives title, bell, cursor, wrapping, and alternate-screen
+state from PTY output. The renderer does not report those values back to main.
 
-The terminal view must not:
+## Lifecycle And Disposal
 
-- Call `node-pty`.
-- Spawn child processes.
-- Own session lifecycle policy.
-- Interpret agent permissions.
-- Treat output bytes as application logs.
+A renderer view may appear or disappear without changing PTY lifecycle.
+Programmatic presentation changes may remove a view while leaving the session
+headless. A human close action on a live terminal uses the confirmed session
+close path.
 
-## Terminal Behavior
-
-The terminal view must preserve xterm.js behavior for:
-
-- ANSI parsing and rendering.
-- Cursor rendering.
-- Scrollback.
-- Selection.
-- Alternate screen.
-- Mouse reporting modes.
-- Terminal title and bell events.
-- Raw keyboard and paste input.
-
-Title and bell notifications originate in renderer-owned xterm.js state, but
-they must be reported through the preload API to the session manager. Renderer
-UI updates from the resulting canonical session events instead of treating
-local xterm callbacks as the source of truth.
-
-When the backing session exits, the terminal view keeps the final buffer visible
-but stops forwarding new keyboard or paste input for that session. Post-exit
-typing is user input against a closed PTY, not an application failure. Renderer
-resizes after exit can still refit the local terminal view, but they must not
-send resize requests to the closed PTY session.
-
-The exited or failed state must be visible inside the terminal surface. A local
-cursor may remain visible as part of xterm.js buffer rendering, so the renderer
-must add explicit status affordance rather than relying on cursor behavior.
-
-## Resize Behavior
-
-Resize must update both visible terminal geometry and the PTY session.
-
-- Container resize updates xterm.js rows and columns.
-- The calculated rows and columns are sent through the preload API.
-- The session manager forwards resize to the PTY host.
-- Resize events are recorded when recording is enabled.
-
-## Disposal Behavior
-
-Disposing a terminal view must distinguish renderer cleanup from terminal
-session termination.
-
-- Detaching a terminal view disposes xterm.js resources and event
-  subscriptions while leaving the PTY session running.
-- Terminating a terminal view disposes renderer resources and sends an explicit
-  kill request through the preload API.
-- Phase 1 uses termination for single-session app unmounts because there is no
-  detach or reattach UI yet.
+Exited terminals retain their final rendered state while their presented view
+exists, but do not forward input or PTY resize operations.
 
 ## Testing Expectations
 
-- PTY output is rendered through xterm.js.
-- User input flows through the input router and preload API.
-- Resize changes produce stable rows and columns.
-- Alternate-screen content is observable.
-- Dispose behavior covers both detached and terminated sessions.
-- Copy, paste, selection, title, bell, and link behavior are covered through renderer or E2E tests.
+- Bootstrap and live output produce the same visible state as the canonical
+  model.
+- Attach races lose and duplicate no output.
+- Human input reaches the shared raw input operation.
+- Human and agent scrolling remain synchronized without feedback loops.
+- Exited sessions stay visible and reject input.

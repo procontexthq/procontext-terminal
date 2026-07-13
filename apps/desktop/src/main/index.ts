@@ -7,7 +7,7 @@ import {
   resolveAgentGatewayDescriptorPath,
   startAgentGateway,
   type AgentGateway,
-  type AgentGatewayTerminalServices,
+  type AgentTerminalService,
 } from "@terminal/agent-gateway";
 import {
   defaultTerminalConfig,
@@ -19,29 +19,13 @@ import { createDefaultAgentPolicy, createDefaultTerminalPolicy } from "@terminal
 import { NodePtyHost } from "@terminal/pty-host";
 import { FileTerminalRecorder, createPatternRedactor } from "@terminal/recorder";
 import { TerminalSessionManager } from "@terminal/session-core";
-import type { TerminalConfig, TerminalSessionSnapshot } from "@terminal/protocol";
+import type { TerminalConfig, TerminalSessionSummary } from "@terminal/protocol";
 
-import {
-  broadcastRendererEvent,
-  createScreenSnapshotService,
-  IPC_CHANNELS,
-  registerTerminalIpc,
-  type ScreenSnapshotService,
-} from "./ipc";
+import { broadcastRendererEvent, IPC_CHANNELS, registerTerminalIpc } from "./ipc";
 import { resolveAppShortcut, type AppShortcutPlatform } from "../shared/app-shortcuts";
-import {
-  createAgentSessionDisplayService,
-  type AgentSessionDisplayService,
-} from "./agent-session-display";
 import { resolveDefaultTerminalCwd } from "./default-terminal-cwd";
 import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
-import {
-  waitForPrompt,
-  waitForQuiet,
-  waitForScreenChange,
-  waitForText,
-  type TerminalCommandServices,
-} from "./terminal-command-handler";
+import { createTerminalPresentationRegistry } from "./presentation-registry";
 import { attachWindowCloseSessionCleanup } from "./window-lifecycle";
 
 let logger = createAppLogger({
@@ -71,7 +55,7 @@ const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
     });
   },
 });
-const screenSnapshotService = createScreenSnapshotService();
+const presentationRegistry = createTerminalPresentationRegistry();
 const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
 let agentGateway: AgentGateway | null = null;
@@ -244,14 +228,14 @@ void app
       redactors: [createPatternRedactor(terminalConfig.recording.redactedPatterns)],
     });
 
-    unregisterIpc = registerTerminalIpc(
+    unregisterIpc = registerTerminalIpc({
       sessionManager,
-      terminalPolicy,
+      presentationRegistry,
+      policy: terminalPolicy,
       logger,
-      () => terminalConfig,
+      getConfig: () => terminalConfig,
       saveConfig,
-      screenSnapshotService,
-    );
+    });
     let startupWindowCreated = false;
     await createMainWindow()
       .then(() => {
@@ -267,7 +251,7 @@ void app
       if (startupSession.status === "settled") {
         logger.info("agent", "gateway_startup_session_ready", {
           sessionId: startupSession.session.sessionId,
-          sessionState: startupSession.session.state,
+          sessionState: startupSession.session.lifecycle,
         });
       } else {
         logger.warn("agent", "gateway_startup_session_timeout", {
@@ -275,18 +259,9 @@ void app
         });
       }
     }
-    const agentSessionDisplay = createAgentSessionDisplayService({
-      getWindows: () => BrowserWindow.getAllWindows(),
-      createWindow: createMainWindow,
-      logger,
-    });
     agentGateway = await startAgentGateway({
       descriptorPath: resolveAgentGatewayDescriptorPath(app.getPath("userData")),
-      services: createAgentGatewayServices(
-        sessionManager,
-        screenSnapshotService,
-        agentSessionDisplay,
-      ),
+      services: createAgentGatewayServices(sessionManager),
       policy: createDefaultAgentPolicy(),
       audit: (event) => {
         logger.info("agent", "audit", {
@@ -415,54 +390,24 @@ async function shutdownApp() {
   return sessionManager.shutdown({ timeoutMs: 1500 });
 }
 
-function createAgentGatewayServices(
-  manager: TerminalSessionManager,
-  snapshotService: ScreenSnapshotService,
-  agentSessionDisplay: AgentSessionDisplayService,
-): AgentGatewayTerminalServices {
-  const waitServices: TerminalCommandServices = {
-    sessionManager: manager,
-    requestScreenSnapshot: (sessionId, timeoutMs) =>
-      snapshotService.requestScreenSnapshot(sessionId, timeoutMs),
-    resolveSnapshotResponse: (requestId, snapshot) =>
-      snapshotService.resolveSnapshotResponse(requestId, snapshot),
-    rejectSnapshotResponse: (requestId, sessionId, reason) =>
-      snapshotService.rejectSnapshotResponse(requestId, sessionId, reason),
-    getConfig: () => terminalConfig,
-    saveConfig,
-    policy: terminalPolicy,
-    logger,
-  };
-
+function createAgentGatewayServices(manager: TerminalSessionManager): AgentTerminalService {
   return {
-    listSessions: () => manager.listSessions(),
-    createSession: (request) => manager.createSession(request),
-    displaySession: (snapshot) => agentSessionDisplay.displaySession(snapshot),
-    getSession: (request) => manager.getSession(request),
-    write: (request) => manager.write(request),
-    sendKey: (request) => manager.sendKey(request),
-    paste: (request) => manager.paste(request),
-    sendMouse: (request) => manager.sendMouse(request),
-    interrupt: (request) => manager.interrupt(request),
+    list: () => manager.listSessions(),
+    get: (request) => manager.getSession(request),
+    create: (request) => manager.createSession({ ...request, createdBy: "agent" }),
+    input: (request) => manager.input({ ...request, origin: "agent" }),
     resize: (request) => manager.resize(request),
-    readRecentOutput: (request) => manager.readRecentOutput(request),
-    captureScreen: (request) =>
-      snapshotService.requestScreenSnapshot(request.sessionId, request.timeoutMs),
-    waitForText: (request) => waitForText(request, waitServices),
-    waitForQuiet: (request) => waitForQuiet(request, waitServices),
-    waitForScreenChange: (request) => waitForScreenChange(request, waitServices),
-    waitForPrompt: (request) => waitForPrompt(request, waitServices),
-    kill: (request) => manager.kill(request),
-    release: (request) => manager.releaseSession(request),
+    scroll: (request) => manager.scroll(request),
+    observe: (request, signal) => manager.observe(request, signal),
+    close: (request) => manager.close(request),
     startRecording: (request) => manager.startRecording(request),
     stopRecording: (request) => manager.stopRecording(request),
     exportRecording: (request) => manager.exportRecording(request),
-    onSessionEvent: (handler) => manager.onSessionEvent(handler),
   };
 }
 
 type InitialHumanSessionWaitResult =
-  | { status: "settled"; session: TerminalSessionSnapshot }
+  | { status: "settled"; session: TerminalSessionSummary }
   | { status: "timed_out"; timeoutMs: number };
 
 function waitForInitialHumanSessionSettled(
@@ -501,10 +446,10 @@ function waitForInitialHumanSessionSettled(
 
 function findSettledHumanSession(
   manager: TerminalSessionManager,
-): TerminalSessionSnapshot | undefined {
+): TerminalSessionSummary | undefined {
   return manager
     .listSessions()
-    .find((session) => session.createdBy === "human" && session.state !== "creating");
+    .find((session) => session.createdBy === "human" && session.lifecycle !== "creating");
 }
 
 function sanitizeUrlForLog(value: string): string {

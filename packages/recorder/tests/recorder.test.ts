@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { createSessionId, type TerminalSessionSnapshot } from "@terminal/protocol";
+import { createSessionId, type TerminalSessionSummary } from "@terminal/protocol";
 
 import { FileTerminalRecorder, createPatternRedactor } from "../src/index";
 
@@ -242,18 +242,36 @@ describe("FileTerminalRecorder", () => {
   });
 });
 
-function snapshot(sessionId: string): TerminalSessionSnapshot {
+function snapshot(sessionId: string): TerminalSessionSummary {
   return {
     sessionId: createSessionId(sessionId),
-    state: "running",
+    lifecycle: "running",
     shell: "/bin/sh",
     cwd: "/tmp",
-    cols: 80,
-    rows: 24,
+    dimensions: { cols: 80, rows: 24 },
     title: null,
     createdBy: "human",
     createdAt: "2026-05-11T00:00:00.000Z",
     updatedAt: "2026-05-11T00:00:00.000Z",
+    observationVersion: 1,
+    presentation: {
+      state: "headless",
+      windowVisible: false,
+      windowFocused: false,
+    },
+    shellIntegration: {
+      status: "unavailable",
+      capabilities: {
+        prompt: false,
+        commandStart: false,
+        commandFinish: false,
+        commandLine: false,
+        exitCode: false,
+        cwd: false,
+      },
+    },
+    command: { state: "unknown" },
+    recording: { state: "inactive" },
   };
 }
 

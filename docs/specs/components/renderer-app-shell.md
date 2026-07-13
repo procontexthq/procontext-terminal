@@ -48,7 +48,8 @@ Examples of canonical session state:
 
 - Session ID.
 - Shell, cwd, rows, columns, title.
-- Running, detached, exited, or failed lifecycle state.
+- Running, exiting, exited, or failed lifecycle state plus independent
+  presentation state.
 - Exit code and signal.
 - Session owner and creation origin.
 
@@ -96,10 +97,9 @@ The first multi-session milestone supports tabs only.
   The visible terminal frame, padding, scroll area, and xterm theme background
   must use the same resolved theme background so theme switching does not leave
   mismatched gutter colors.
-- Startup reconciliation attaches visible tabs for detached live sessions so
-  sessions that were created while no renderer was available, or detached after
-  renderer destruction, become human-visible when a renderer is available
-  again.
+- Startup reconciliation may create visible views for live headless sessions
+  according to presentation policy. A missing renderer view never changes PTY
+  lifecycle.
 - Startup creates one default human terminal tab. Human tab count, tab order,
   active tab, cwd, and shell launch metadata are not persisted or restored from
   settings across app restarts.
@@ -111,6 +111,6 @@ The first multi-session milestone supports tabs only.
 ## Testing Expectations
 
 - UI actions call the preload API rather than main-process or PTY modules.
-- Session status renders from session snapshots and events.
+- Session status renders from canonical session summaries and observations.
 - Agent activity and policy-denial states are visible to users.
 - Closing a tab or pane follows the configured detach or terminate behavior.

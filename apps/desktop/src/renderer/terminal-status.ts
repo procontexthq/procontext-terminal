@@ -1,33 +1,20 @@
-import type { RendererSessionEvent, SessionState } from "@terminal/protocol";
+import type { RendererSessionEvent, TerminalLifecycleState } from "@terminal/protocol";
 
-export type TerminalUiStatus = "starting" | SessionState;
+export type TerminalUiStatus = "starting" | TerminalLifecycleState;
 
 export function nextTerminalStatus(
   current: TerminalUiStatus,
   event: RendererSessionEvent,
 ): TerminalUiStatus {
   switch (event.type) {
-    case "session.created":
-      return event.payload.state;
-    case "session.attached":
-      return "running";
-    case "session.detached":
-      return "detached";
-    case "session.exited":
-      return "exited";
-    case "session.error":
-      return current;
-    case "session.title":
-    case "session.bell":
-      return current;
+    case "session.updated":
+      return event.payload.lifecycle;
     case "session.output":
-      return outputStatus(current);
-    case "session.snapshot.request":
+      return current === "starting" || current === "creating" ? "running" : current;
+    case "session.viewport":
+    case "session.bell":
+    case "session.error":
     case "agent.activity":
       return current;
   }
-}
-
-function outputStatus(status: TerminalUiStatus): TerminalUiStatus {
-  return status === "starting" || status === "creating" ? "running" : status;
 }

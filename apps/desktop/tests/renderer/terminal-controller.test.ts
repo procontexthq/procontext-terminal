@@ -1,814 +1,257 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it, vi } from "vitest";
 
-import type {
-  RendererTerminalApi,
-  RendererSessionEvent,
-  RequestId,
-  SessionId,
-  TerminalSessionSnapshot,
+import {
+  createSessionId,
+  type RendererSessionEvent,
+  type RendererTerminalApi,
+  type TerminalSessionSummary,
 } from "@terminal/protocol";
 
-import { createTerminalSession, type TerminalLike } from "../../src/renderer/terminal-controller";
+import {
+  createTerminalSession,
+  type FitAddonLike,
+  type TerminalLike,
+} from "../../src/renderer/terminal-controller";
+
+const sessionId = createSessionId("session-1");
+
+describe("terminal controller", () => {
+  it("subscribes before bootstrap and applies only output newer than its sequence fence", async () => {
+    const terminal = new FakeTerminal();
+    const { api, emit } = createApi();
+    vi.mocked(api.openView).mockImplementationOnce(() => {
+      emit(outputEvent(7, "duplicate"));
+      emit(outputEvent(8, "live"));
+      return Promise.resolve({
+        session: createSummary(),
+        serialized: "bootstrap",
+        sequence: 7,
+        viewportY: 3,
+      });
+    });
+
+    await createController(api, terminal);
+
+    expect(terminal.writes).toEqual(["bootstrap", "live"]);
+    expect(terminal.scrollToLine).toHaveBeenCalledWith(3);
+  });
+
+  it("forwards keyboard, paste, control, and TUI bytes through one raw input call", async () => {
+    const terminal = new FakeTerminal();
+    const { api } = createApi();
+    await createController(api, terminal);
+
+    terminal.emitData("\u001b[A\u0003pasted text");
+
+    expect(api.input).toHaveBeenCalledWith({
+      sessionId,
+      input: "\u001b[A\u0003pasted text",
+    });
+  });
+
+  it("reports human scrolling and applies canonical agent scrolling without feedback", async () => {
+    const terminal = new FakeTerminal();
+    const { api, emit } = createApi();
+    await createController(api, terminal);
+
+    terminal.emitScroll(5);
+    emit({
+      type: "session.viewport",
+      payload: { sessionId, viewportY: 2, observationVersion: 4 },
+    });
+    terminal.emitScroll(2);
+    await Promise.resolve();
+
+    expect(api.reportViewport).toHaveBeenCalledTimes(1);
+    expect(api.reportViewport).toHaveBeenCalledWith({ sessionId, viewportY: 5 });
+    expect(terminal.scrollToLine).toHaveBeenCalledWith(2);
+  });
+
+  it("stops accepting input when canonical lifecycle exits", async () => {
+    const terminal = new FakeTerminal();
+    const { api, emit } = createApi();
+    await createController(api, terminal);
+
+    emit({
+      type: "session.updated",
+      payload: { ...createSummary(), lifecycle: "exited" },
+    });
+    terminal.emitData("ignored");
+
+    expect(api.input).not.toHaveBeenCalled();
+  });
+
+  it("disposes a view without terminating its session by default", async () => {
+    const terminal = new FakeTerminal();
+    const { api } = createApi();
+    const controller = await createController(api, terminal);
+
+    await expect(controller.dispose()).resolves.toBe(true);
+
+    expect(api.close).not.toHaveBeenCalled();
+    expect(api.closeView).toHaveBeenCalledWith({ sessionId });
+    expect(terminal.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("terminates before closing a user-requested tab", async () => {
+    const terminal = new FakeTerminal();
+    const { api } = createApi();
+    const controller = await createController(api, terminal);
+
+    await expect(controller.dispose({ sessionLifecycle: "terminate" })).resolves.toBe(true);
+
+    expect(api.close).toHaveBeenCalledWith({ sessionId });
+    expect(api.closeView).toHaveBeenCalledWith({ sessionId });
+  });
+
+  it("keeps the view alive while termination remains pending", async () => {
+    const terminal = new FakeTerminal();
+    const { api } = createApi();
+    vi.mocked(api.close).mockResolvedValueOnce({ status: "termination_pending" });
+    const controller = await createController(api, terminal);
+
+    await expect(controller.dispose({ sessionLifecycle: "terminate" })).resolves.toBe(false);
+
+    expect(api.closeView).not.toHaveBeenCalled();
+    expect(terminal.dispose).not.toHaveBeenCalled();
+  });
+});
 
 class FakeTerminal implements TerminalLike {
-  readonly options: NonNullable<TerminalLike["options"]> = {};
-  readonly rows: number = 24;
   readonly writes: string[] = [];
-  readonly open = vi.fn();
+  readonly scrollToLine = vi.fn<(line: number) => void>();
+  readonly dispose = vi.fn();
   readonly focus = vi.fn();
   readonly refresh = vi.fn();
-  readonly dispose = vi.fn();
-  readonly dataSubscriptionDispose = vi.fn();
-  readonly titleSubscriptionDispose = vi.fn();
-  readonly bellSubscriptionDispose = vi.fn();
-  private onDataHandler: ((data: string) => void) | null = null;
-  private onTitleHandler: ((title: string) => void) | null = null;
-  private onBellHandler: (() => void) | null = null;
+  options = {};
+  rows = 24;
+  private dataHandler: (data: string) => void = () => undefined;
+  private scrollHandler: (viewportY: number) => void = () => undefined;
+
+  open(): void {}
+
+  write(data: string, callback?: () => void): void {
+    this.writes.push(data);
+    callback?.();
+  }
 
   onData(handler: (data: string) => void): { dispose: () => void } {
-    this.onDataHandler = handler;
-    return { dispose: this.dataSubscriptionDispose };
+    this.dataHandler = handler;
+    return { dispose: vi.fn() };
   }
 
-  write(data: string): void {
-    this.writes.push(data);
+  onScroll(handler: (viewportY: number) => void): { dispose: () => void } {
+    this.scrollHandler = handler;
+    return { dispose: vi.fn() };
   }
 
-  onTitleChange(handler: (title: string) => void): { dispose: () => void } {
-    this.onTitleHandler = handler;
-    return { dispose: this.titleSubscriptionDispose };
-  }
-
-  onBell(handler: () => void): { dispose: () => void } {
-    this.onBellHandler = handler;
-    return { dispose: this.bellSubscriptionDispose };
-  }
+  loadAddon(): void {}
 
   emitData(data: string): void {
-    this.onDataHandler?.(data);
+    this.dataHandler(data);
   }
 
-  emitTitle(title: string): void {
-    this.onTitleHandler?.(title);
-  }
-
-  emitBell(): void {
-    this.onBellHandler?.();
+  emitScroll(viewportY: number): void {
+    this.scrollHandler(viewportY);
   }
 }
 
-class ObservableFakeTerminal extends FakeTerminal {
-  readonly cols = 80;
-  override readonly rows: number = 2;
-  readonly buffer = {
-    active: {
-      type: "normal" as const,
-      cursorX: 3,
-      cursorY: 1,
-      viewportY: 0,
-      length: 2,
-      getLine: (row: number) =>
-        row === 0
-          ? {
-              isWrapped: false,
-              translateToString: () => "first row",
-            }
-          : {
-              isWrapped: false,
-              translateToString: () => "second row",
-            },
-    },
+async function createController(api: RendererTerminalApi, terminal: FakeTerminal) {
+  const fitAddon: FitAddonLike = {
+    fit: vi.fn(),
+    proposeDimensions: vi.fn(() => ({ cols: 80, rows: 24 })),
   };
+  return await createTerminalSession({
+    api,
+    element: {} as HTMLElement,
+    attachSessionId: sessionId,
+    createTerminal: () => terminal,
+    createFitAddon: () => fitAddon,
+  });
 }
 
-function fakeApi(): RendererTerminalApi & {
+function createApi(): {
+  api: RendererTerminalApi;
   emit: (event: RendererSessionEvent) => void;
-  unsubscribeSessionEvent: ReturnType<typeof vi.fn>;
-  unsubscribeTerminalEvent: ReturnType<typeof vi.fn>;
 } {
-  let sessionHandler: ((event: RendererSessionEvent) => void) | null = null;
-  let terminalHandler: ((event: RendererSessionEvent) => void) | null = null;
-  const unsubscribeSessionEvent = vi.fn(() => {
-    sessionHandler = null;
-  });
-  const unsubscribeTerminalEvent = vi.fn(() => {
-    terminalHandler = null;
-  });
-  const snapshot: TerminalSessionSnapshot = {
-    sessionId: "session-1" as SessionId,
-    state: "running",
-    shell: "/bin/sh",
-    cwd: "/tmp",
-    cols: 80,
-    rows: 24,
-    title: null,
-    createdBy: "human",
-    createdAt: "2026-05-09T00:00:00.000Z",
-    updatedAt: "2026-05-09T00:00:00.000Z",
-  };
-  const terminalConfig = {
-    schemaVersion: 2 as const,
-    terminal: {
-      fontFamily: "monospace",
-      fontSize: 13,
-      scrollback: 5000,
-      theme: {
-        background: "#000",
-        foreground: "#fff",
-        cursor: "#fff",
-      },
-    },
-    shell: { defaultProfile: null, profiles: [] },
-    ui: { theme: "default" as const },
-    recording: {
-      state: "disabled" as const,
-      redactedPatterns: [],
-    },
-  };
-  return {
-    createSession: vi.fn<RendererTerminalApi["createSession"]>(() => Promise.resolve(snapshot)),
-    listSessions: vi.fn<RendererTerminalApi["listSessions"]>(() => Promise.resolve([snapshot])),
-    write: vi.fn<RendererTerminalApi["write"]>(() => Promise.resolve()),
-    sendKey: vi.fn<RendererTerminalApi["sendKey"]>(() => Promise.resolve()),
-    paste: vi.fn<RendererTerminalApi["paste"]>(() => Promise.resolve()),
-    sendMouse: vi.fn<RendererTerminalApi["sendMouse"]>(() => Promise.resolve()),
-    interrupt: vi.fn<RendererTerminalApi["interrupt"]>(() => Promise.resolve()),
-    resize: vi.fn<RendererTerminalApi["resize"]>(() => Promise.resolve()),
-    kill: vi.fn<RendererTerminalApi["kill"]>(() => Promise.resolve()),
-    detachSession: vi.fn<RendererTerminalApi["detachSession"]>(() =>
-      Promise.resolve({ ...snapshot, state: "detached" }),
-    ),
-    attachSession: vi.fn<RendererTerminalApi["attachSession"]>(() => Promise.resolve(snapshot)),
-    readRecentOutput: vi.fn<RendererTerminalApi["readRecentOutput"]>(() =>
+  let subscriber: (event: RendererSessionEvent) => void = () => undefined;
+  const summary = createSummary();
+  const api: RendererTerminalApi = {
+    createSession: vi.fn(() => Promise.resolve(summary)),
+    listSessions: vi.fn(() => Promise.resolve([summary])),
+    getSession: vi.fn(() => Promise.resolve(summary)),
+    input: vi.fn(() => Promise.resolve({ accepted: true as const, observationVersion: 1 })),
+    resize: vi.fn(() => Promise.resolve({ observationVersion: 1 })),
+    scroll: vi.fn(() => Promise.resolve({ status: "unchanged" as const, observationVersion: 1 })),
+    close: vi.fn(() => Promise.resolve({ status: "closed" as const, exitCode: 0, signal: null })),
+    openView: vi.fn(() =>
       Promise.resolve({
-        sessionId: snapshot.sessionId,
-        data: "",
-        maxBytes: 100_000,
-        capturedAt: "2026-05-09T00:00:00.000Z",
+        session: summary,
+        serialized: "bootstrap",
+        sequence: 0,
+        viewportY: 0,
       }),
     ),
-    captureScreen: vi.fn<RendererTerminalApi["captureScreen"]>(() =>
+    closeView: vi.fn(() => Promise.resolve()),
+    reportViewport: vi.fn(() => Promise.resolve()),
+    startRecording: vi.fn(() => Promise.resolve()),
+    stopRecording: vi.fn(() => Promise.resolve()),
+    exportRecording: vi.fn(() =>
       Promise.resolve({
-        sessionId: snapshot.sessionId,
-        cols: 80,
-        rows: 24,
-        cursor: { x: 0, y: 0, visible: true },
-        alternateScreen: false,
-        title: null,
-        viewport: [],
-        capturedAt: "2026-05-09T00:00:00.000Z",
-      }),
-    ),
-    respondToSnapshot: vi.fn<RendererTerminalApi["respondToSnapshot"]>(() => Promise.resolve()),
-    reportSnapshotUnavailable: vi.fn<RendererTerminalApi["reportSnapshotUnavailable"]>(() =>
-      Promise.resolve(),
-    ),
-    setTitle: vi.fn<RendererTerminalApi["setTitle"]>(() => Promise.resolve(snapshot)),
-    reportBell: vi.fn<RendererTerminalApi["reportBell"]>(() => Promise.resolve()),
-    waitForText: vi.fn<RendererTerminalApi["waitForText"]>(() =>
-      Promise.resolve({ sessionId: snapshot.sessionId, matchedAt: "2026-05-09T00:00:00.000Z" }),
-    ),
-    waitForScreenChange: vi.fn<RendererTerminalApi["waitForScreenChange"]>(() =>
-      Promise.resolve({ sessionId: snapshot.sessionId, matchedAt: "2026-05-09T00:00:00.000Z" }),
-    ),
-    waitForQuiet: vi.fn<RendererTerminalApi["waitForQuiet"]>(() =>
-      Promise.resolve({ sessionId: snapshot.sessionId, matchedAt: "2026-05-09T00:00:00.000Z" }),
-    ),
-    waitForPrompt: vi.fn<RendererTerminalApi["waitForPrompt"]>(() =>
-      Promise.resolve({ sessionId: snapshot.sessionId, matchedAt: "2026-05-09T00:00:00.000Z" }),
-    ),
-    startRecording: vi.fn<RendererTerminalApi["startRecording"]>(() => Promise.resolve()),
-    stopRecording: vi.fn<RendererTerminalApi["stopRecording"]>(() => Promise.resolve()),
-    exportRecording: vi.fn<RendererTerminalApi["exportRecording"]>(() =>
-      Promise.resolve({
-        schemaVersion: 1,
-        sessionId: snapshot.sessionId,
-        exportedAt: "2026-05-09T00:00:00.000Z",
+        schemaVersion: 1 as const,
+        sessionId,
+        exportedAt: "2026-07-13T00:00:00.000Z",
         events: [],
       }),
     ),
-    getSession: vi.fn<RendererTerminalApi["getSession"]>(() => Promise.resolve(snapshot)),
-    getConfig: vi.fn<RendererTerminalApi["getConfig"]>(() => Promise.resolve(terminalConfig)),
-    saveUiTheme: vi.fn<RendererTerminalApi["saveUiTheme"]>((theme) =>
-      Promise.resolve({ ...terminalConfig, ui: { theme } }),
-    ),
-    releaseSession: vi.fn<RendererTerminalApi["releaseSession"]>(() => Promise.resolve()),
-    onAppShortcut: vi.fn<RendererTerminalApi["onAppShortcut"]>(() => () => undefined),
-    onTerminalEvent: vi.fn<RendererTerminalApi["onTerminalEvent"]>((nextHandler) => {
-      terminalHandler = nextHandler;
-      return unsubscribeTerminalEvent;
+    getConfig: vi.fn(),
+    saveUiTheme: vi.fn(),
+    onAppShortcut: vi.fn(() => vi.fn()),
+    onTerminalEvent: vi.fn((handler: (event: RendererSessionEvent) => void) => {
+      subscriber = handler;
+      return vi.fn();
     }),
-    onSessionEvent: vi.fn<RendererTerminalApi["onSessionEvent"]>((_sessionId, nextHandler) => {
-      sessionHandler = nextHandler;
-      return unsubscribeSessionEvent;
-    }),
-    emit: (event) => {
-      terminalHandler?.(event);
-      sessionHandler?.(event);
-    },
-    unsubscribeSessionEvent,
-    unsubscribeTerminalEvent,
+    onSessionEvent: vi.fn(() => vi.fn()),
+  };
+  return { api, emit: (event) => subscriber(event) };
+}
+
+function outputEvent(sequence: number, data: string): RendererSessionEvent {
+  return {
+    type: "session.output",
+    payload: { sessionId, sequence, data },
   };
 }
 
-describe("terminal controller", () => {
-  it("creates a terminal session, forwards input, writes output, and resizes", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    const element = document.createElement("div");
-
-    const controller = await createTerminalSession({
-      api,
-      element,
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-    });
-
-    terminal.emitData("echo ok\r");
-    api.emit({
-      type: "session.output",
-      payload: { sessionId: controller.sessionId, data: "ok" },
-    });
-    await controller.resize();
-
-    const createSession = vi.mocked(api.createSession);
-    const write = vi.mocked(api.write);
-    const resize = vi.mocked(api.resize);
-    expect(createSession).toHaveBeenCalledWith({ cols: 80, rows: 24 });
-    expect(write).toHaveBeenCalledWith({ sessionId: controller.sessionId, data: "echo ok\r" });
-    expect(terminal.writes).toEqual(["ok"]);
-    expect(resize).toHaveBeenCalledWith({ sessionId: controller.sessionId, cols: 80, rows: 24 });
-  });
-
-  it("updates terminal font family without recreating the session", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-    });
-
-    controller.setFontFamily('"JetBrains Mono", monospace');
-
-    expect(terminal.options.fontFamily).toBe('"JetBrains Mono", monospace');
-    expect(terminal.refresh).toHaveBeenCalledWith(0, 23);
-    expect(api.createSession).toHaveBeenCalledOnce();
-  });
-
-  it("updates terminal theme without recreating the session", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-    });
-
-    controller.setTheme({
-      background: "#07100d",
-      foreground: "#e6fff3",
-      cursor: "#78ff8d",
-    });
-
-    expect(terminal.options.theme).toEqual({
-      background: "#07100d",
-      foreground: "#e6fff3",
-      cursor: "#78ff8d",
-    });
-    expect(terminal.refresh).toHaveBeenCalledWith(0, 23);
-    expect(api.createSession).toHaveBeenCalledOnce();
-  });
-
-  it("buffers startup output emitted before session creation resolves", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    let resolveCreateSession!: (snapshot: TerminalSessionSnapshot) => void;
-    const pendingCreateSession = new Promise<TerminalSessionSnapshot>((resolve) => {
-      resolveCreateSession = resolve;
-    });
-    const earlySnapshot: TerminalSessionSnapshot = {
-      sessionId: "session-early" as SessionId,
-      state: "running",
-      shell: "/bin/sh",
-      cwd: "/tmp",
-      cols: 80,
-      rows: 24,
-      title: null,
-      createdBy: "human",
-      createdAt: "2026-05-09T00:00:00.000Z",
-      updatedAt: "2026-05-09T00:00:00.000Z",
-    };
-    vi.mocked(api.createSession).mockReturnValueOnce(pendingCreateSession);
-
-    const controllerPromise = createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-    });
-    api.emit({
-      type: "session.output",
-      payload: { sessionId: earlySnapshot.sessionId, data: "startup prompt" },
-    });
-    resolveCreateSession(earlySnapshot);
-    await controllerPromise;
-
-    expect(terminal.writes).toEqual(["startup prompt"]);
-  });
-
-  it("passes launch options to session creation and focuses the terminal", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      session: { cwd: "/workspace", shell: "/bin/zsh" },
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 100, rows: 30 }),
-      }),
-    });
-
-    controller.focus();
-
-    expect(api.createSession).toHaveBeenCalledWith({
-      cols: 100,
-      rows: 30,
-      cwd: "/workspace",
-      shell: "/bin/zsh",
-    });
-    expect(terminal.focus).toHaveBeenCalledOnce();
-  });
-
-  it("reports title and bell events from xterm", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    const onTitleChange = vi.fn();
-    const onBell = vi.fn();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-      onTitleChange,
-      onBell,
-    });
-
-    terminal.emitTitle("vim package.json");
-    terminal.emitBell();
-    await Promise.resolve();
-    api.emit({
-      type: "session.title",
-      payload: { sessionId: controller.sessionId, title: "vim package.json" },
-    });
-    api.emit({
-      type: "session.bell",
-      payload: { sessionId: controller.sessionId },
-    });
-    await controller.dispose();
-
-    expect(api.setTitle).toHaveBeenCalledWith({
-      sessionId: controller.sessionId,
-      title: "vim package.json",
-    });
-    expect(api.reportBell).toHaveBeenCalledWith({ sessionId: controller.sessionId });
-    expect(onTitleChange).toHaveBeenCalledWith("vim package.json");
-    expect(onBell).toHaveBeenCalledOnce();
-    expect(terminal.titleSubscriptionDispose).toHaveBeenCalledOnce();
-    expect(terminal.bellSubscriptionDispose).toHaveBeenCalledOnce();
-  });
-
-  it("reattaches to an existing session and replays recent output", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    const sessionId = "session-1" as SessionId;
-    vi.mocked(api.readRecentOutput).mockResolvedValueOnce({
-      sessionId,
-      data: "replayed output",
-      maxBytes: 100_000,
-      capturedAt: "2026-05-09T00:00:00.000Z",
-    });
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      attachSessionId: sessionId,
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-    });
-
-    expect(controller.sessionId).toBe(sessionId);
-    expect(api.createSession).not.toHaveBeenCalled();
-    expect(api.attachSession).toHaveBeenCalledWith({ sessionId });
-    expect(api.readRecentOutput).toHaveBeenCalledWith({ sessionId, maxBytes: 100_000 });
-    expect(terminal.writes).toEqual(["replayed output"]);
-  });
-
-  it("responds to screen snapshot requests from observable xterm buffers", async () => {
-    const terminal = new ObservableFakeTerminal();
-    const api = fakeApi();
-    const requestId = "request-1" as RequestId;
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-    });
-
-    terminal.emitTitle("active title");
-    await Promise.resolve();
-    api.emit({
-      type: "session.title",
-      payload: { sessionId: controller.sessionId, title: "active title" },
-    });
-    api.emit({
-      type: "session.snapshot.request",
-      requestId,
-      payload: { sessionId: controller.sessionId },
-    });
-    await Promise.resolve();
-
-    expect(api.respondToSnapshot).toHaveBeenCalledOnce();
-    const response = vi.mocked(api.respondToSnapshot).mock.calls[0]?.[0];
-    expect(response).toMatchObject({
-      requestId,
-      snapshot: {
-        sessionId: controller.sessionId,
-        cols: 80,
-        rows: 2,
-        title: "active title",
-        viewport: [
-          { row: 0, text: "first row", wrapped: false },
-          { row: 1, text: "second row", wrapped: false },
-        ],
+function createSummary(): TerminalSessionSummary {
+  return {
+    sessionId,
+    lifecycle: "running",
+    shell: "/bin/sh",
+    cwd: "/tmp",
+    dimensions: { cols: 80, rows: 24 },
+    title: null,
+    createdBy: "human",
+    createdAt: "2026-07-13T00:00:00.000Z",
+    updatedAt: "2026-07-13T00:00:00.000Z",
+    observationVersion: 1,
+    presentation: {
+      state: "background",
+      windowVisible: true,
+      windowFocused: false,
+    },
+    shellIntegration: {
+      status: "unavailable",
+      capabilities: {
+        prompt: false,
+        commandStart: false,
+        commandFinish: false,
+        commandLine: false,
+        exitCode: false,
+        cwd: false,
       },
-    });
-  });
-
-  it("pauses renderer-originated input while detached and resumes after attach", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-    });
-
-    api.emit({
-      type: "session.detached",
-      payload: {
-        sessionId: controller.sessionId,
-        state: "detached",
-        shell: "/bin/sh",
-        cwd: "/tmp",
-        cols: 80,
-        rows: 24,
-        title: null,
-        createdBy: "human",
-        createdAt: "2026-05-09T00:00:00.000Z",
-        updatedAt: "2026-05-09T00:00:01.000Z",
-      },
-    });
-    terminal.emitData("ignored while detached");
-
-    api.emit({
-      type: "session.attached",
-      payload: {
-        sessionId: controller.sessionId,
-        state: "running",
-        shell: "/bin/sh",
-        cwd: "/tmp",
-        cols: 80,
-        rows: 24,
-        title: null,
-        createdBy: "human",
-        createdAt: "2026-05-09T00:00:00.000Z",
-        updatedAt: "2026-05-09T00:00:02.000Z",
-      },
-    });
-    terminal.emitData("forwarded after attach");
-    await Promise.resolve();
-
-    expect(api.write).toHaveBeenCalledTimes(1);
-    expect(api.write).toHaveBeenCalledWith({
-      sessionId: controller.sessionId,
-      data: "forwarded after attach",
-    });
-  });
-
-  it("reports terminal write and resize failures through onError", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    const expectedError = new Error("write failed");
-    vi.mocked(api.write).mockRejectedValueOnce(expectedError);
-    vi.mocked(api.resize).mockRejectedValueOnce(new Error("resize failed"));
-    const onError = vi.fn();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-      onError,
-    });
-
-    terminal.emitData("x");
-    await Promise.resolve();
-    await controller.resize();
-
-    expect(onError).toHaveBeenCalledWith(expectedError);
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "resize failed" }));
-  });
-
-  it("stops forwarding input after the session exits", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    const onError = vi.fn();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-      onError,
-    });
-
-    api.emit({
-      type: "session.exited",
-      payload: { sessionId: controller.sessionId, exitCode: 0, signal: null },
-    });
-    terminal.emitData("ignored after exit");
-    await controller.resize();
-    await Promise.resolve();
-
-    expect(api.write).not.toHaveBeenCalled();
-    expect(api.resize).not.toHaveBeenCalled();
-    expect(onError).not.toHaveBeenCalled();
-  });
-
-  it("disposes renderer resources when session creation fails", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    const expectedError = new Error("create failed");
-    vi.mocked(api.createSession).mockRejectedValueOnce(expectedError);
-
-    await expect(
-      createTerminalSession({
-        api,
-        element: document.createElement("div"),
-        createTerminal: () => terminal,
-        createFitAddon: () => ({
-          fit: vi.fn(),
-          proposeDimensions: () => ({ cols: 80, rows: 24 }),
-        }),
-      }),
-    ).rejects.toBe(expectedError);
-
-    expect(terminal.dispose).toHaveBeenCalledOnce();
-    expect(terminal.dataSubscriptionDispose).not.toHaveBeenCalled();
-    expect(api.unsubscribeSessionEvent).not.toHaveBeenCalled();
-  });
-
-  it("releases failed session records when PTY creation fails before a controller exists", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    const sessionId = "failed-session" as SessionId;
-    const expectedError = Object.assign(new Error("spawn failed"), {
-      terminalError: {
-        type: "pty_spawn_failed",
-        message: "spawn failed",
-        sessionId,
-      },
-    });
-    vi.mocked(api.createSession).mockRejectedValueOnce(expectedError);
-
-    await expect(
-      createTerminalSession({
-        api,
-        element: document.createElement("div"),
-        createTerminal: () => terminal,
-        createFitAddon: () => ({
-          fit: vi.fn(),
-          proposeDimensions: () => ({ cols: 80, rows: 24 }),
-        }),
-      }),
-    ).rejects.toBe(expectedError);
-
-    expect(api.releaseSession).toHaveBeenCalledWith({ sessionId });
-    expect(terminal.dispose).toHaveBeenCalledOnce();
-  });
-
-  it("detaches the renderer view by default when disposed", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-    });
-
-    await controller.dispose();
-    api.emit({
-      type: "session.output",
-      payload: { sessionId: controller.sessionId, data: "after-dispose" },
-    });
-
-    expect(terminal.dataSubscriptionDispose).toHaveBeenCalledOnce();
-    expect(api.unsubscribeTerminalEvent).toHaveBeenCalledOnce();
-    expect(terminal.dispose).toHaveBeenCalledOnce();
-    expect(terminal.writes).toEqual([]);
-    expect(api.detachSession).toHaveBeenCalledWith({ sessionId: controller.sessionId });
-    expect(api.kill).not.toHaveBeenCalled();
-  });
-
-  it("keeps input and resize active after non-fatal session errors", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-    });
-    vi.mocked(api.write).mockClear();
-    vi.mocked(api.resize).mockClear();
-
-    api.emit({
-      type: "session.error",
-      payload: {
-        type: "recording_failed",
-        message: "recording failed",
-        sessionId: controller.sessionId,
-      },
-    });
-    terminal.emitData("still live");
-    await controller.resize();
-    await Promise.resolve();
-
-    expect(api.write).toHaveBeenCalledWith({
-      sessionId: controller.sessionId,
-      data: "still live",
-    });
-    expect(api.resize).toHaveBeenCalledWith({
-      sessionId: controller.sessionId,
-      cols: 80,
-      rows: 24,
-    });
-  });
-
-  it("ignores resize and skips termination after disposal or session exit", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    const onError = vi.fn();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-      onError,
-    });
-
-    api.emit({
-      type: "session.exited",
-      payload: { sessionId: controller.sessionId, exitCode: 0, signal: null },
-    });
-    await controller.dispose({ sessionLifecycle: "terminate" });
-    await controller.resize();
-
-    expect(api.kill).not.toHaveBeenCalled();
-    expect(api.resize).not.toHaveBeenCalled();
-    expect(onError).not.toHaveBeenCalled();
-  });
-
-  it("terminates the PTY session when disposal requests termination", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-    });
-
-    await controller.dispose({ sessionLifecycle: "terminate" });
-
-    expect(api.kill).toHaveBeenCalledWith({ sessionId: controller.sessionId });
-    expect(terminal.dispose).toHaveBeenCalledOnce();
-  });
-
-  it("keeps renderer resources mounted when termination fails", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    const expectedError = new Error("kill failed");
-    vi.mocked(api.kill).mockRejectedValueOnce(expectedError);
-    const onError = vi.fn();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-      onError,
-    });
-
-    await controller.dispose({ sessionLifecycle: "terminate" });
-
-    expect(onError).toHaveBeenCalledWith(expectedError);
-    expect(terminal.dispose).not.toHaveBeenCalled();
-    terminal.emitData("still-mounted");
-    await Promise.resolve();
-    expect(api.write).toHaveBeenCalledWith({
-      sessionId: controller.sessionId,
-      data: "still-mounted",
-    });
-  });
-
-  it("reports renderer cleanup failures while still terminating the PTY session", async () => {
-    const terminal = new FakeTerminal();
-    const api = fakeApi();
-    const expectedError = new Error("dispose failed");
-    terminal.dispose.mockImplementationOnce(() => {
-      throw expectedError;
-    });
-    const onError = vi.fn();
-
-    const controller = await createTerminalSession({
-      api,
-      element: document.createElement("div"),
-      createTerminal: () => terminal,
-      createFitAddon: () => ({
-        fit: vi.fn(),
-        proposeDimensions: () => ({ cols: 80, rows: 24 }),
-      }),
-      onError,
-    });
-
-    await controller.dispose({ sessionLifecycle: "terminate" });
-
-    expect(onError).toHaveBeenCalledWith(expectedError);
-    expect(api.kill).toHaveBeenCalledWith({ sessionId: controller.sessionId });
-  });
-});
+    },
+    command: { state: "unknown" },
+    recording: { state: "inactive" },
+  };
+}

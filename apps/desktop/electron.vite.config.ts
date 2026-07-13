@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
@@ -25,12 +26,19 @@ const alias = {
   ),
 };
 
+const require = createRequire(import.meta.url);
+const sessionCorePath = fileURLToPath(new URL("../../packages/session-core", import.meta.url));
+const mainAlias = {
+  ...alias,
+  "@xterm/headless": require.resolve("@xterm/headless", { paths: [sessionCorePath] }),
+};
+
 const workspacePackages = Object.keys(alias);
 const mainProcessExternalDeps = ["electron", "node-pty", "bufferutil", "utf-8-validate"];
 
 export default defineConfig({
   main: {
-    resolve: { alias },
+    resolve: { alias: mainAlias },
     ssr: {
       noExternal: true,
     },
@@ -51,6 +59,7 @@ export default defineConfig({
       noExternal: [/^@terminal\//],
     },
     build: {
+      externalizeDeps: { exclude: workspacePackages },
       rollupOptions: {
         external: ["electron"],
         output: {

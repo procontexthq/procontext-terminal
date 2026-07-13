@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import type { RendererSessionEvent, SessionId, TerminalSessionSnapshot } from "@terminal/protocol";
+import {
+  createSessionId,
+  type RendererSessionEvent,
+  type TerminalSessionSummary,
+} from "@terminal/protocol";
 
 import { nextTerminalStatus } from "../../src/renderer/terminal-status";
 
-const sessionId = "session-1" as SessionId;
+const sessionId = createSessionId("session-1");
 
 describe("terminal status", () => {
-  it("does not regress terminal states when trailing output arrives after exit or failure", () => {
+  it("does not regress terminal states when trailing output arrives", () => {
     const output: RendererSessionEvent = {
       type: "session.output",
-      payload: { sessionId, data: "late output" },
+      payload: { sessionId, sequence: 4, data: "late output" },
     };
 
     expect(nextTerminalStatus("exited", output)).toBe("exited");
@@ -19,61 +23,59 @@ describe("terminal status", () => {
     expect(nextTerminalStatus("starting", output)).toBe("running");
   });
 
-  it("derives status from lifecycle events", () => {
-    const snapshot: TerminalSessionSnapshot = {
-      sessionId,
-      state: "running",
-      shell: "/bin/sh",
-      cwd: "/tmp",
-      cols: 80,
-      rows: 24,
-      title: null,
-      createdBy: "human",
-      createdAt: "2026-05-11T00:00:00.000Z",
-      updatedAt: "2026-05-11T00:00:00.000Z",
-    };
+  it("derives state exclusively from canonical session updates", () => {
+    const summary = createSummary();
 
     expect(
       nextTerminalStatus("starting", {
-        type: "session.created",
-        payload: snapshot,
+        type: "session.updated",
+        payload: summary,
       }),
     ).toBe("running");
     expect(
       nextTerminalStatus("running", {
-        type: "session.exited",
-        payload: { sessionId, exitCode: 0, signal: null },
+        type: "session.updated",
+        payload: { ...summary, lifecycle: "exited" },
       }),
     ).toBe("exited");
-    expect(
-      nextTerminalStatus("running", {
-        type: "session.detached",
-        payload: { ...snapshot, state: "detached" },
-      }),
-    ).toBe("detached");
-    expect(
-      nextTerminalStatus("detached", {
-        type: "session.attached",
-        payload: snapshot,
-      }),
-    ).toBe("running");
     expect(
       nextTerminalStatus("running", {
         type: "session.error",
         payload: { type: "recording_failed", message: "recording failed", sessionId },
       }),
     ).toBe("running");
-    expect(
-      nextTerminalStatus("running", {
-        type: "session.title",
-        payload: { sessionId, title: "vim" },
-      }),
-    ).toBe("running");
-    expect(
-      nextTerminalStatus("running", {
-        type: "session.bell",
-        payload: { sessionId },
-      }),
-    ).toBe("running");
   });
 });
+
+function createSummary(): TerminalSessionSummary {
+  return {
+    sessionId,
+    lifecycle: "running",
+    shell: "/bin/sh",
+    cwd: "/tmp",
+    dimensions: { cols: 80, rows: 24 },
+    title: null,
+    createdBy: "human",
+    createdAt: "2026-07-13T00:00:00.000Z",
+    updatedAt: "2026-07-13T00:00:00.000Z",
+    observationVersion: 1,
+    presentation: {
+      state: "headless",
+      windowVisible: false,
+      windowFocused: false,
+    },
+    shellIntegration: {
+      status: "unavailable",
+      capabilities: {
+        prompt: false,
+        commandStart: false,
+        commandFinish: false,
+        commandLine: false,
+        exitCode: false,
+        cwd: false,
+      },
+    },
+    command: { state: "unknown" },
+    recording: { state: "inactive" },
+  };
+}

@@ -6,59 +6,42 @@ Accepted component architecture.
 
 ## Purpose
 
-The preload bridge is the only API exposed to renderer application code. It hides raw Electron IPC behind a narrow typed terminal API.
+The preload bridge exposes the renderer's narrow typed terminal API while
+hiding Electron IPC and all native capabilities.
 
-This component is part of the [Terminal Architecture Spec](../terminal-architecture.md).
-
-## Responsibilities
-
-- Expose a typed `window.terminalApi` surface.
-- Hide raw `ipcRenderer`.
-- Validate outbound renderer requests before they leave the renderer boundary when practical.
-- Normalize subscription cleanup for output, exit, title, bell, error, resize, and snapshot events.
-- Prevent renderer code from importing Node.js modules directly.
-- Convert IPC responses into typed success or domain error results.
-
-## Exposed Surface
+## Foundation Surface
 
 ```ts
 type RendererTerminalApi = {
-  createSession(request: CreateSessionRequest): Promise<CreateSessionResult>;
-  write(request: WriteInputRequest): Promise<void>;
-  resize(request: ResizeSessionRequest): Promise<void>;
-  kill(request: KillSessionRequest): Promise<void>;
-  getSession(request: GetSessionRequest): Promise<TerminalSessionSnapshot>;
+  createSession(request: RendererCreateSessionRequest): Promise<TerminalSessionSummary>;
+  getSession(request: GetTerminalRequest): Promise<TerminalSessionSummary>;
+  listSessions(): Promise<TerminalSessionSummary[]>;
+  input(request: RendererTerminalInputRequest): Promise<TerminalInputResult>;
+  resize(request: ResizeTerminalRequest): Promise<ResizeTerminalResult>;
+  scroll(request: ScrollTerminalRequest): Promise<ScrollTerminalResult>;
+  close(request: CloseTerminalRequest): Promise<CloseTerminalResult>;
+  openView(request: OpenTerminalViewRequest): Promise<TerminalViewBootstrap>;
+  reportViewport(request: ReportTerminalViewportRequest): Promise<void>;
   getConfig(): Promise<TerminalConfig>;
-  onSessionEvent(
-    sessionId: SessionId,
-    handler: (event: RendererSessionEvent) => void,
-  ): Unsubscribe;
+  onSessionEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe;
 };
 ```
 
-The concrete API can evolve, but it must remain explicit, typed, and minimal.
+The renderer bootstrap contains serialized terminal state and an output
+sequence fence. Session output events carry monotonically increasing sequence
+numbers. Renderer-only view registration is not agent attachment and does not
+change lifecycle.
 
 ## Boundaries
 
-The preload bridge must not:
-
-- Spawn processes.
-- Store business logic.
-- Own UI state.
-- Expose unrestricted filesystem, process, or shell APIs.
-- Leak Electron IPC channel names as the renderer's primary programming model.
-
-## Subscription Rules
-
-- Every long-lived subscription must return an `Unsubscribe` function.
-- Event handlers must be scoped by session ID or an explicit global event type.
-- Cleanup must be idempotent.
-- Events from the main process must be narrowed to known renderer event types before delivery.
-- Command calls must use the typed IPC result envelope internally and expose ergonomic resolved values or typed terminal errors to renderer code.
+The bridge must not expose raw `ipcRenderer`, filesystem, process, shell,
+node-pty, recorder, or unrestricted Electron APIs. It contains no business
+logic.
 
 ## Testing Expectations
 
-- Renderer code cannot access raw `ipcRenderer`.
-- Each preload method sends the expected typed command.
-- Invalid request payloads fail closed.
-- Subscription cleanup removes listeners and can be called more than once.
+- Every method sends a validated renderer command.
+- Invalid payloads fail closed.
+- Event narrowing rejects unknown messages.
+- Subscription cleanup is idempotent.
+- No obsolete snapshot or renderer lifecycle operations are exposed.

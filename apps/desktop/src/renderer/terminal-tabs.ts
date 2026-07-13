@@ -1,4 +1,4 @@
-import type { SessionId, TerminalSessionSnapshot } from "@terminal/protocol";
+import type { SessionId, TerminalSessionSummary } from "@terminal/protocol";
 
 import type { TerminalUiStatus } from "./terminal-status";
 
@@ -43,7 +43,7 @@ export function addTerminalTab(
 
 export function addAttachedTerminalTab(
   state: TerminalTabsState,
-  snapshot: TerminalSessionSnapshot,
+  snapshot: TerminalSessionSummary,
   options: { reusePlaceholder?: boolean } = {},
 ): TerminalTabsState {
   const existingTab = state.tabs.find((tab) => tab.sessionId === snapshot.sessionId);
@@ -54,7 +54,7 @@ export function addAttachedTerminalTab(
           ? {
               ...tab,
               title: snapshot.title,
-              status: snapshot.state,
+              status: snapshot.lifecycle,
               hasUnreadBell: false,
             }
           : tab,
@@ -70,7 +70,7 @@ export function addAttachedTerminalTab(
     cwd: snapshot.cwd,
     shell: snapshot.shell,
     title: snapshot.title,
-    status: snapshot.state,
+    status: snapshot.lifecycle,
     hasUnreadBell: false,
   };
 

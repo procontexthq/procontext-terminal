@@ -6,7 +6,7 @@ import {
   type SessionId,
   type TerminalRecordingEvent,
   type TerminalRecordingExport,
-  type TerminalSessionSnapshot,
+  type TerminalSessionSummary,
 } from "@terminal/protocol";
 
 type RecordingHeader = {
@@ -38,14 +38,14 @@ export class FileTerminalRecorder {
     this.redactors = redactors;
   }
 
-  async start(session: TerminalSessionSnapshot): Promise<void> {
+  async start(session: TerminalSessionSummary): Promise<void> {
     this.enabledSessions.add(session.sessionId);
     try {
       await this.append(session.sessionId, {
         type: "session.created",
         sessionId: session.sessionId,
         at: this.now(),
-        metadata: session,
+        metadata: { ...session },
       });
     } catch (error: unknown) {
       this.enabledSessions.delete(session.sessionId);

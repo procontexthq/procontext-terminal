@@ -37,14 +37,18 @@ Window state is UI state. Terminal session state remains owned by the [Terminal 
 Window close handling must preserve the distinction between closing a view and ending a session.
 
 - Closing the last visible window can terminate sessions, preserve sessions, or prompt according to settings.
-- Closing a secondary window detaches that renderer from its displayed sessions unless the user explicitly terminates them.
-- If a session is preserved, it moves to `Detached` in the session state machine.
+- Closing a secondary window removes its renderer views without changing PTY
+  lifecycle unless the user explicitly terminates those sessions.
+- A preserved session becomes headless presentation state while remaining
+  `running`.
 - Forced app quit must still give the session manager a bounded chance to terminate or record final state.
 
 ## Testing Expectations
 
 - Window creation uses secure Electron options.
 - Agent-created sessions remain usable headlessly when renderer window creation fails.
-- Window-to-session associations are updated when sessions open, move, detach, or exit.
-- Closing a window does not implicitly kill a session unless settings or explicit user action require it.
+- Window-to-session associations are updated when views open, move, close, or
+  their sessions exit.
+- Closing a window does not implicitly terminate a session unless settings or
+  explicit user action require it.
 - Restored window state is validated before use.

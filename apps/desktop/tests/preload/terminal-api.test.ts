@@ -10,7 +10,7 @@ import {
 import { createRendererTerminalApi } from "../../src/preload/terminal-api";
 
 describe("renderer terminal api", () => {
-  it("exposes lifecycle, observation, recording, and settings command helpers", async () => {
+  it("exposes only the new terminal, view, recording, and settings helpers", async () => {
     const requestId = createRequestId("request-1");
     const invoke = vi.fn((command: RendererCommand) =>
       Promise.resolve(createRendererCommandSuccess(requestId, command.type)),
@@ -23,72 +23,59 @@ describe("renderer terminal api", () => {
     const sessionId = createSessionId("session-1");
 
     await expect(api.listSessions()).resolves.toBe("session.list");
-    await expect(api.releaseSession({ sessionId })).resolves.toBe("session.release");
-    await expect(api.sendKey({ sessionId, key: "Ctrl+C", origin: "agent" })).resolves.toBe(
-      "session.sendKey",
+    await expect(api.getSession({ sessionId })).resolves.toBe("session.get");
+    await expect(api.input({ sessionId, input: "\u0003" })).resolves.toBe("session.input");
+    await expect(api.openView({ sessionId })).resolves.toBe("session.openView");
+    await expect(api.reportViewport({ sessionId, viewportY: 4 })).resolves.toBe(
+      "session.reportViewport",
     );
-    await expect(api.detachSession({ sessionId })).resolves.toBe("session.detach");
-    await expect(api.attachSession({ sessionId })).resolves.toBe("session.attach");
-    await expect(api.captureScreen({ sessionId, timeoutMs: 1000 })).resolves.toBe(
-      "session.captureScreen",
-    );
-    await expect(
-      api.reportSnapshotUnavailable({
-        requestId,
-        sessionId,
-        reason: "No terminal view owns this session.",
-      }),
-    ).resolves.toBe("session.snapshot.unavailable");
-    await expect(api.setTitle({ sessionId, title: "vim package.json" })).resolves.toBe(
-      "session.setTitle",
-    );
-    await expect(api.reportBell({ sessionId })).resolves.toBe("session.bell");
+    await expect(api.closeView({ sessionId })).resolves.toBe("session.closeView");
     await expect(api.startRecording({ sessionId })).resolves.toBe("recording.start");
     await expect(api.saveUiTheme("gamer")).resolves.toBe("settings.saveUiTheme");
-    expect(Object.prototype.hasOwnProperty.call(api, "saveWorkspace")).toBe(false);
 
-    expect(invoke).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "session.list",
-        payload: {},
-      }),
-    );
-    expect(invoke).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "session.release",
-        payload: { sessionId },
-      }),
-    );
-    expect(invoke).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "settings.saveUiTheme",
-        payload: { theme: "gamer" },
-      }),
+    expect(Object.keys(api)).not.toEqual(
+      expect.arrayContaining([
+        "sendText",
+        "sendKey",
+        "paste",
+        "interrupt",
+        "captureScreen",
+        "readRecentOutput",
+        "kill",
+        "releaseSession",
+      ]),
     );
   });
 
-  it("exposes validated app shortcut subscriptions", () => {
-    let subscribedHandler: (payload: unknown) => void = () => {
-      throw new Error("Shortcut subscription was not registered.");
-    };
-    const unsubscribe = vi.fn();
+  it("filters terminal events and app shortcuts at the preload boundary", () => {
+    let terminalSubscriber: (payload: unknown) => void = () => undefined;
+    let shortcutSubscriber: (payload: unknown) => void = () => undefined;
     const api = createRendererTerminalApi({
       invoke: vi.fn(),
-      subscribe: vi.fn(),
+      subscribe: (handler) => {
+        terminalSubscriber = handler;
+        return vi.fn();
+      },
       subscribeAppShortcut: (handler) => {
-        subscribedHandler = handler;
-        return unsubscribe;
+        shortcutSubscriber = handler;
+        return vi.fn();
       },
     });
+    const eventHandler = vi.fn();
     const shortcutHandler = vi.fn();
+    api.onTerminalEvent(eventHandler);
+    api.onAppShortcut(shortcutHandler);
 
-    const result = api.onAppShortcut(shortcutHandler);
-    subscribedHandler?.("nextTab");
-    subscribedHandler?.("not-a-shortcut");
-    result();
+    terminalSubscriber({
+      type: "session.output",
+      payload: { sessionId: createSessionId("session-1"), sequence: 1, data: "hello" },
+    });
+    terminalSubscriber({ type: "session.output", payload: { data: 42 } });
+    shortcutSubscriber("nextTab");
+    shortcutSubscriber("invalid");
 
+    expect(eventHandler).toHaveBeenCalledOnce();
     expect(shortcutHandler).toHaveBeenCalledOnce();
     expect(shortcutHandler).toHaveBeenCalledWith("nextTab");
-    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 });
