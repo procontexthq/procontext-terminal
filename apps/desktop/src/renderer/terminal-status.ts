@@ -15,6 +15,7 @@ export function nextTerminalStatus(
     case "session.bell":
     case "session.error":
     case "agent.activity":
+    case "presentation.command":
       return current;
   }
 }

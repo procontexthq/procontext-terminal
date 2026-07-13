@@ -83,6 +83,15 @@ describe("terminal tabs model", () => {
       status: "running",
     });
   });
+
+  it("opens an attached background tab without changing the active tab", () => {
+    const initial = addTerminalTab(createInitialTerminalTabs());
+    const activeTabId = initial.activeTabId;
+    const state = addAttachedTerminalTab(initial, createSummary(), { activate: false });
+
+    expect(state.activeTabId).toBe(activeTabId);
+    expect(state.tabs.at(-1)?.sessionId).toBe("session-agent");
+  });
 });
 
 function createSummary(createdBy: "human" | "agent" = "agent"): TerminalSessionSummary {

@@ -241,6 +241,29 @@ describe("TerminalOperationManager captured runs", () => {
     );
   });
 
+  it("resizes running temporary PTYs through the shared session boundary", async () => {
+    const ptyHost = new FakePtyHost();
+    const sessions = new TerminalSessionManager(ptyHost);
+    const manager = createManager(new FakeCapturedProcessHost(), {}, sessions);
+    const result = await manager.run(runRequest({ input: "watch", tty: true, timeoutMs: 2 }));
+    if (result.status !== "running" || !result.tty) {
+      throw new Error("Expected a running terminal operation.");
+    }
+
+    await expect(
+      sessions.resize({ sessionId: result.sessionId, cols: 120, rows: 40 }),
+    ).resolves.toEqual({ observationVersion: 2 });
+    expect(ptyHost.pty.resize).toHaveBeenCalledWith(120, 40);
+    expect(sessions.getSession({ sessionId: result.sessionId }).dimensions).toEqual({
+      cols: 120,
+      rows: 40,
+    });
+
+    await expect(manager.close({ operationId: result.operationId })).resolves.toMatchObject({
+      status: "closed",
+    });
+  });
+
   it("expires completed headless temporary PTY sessions", async () => {
     vi.useFakeTimers();
     try {
@@ -261,6 +284,40 @@ describe("TerminalOperationManager captured runs", () => {
       );
       await expect(manager.close({ operationId: running.operationId })).rejects.toMatchObject({
         type: "operation_not_found",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retains completed presented temporary PTYs until explicit close", async () => {
+    vi.useFakeTimers();
+    try {
+      const ptyHost = new FakePtyHost();
+      const sessions = new TerminalSessionManager(ptyHost);
+      const onTemporarySessionCreated = vi.fn(() => Promise.resolve());
+      const manager = createManager(new FakeCapturedProcessHost(), { retentionMs: 50 }, sessions);
+      const runningPromise = manager.run(
+        runRequest({
+          input: "watch",
+          tty: true,
+          timeoutMs: 1,
+          presentation: "background",
+        }),
+        { onTemporarySessionCreated },
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      const running = await runningPromise;
+      if (!running.tty) throw new Error("Expected a terminal run.");
+
+      expect(onTemporarySessionCreated).toHaveBeenCalledWith(running.sessionId, "background");
+      ptyHost.pty.emitExit({ exitCode: 0, signal: null });
+      vi.runAllTicks();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(sessions.getSession({ sessionId: running.sessionId }).lifecycle).toBe("exited");
+      await expect(manager.close({ operationId: running.operationId })).resolves.toMatchObject({
+        status: "closed",
       });
     } finally {
       vi.useRealTimers();

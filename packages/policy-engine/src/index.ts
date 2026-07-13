@@ -36,6 +36,7 @@ export type TerminalPolicyOperation = {
   shell?: string;
   inputKind?: "input" | "resize" | "scroll" | "close";
   runKind?: "captured" | "pty";
+  presentationKind?: "headless" | "background" | "foreground" | "unchanged";
   observationKind?: "list" | "get" | "observe";
   recordingKind?: "start" | "stop" | "export";
 };

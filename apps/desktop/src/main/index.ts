@@ -31,6 +31,7 @@ import { PRODUCT_NAME, shouldSetDevelopmentDockIcon } from "./app-branding";
 import { resolveDefaultTerminalCwd } from "./default-terminal-cwd";
 import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
 import { createTerminalPresentationRegistry } from "./presentation-registry";
+import { createTerminalPresentationController } from "./presentation-controller";
 import { attachWindowCloseSessionCleanup } from "./window-lifecycle";
 
 app.setName(PRODUCT_NAME);
@@ -75,6 +76,16 @@ const operationManager = new TerminalOperationManager(
   },
 );
 const presentationRegistry = createTerminalPresentationRegistry();
+const presentationController = createTerminalPresentationController({
+  sessions: sessionManager,
+  registry: presentationRegistry,
+  getWindows: () => BrowserWindow.getAllWindows(),
+  createWindow: ({ show }) => createMainWindow({ show }),
+  logger: {
+    info: (component, event, context) => logger.info(component, event, context),
+    warn: (component, event, context) => logger.warn(component, event, context),
+  },
+});
 const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
 let agentGateway: AgentGateway | null = null;
@@ -101,7 +112,7 @@ function safeAppHome(): string {
   }
 }
 
-async function createMainWindow(): Promise<BrowserWindow> {
+async function createMainWindow(options: { show?: boolean } = {}): Promise<BrowserWindow> {
   logger.info("window", "create_requested");
   const appIconPath = resolveAppIconPath();
   const window = new BrowserWindow({
@@ -110,6 +121,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
     minWidth: 640,
     minHeight: 420,
     backgroundColor: terminalConfig.terminal.theme.background,
+    show: options.show ?? true,
     ...(appIconPath ? { icon: appIconPath } : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
@@ -248,6 +260,7 @@ void app
     unregisterIpc = registerTerminalIpc({
       sessionManager,
       presentationRegistry,
+      presentationController,
       policy: terminalPolicy,
       logger,
       getConfig: () => terminalConfig,
@@ -278,7 +291,11 @@ void app
     }
     agentGateway = await startAgentGateway({
       descriptorPath: resolveAgentGatewayDescriptorPath(app.getPath("userData")),
-      services: createAgentTerminalService(sessionManager, operationManager),
+      services: createAgentTerminalService(
+        sessionManager,
+        operationManager,
+        presentationController,
+      ),
       policy: createDefaultAgentPolicy(),
       audit: (event) => {
         logger.info("agent", "audit", {

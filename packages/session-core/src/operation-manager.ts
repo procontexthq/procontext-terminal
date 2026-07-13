@@ -11,6 +11,8 @@ import {
   type OperationId,
   type RunTerminalRequest,
   type RunTerminalResult,
+  type SessionId,
+  type TerminalPresentationMode,
 } from "@terminal/protocol";
 import { resolveCommandShell } from "@terminal/pty-host";
 
@@ -36,6 +38,13 @@ export type TerminalOperationShutdownResult = {
   timedOut: number;
 };
 
+export type TerminalOperationRunHooks = {
+  onTemporarySessionCreated?: (
+    sessionId: SessionId,
+    presentation: TerminalPresentationMode,
+  ) => Promise<void>;
+};
+
 export class TerminalOperationManager {
   private readonly capturedOperations = new Map<OperationId, CapturedOperation>();
   private readonly expiryTimers = new Map<OperationId, ReturnType<typeof setTimeout>>();
@@ -56,9 +65,12 @@ export class TerminalOperationManager {
     });
   }
 
-  async run(request: RunTerminalRequest): Promise<RunTerminalResult> {
+  async run(
+    request: RunTerminalRequest,
+    hooks: TerminalOperationRunHooks = {},
+  ): Promise<RunTerminalResult> {
     return request.tty === true
-      ? await this.temporaryOperations.run(request)
+      ? await this.temporaryOperations.run(request, hooks.onTemporarySessionCreated)
       : await this.runCaptured(request);
   }
 
@@ -106,6 +118,10 @@ export class TerminalOperationManager {
       request.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
       signal,
     );
+  }
+
+  sessionIdForOperation(operationId: OperationId): SessionId | undefined {
+    return this.temporaryOperations.sessionIdFor(operationId);
   }
 
   async close(request: CloseOperationRequest | CloseTerminalRequest): Promise<CloseTerminalResult> {

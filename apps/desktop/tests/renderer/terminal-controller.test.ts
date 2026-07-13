@@ -206,6 +206,8 @@ function createApi(): {
     ),
     getConfig: vi.fn(),
     saveUiTheme: vi.fn(),
+    presentationReady: vi.fn(() => Promise.resolve()),
+    acknowledgePresentation: vi.fn(() => Promise.resolve()),
     onAppShortcut: vi.fn(() => vi.fn()),
     onTerminalEvent: vi.fn((handler: (event: RendererSessionEvent) => void) => {
       subscriber = handler;

@@ -96,7 +96,7 @@ export type ObserveCapturedOperationResult =
 export type CloseOperationRequest = { operationId: OperationId };
 
 const timeoutSchema = z.number().int().min(1).max(MAX_RUN_TIMEOUT_MS);
-const terminalPresentationModeSchema = z.enum(["headless", "background", "foreground"]);
+export const terminalPresentationModeSchema = z.enum(["headless", "background", "foreground"]);
 
 export const runTerminalRequestSchema = z
   .object({
@@ -118,10 +118,13 @@ export const runTerminalRequestSchema = z
         path: ["maxOutputBytesPerStream"],
       });
     }
-    if (value.presentation === "background" || value.presentation === "foreground") {
+    if (
+      value.tty !== true &&
+      (value.presentation === "background" || value.presentation === "foreground")
+    ) {
       context.addIssue({
         code: "custom",
-        message: "Only headless one-shot runs are supported in this protocol phase.",
+        message: "Captured one-shot runs do not support presented terminal views.",
         path: ["presentation"],
       });
     }

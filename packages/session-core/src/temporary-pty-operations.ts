@@ -9,6 +9,7 @@ import {
   type RunTerminalRequest,
   type RunningTerminalRun,
   type SessionId,
+  type TerminalPresentationMode,
 } from "@terminal/protocol";
 
 import type { TerminalSessionManager } from "./session-manager.js";
@@ -17,6 +18,7 @@ type TemporaryPtyOperation = {
   operationId: OperationId;
   sessionId: SessionId;
   startedAt: number;
+  presentation: TerminalPresentationMode;
 };
 
 export class TemporaryPtyOperations {
@@ -38,7 +40,17 @@ export class TemporaryPtyOperations {
     return [...this.operations.keys()];
   }
 
-  async run(request: RunTerminalRequest): Promise<RunningTerminalRun | CompletedTerminalRun> {
+  sessionIdFor(operationId: OperationId): SessionId | undefined {
+    return this.operations.get(operationId)?.sessionId;
+  }
+
+  async run(
+    request: RunTerminalRequest,
+    onSessionCreated?: (
+      sessionId: SessionId,
+      presentation: TerminalPresentationMode,
+    ) => Promise<void>,
+  ): Promise<RunningTerminalRun | CompletedTerminalRun> {
     validateTemporaryRun(request);
     const operationId = this.options.createOperationId();
     const startedAt = this.options.now();
@@ -50,10 +62,18 @@ export class TemporaryPtyOperations {
       createdBy: "agent",
       outputLimitBytes: TEMPORARY_PTY_OUTPUT_BYTES,
     });
-    const operation = { operationId, sessionId: session.sessionId, startedAt };
+    const presentation = request.presentation ?? "headless";
+    const operation = { operationId, sessionId: session.sessionId, startedAt, presentation };
     this.operations.set(operationId, operation);
     this.operationIdsBySession.set(session.sessionId, operationId);
     void this.monitor(operation);
+    if (onSessionCreated) {
+      try {
+        await onSessionCreated(session.sessionId, presentation);
+      } catch (error: unknown) {
+        this.options.onBackgroundError(error);
+      }
+    }
 
     const completed = await this.sessions.waitForExit(
       session.sessionId,
@@ -119,6 +139,7 @@ export class TemporaryPtyOperations {
 
   private scheduleExpiry(operation: TemporaryPtyOperation): void {
     if (this.operations.get(operation.operationId) !== operation) return;
+    if (operation.presentation !== "headless") return;
     const timer = setTimeout(() => {
       void this.expire(operation);
     }, this.options.retentionMs);
@@ -149,13 +170,6 @@ function validateTemporaryRun(request: RunTerminalRequest): void {
     throw createTerminalError(
       "invalid_request",
       "maxOutputBytesPerStream is supported only when tty is false.",
-      { operation: "terminal.run" },
-    );
-  }
-  if (request.presentation === "background" || request.presentation === "foreground") {
-    throw createTerminalError(
-      "view_unavailable",
-      "Only headless one-shot PTY runs are available.",
       { operation: "terminal.run" },
     );
   }

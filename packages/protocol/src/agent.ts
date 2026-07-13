@@ -33,6 +33,7 @@ import {
   createTerminalRequestSchema,
   getTerminalRequestSchema,
   resizeTerminalRequestSchema,
+  setTerminalPresentationRequestSchema,
   scrollTerminalRequestSchema,
   terminalInputRequestSchema,
   type AttachTerminalRequest,
@@ -40,6 +41,7 @@ import {
   type CreateTerminalRequest,
   type GetTerminalRequest,
   type ResizeTerminalRequest,
+  type SetTerminalPresentationRequest,
   type ScrollTerminalRequest,
   type TerminalInputRequest,
 } from "./sessions.js";
@@ -94,6 +96,11 @@ export type AgentCommand =
   | { type: "terminal.input"; requestId: RequestId; payload: TerminalInputRequest }
   | { type: "terminal.resize"; requestId: RequestId; payload: ResizeTerminalRequest }
   | { type: "terminal.scroll"; requestId: RequestId; payload: ScrollTerminalRequest }
+  | {
+      type: "terminal.setPresentation";
+      requestId: RequestId;
+      payload: SetTerminalPresentationRequest;
+    }
   | {
       type: "terminal.observe";
       requestId: RequestId;
@@ -215,6 +222,11 @@ export const agentCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("terminal.scroll"),
     requestId: requestIdSchema,
     payload: scrollTerminalRequestSchema,
+  }),
+  z.object({
+    type: z.literal("terminal.setPresentation"),
+    requestId: requestIdSchema,
+    payload: setTerminalPresentationRequestSchema,
   }),
   z.object({
     type: z.literal("terminal.observe"),

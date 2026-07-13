@@ -52,8 +52,11 @@ add only:
 - A fixed 1 MiB tail journal of combined raw PTY output.
 - Completion after process exit and canonical model settlement.
 
-Phase 2 creates temporary PTY operations headlessly. Presentation automation is
-deferred to Phase 3.
+Temporary PTY operations may be headless, background, or foreground. The
+operation manager reports the new session through a narrow creation callback so
+Electron main can settle presentation before the initial run wait completes.
+Completed headless temporary operations expire after retention, while completed
+presented operations remain until explicit close.
 
 ## Ownership And Reconnect
 

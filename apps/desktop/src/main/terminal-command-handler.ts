@@ -16,6 +16,7 @@ import type { TerminalSessionManager } from "@terminal/session-core";
 
 import type { AppLogger } from "./logger";
 import type { TerminalPresentationRegistry } from "./presentation-registry";
+import type { TerminalPresentationController } from "./presentation-controller";
 
 type RendererTerminalSessionService = Pick<
   TerminalSessionManager,
@@ -37,6 +38,7 @@ type RendererTerminalSessionService = Pick<
 export type TerminalCommandServices = {
   sessionManager: RendererTerminalSessionService;
   presentationRegistry: TerminalPresentationRegistry;
+  presentationController: TerminalPresentationController;
   rendererId: number;
   getConfig(): TerminalConfig;
   saveConfig(config: TerminalConfig): Promise<TerminalConfig>;
@@ -170,6 +172,12 @@ async function executeRendererCommand(
         });
       }
     }
+    case "presentation.ready":
+      services.presentationController.rendererReady(services.rendererId);
+      return createRendererCommandSuccess(command.requestId, null);
+    case "presentation.acknowledge":
+      services.presentationController.acknowledge(services.rendererId, command.payload);
+      return createRendererCommandSuccess(command.requestId, null);
   }
 }
 
@@ -236,6 +244,8 @@ function policyOperation(command: RendererCommand): TerminalPolicyOperation {
       return { type: command.type, sessionId: command.payload.sessionId, recordingKind: "export" };
     case "settings.get":
     case "settings.saveUiTheme":
+    case "presentation.ready":
+    case "presentation.acknowledge":
       return { type: command.type };
   }
 }

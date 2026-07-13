@@ -3,6 +3,7 @@ import type {
   AgentActivityState,
   AgentAuditEvent,
   AgentGatewayDescriptor,
+  AttachTerminalRequest,
   CloseOperationRequest,
   CloseTerminalRequest,
   CloseTerminalResult,
@@ -19,9 +20,11 @@ import type {
   RunTerminalResult,
   ScrollTerminalRequest,
   ScrollTerminalResult,
+  SetTerminalPresentationRequest,
   SessionId,
   TerminalInputRequest,
   TerminalInputResult,
+  TerminalPresentation,
   TerminalRecordingExport,
   TerminalSessionSummary,
 } from "@terminal/protocol";
@@ -30,10 +33,12 @@ export type AgentTerminalService = {
   list(): TerminalSessionSummary[];
   get(request: GetTerminalRequest): TerminalSessionSummary;
   create(request: CreateTerminalRequest): Promise<TerminalSessionSummary>;
+  attach(request: AttachTerminalRequest): Promise<TerminalSessionSummary>;
   run(request: RunTerminalRequest): Promise<RunTerminalResult>;
   input(request: TerminalInputRequest): Promise<TerminalInputResult>;
   resize(request: ResizeTerminalRequest): Promise<ResizeTerminalResult>;
   scroll(request: ScrollTerminalRequest): ScrollTerminalResult;
+  setPresentation(request: SetTerminalPresentationRequest): Promise<TerminalPresentation>;
   observe(
     request: ObserveTerminalRequest | ObserveCapturedOperationRequest,
     signal: AbortSignal,

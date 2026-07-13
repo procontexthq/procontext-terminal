@@ -17,6 +17,9 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Create additional windows for sessions that should be displayed outside the primary window.
 - Keep renderer windows associated with the session IDs they display.
 - Best-effort create a renderer window for agent-created sessions when no window is available.
+- Create background presentation windows without stealing focus.
+- Restore, show, and focus the owning window for foreground presentation.
+- Wait for renderer readiness before sending correlated presentation commands.
 - Coordinate close behavior with the terminal session manager and settings store.
 - Surface user prompts for close, preserve, or terminate decisions when policy requires it.
 
@@ -47,6 +50,8 @@ Window close handling must preserve the distinction between closing a view and e
 
 - Window creation uses secure Electron options.
 - Agent-created sessions remain usable headlessly when renderer window creation fails.
+- Renderer acknowledgement timeout or renderer loss returns a structured
+  unavailable presentation result without terminating the session.
 - Window-to-session associations are updated when views open, move, close, or
   their sessions exit.
 - Closing a window does not implicitly terminate a session unless settings or

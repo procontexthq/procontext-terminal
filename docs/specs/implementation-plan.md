@@ -117,10 +117,49 @@ views remain a Phase 3 responsibility.
 
 ## Phase 3: Presentation Automation
 
-- Add `headless`, `background`, and `foreground` requests.
-- Correlate open, focus, hide, and close commands with renderer acknowledgements.
-- Preserve headless control when renderer creation or focus fails.
-- Keep one presented view per session.
+Status: implemented.
+
+### Protocol
+
+- Add optional `headless`, `background`, and `foreground` presentation to
+  create, attach, and temporary-PTY run requests.
+- Add idempotent `terminal.setPresentation`.
+- Add correlated renderer open, focus, hide, and close commands plus typed
+  acknowledgements.
+- Keep captured runs headless because they do not own terminal views.
+
+### Desktop and session composition
+
+- Keep presentation state in the canonical session summary and observation.
+- Open at most one renderer view per session.
+- Wait for renderer readiness and command acknowledgement before committing a
+  settled background or foreground state.
+- Report actual window visibility and focus after foreground requests.
+- Return sessions to headless state after acknowledged hide.
+- Mark presentation unavailable, while keeping the PTY headlessly usable, when
+  window creation, renderer readiness, open, or focus fails.
+
+### Gateway and operations
+
+- Apply requested presentation during create and attach.
+- Present temporary PTY runs as soon as their session exists, before the
+  initial run wait completes.
+- Keep completed presented temporary PTYs until explicit close; retain the
+  existing expiry only for completed headless operations.
+- Preserve exclusive agent attachment independently from renderer ownership.
+
+### Required tests
+
+- Protocol validation for create, attach, run, and set-presentation requests.
+- Correlated renderer acknowledgement, timeout, and renderer-loss cleanup.
+- Idempotent background, foreground, and headless transitions.
+- One-view-per-session enforcement.
+- Background presentation without tab or window focus.
+- Foreground presentation with tab and terminal focus.
+- Headless fallback after window creation, renderer readiness, open, or focus
+  failure.
+- Presented temporary PTY creation, completion retention, and explicit close.
+- Electron smoke coverage for agent-created and temporary presented sessions.
 
 ## Phase 4: Shell Integration
 

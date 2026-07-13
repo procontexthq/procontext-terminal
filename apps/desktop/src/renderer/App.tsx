@@ -4,13 +4,21 @@ import "@xterm/xterm/css/xterm.css";
 
 import type {
   AppShortcutAction,
+  RendererPresentationAcknowledgement,
+  RendererPresentationCommand,
   RendererSessionEvent,
+  SessionId,
   TerminalConfig,
   UiThemePreference,
 } from "@terminal/protocol";
 
 import type { TerminalController } from "./terminal-controller";
 import { TerminalTabView } from "./terminal-tab-view";
+import {
+  completePendingPresentationOpen,
+  failPendingPresentationOpen,
+  handlePresentationCommand,
+} from "./presentation-commands";
 import {
   addTerminalTab,
   closeTerminalTab,
@@ -39,6 +47,8 @@ export function App(): ReactElement {
   const [agentActive, setAgentActive] = useState(false);
   const [uiTheme, setUiTheme] = useState<UiThemePreference>("default");
   const controllers = useRef(new Map<string, TerminalController>());
+  const tabsStateRef = useRef<TerminalTabsState | null>(null);
+  const pendingOpenCommands = useRef(new Map<SessionId, RendererPresentationCommand>());
 
   const reportError = useCallback((error: unknown) => {
     console.error(error);
@@ -66,25 +76,35 @@ export function App(): ReactElement {
   }, [reportError]);
 
   useEffect(() => {
-    return window.terminalApi.onTerminalEvent((event) => {
-      if (event.type === "agent.activity") {
-        setAgentActive(event.payload.authenticatedConnections > 0);
+    tabsStateRef.current = tabsState;
+  }, [tabsState]);
+
+  const acknowledgePresentation = useCallback(
+    (acknowledgement: RendererPresentationAcknowledgement) => {
+      void window.terminalApi.acknowledgePresentation(acknowledgement).catch(reportError);
+    },
+    [reportError],
+  );
+
+  const registerController = useCallback(
+    (tabId: string, controller: TerminalController | null) => {
+      if (controller) {
+        controllers.current.set(tabId, controller);
+        setTabsState((current) =>
+          current ? setTabSessionId(current, tabId, controller.sessionId) : current,
+        );
+        completePendingPresentationOpen(
+          controller.sessionId,
+          pendingOpenCommands.current,
+          acknowledgePresentation,
+        );
         return;
       }
-    });
-  }, []);
-
-  const registerController = useCallback((tabId: string, controller: TerminalController | null) => {
-    if (controller) {
-      controllers.current.set(tabId, controller);
-      setTabsState((current) =>
-        current ? setTabSessionId(current, tabId, controller.sessionId) : current,
-      );
-      return;
-    }
-    controllers.current.delete(tabId);
-    setTabsState((current) => (current ? setTabSessionId(current, tabId, null) : current));
-  }, []);
+      controllers.current.delete(tabId);
+      setTabsState((current) => (current ? setTabSessionId(current, tabId, null) : current));
+    },
+    [acknowledgePresentation],
+  );
 
   const updateStatusFromEvent = useCallback((tabId: string, event: RendererSessionEvent) => {
     setTabsState((current) => {
@@ -99,9 +119,24 @@ export function App(): ReactElement {
     });
   }, []);
 
-  const setTabStatus = useCallback((tabId: string, status: TerminalUiStatus) => {
-    setTabsState((current) => (current ? updateTabStatus(current, tabId, status) : current));
-  }, []);
+  const setTabStatus = useCallback(
+    (tabId: string, status: TerminalUiStatus) => {
+      setTabsState((current) => {
+        if (!current) return current;
+        const tab = current.tabs.find((candidate) => candidate.id === tabId);
+        if (status === "failed" && tab?.sessionId) {
+          failPendingPresentationOpen(
+            tab.sessionId,
+            "Renderer terminal view failed to open.",
+            pendingOpenCommands.current,
+            acknowledgePresentation,
+          );
+        }
+        return updateTabStatus(current, tabId, status);
+      });
+    },
+    [acknowledgePresentation],
+  );
 
   const setTabTitle = useCallback((tabId: string, title: string) => {
     setTabsState((current) => (current ? renameTabFromTitle(current, tabId, title) : current));
@@ -118,6 +153,38 @@ export function App(): ReactElement {
   const addTab = useCallback(() => {
     setTabsState((current) => (current ? addTerminalTab(current) : current));
   }, []);
+
+  const processPresentationCommand = useCallback(
+    (command: RendererPresentationCommand) =>
+      handlePresentationCommand(command, {
+        api: window.terminalApi,
+        getTabsState: () => tabsStateRef.current,
+        updateTabs: (update) => {
+          setTabsState((state) => (state ? update(state) : state));
+        },
+        controllers: controllers.current,
+        pendingOpenCommands: pendingOpenCommands.current,
+        acknowledge: acknowledgePresentation,
+      }),
+    [acknowledgePresentation],
+  );
+
+  useEffect(() => {
+    return window.terminalApi.onTerminalEvent((event) => {
+      if (event.type === "agent.activity") {
+        setAgentActive(event.payload.authenticatedConnections > 0);
+      } else if (event.type === "presentation.command") {
+        void processPresentationCommand(event.payload);
+      }
+    });
+  }, [processPresentationCommand]);
+
+  const rendererReady = tabsState !== null;
+
+  useEffect(() => {
+    if (!rendererReady) return;
+    void window.terminalApi.presentationReady().catch(reportError);
+  }, [rendererReady, reportError]);
 
   const tabs = tabsState?.tabs ?? [];
   const activeTabId = tabsState?.activeTabId ?? null;

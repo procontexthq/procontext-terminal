@@ -16,13 +16,20 @@ export function policyOperation(command: AgentCommand): AgentPolicyOperation {
     case "terminal.list":
       return { type: command.type, observationKind: "list" };
     case "terminal.get":
-    case "terminal.attach":
       return { type: command.type, sessionId, observationKind: "get" };
+    case "terminal.attach":
+      return {
+        type: command.type,
+        sessionId,
+        observationKind: "get",
+        presentationKind: command.payload.presentation ?? "unchanged",
+      };
     case "terminal.create":
       return {
         type: command.type,
         ...(command.payload.cwd ? { cwd: command.payload.cwd } : {}),
         ...(command.payload.shell ? { shell: command.payload.shell } : {}),
+        presentationKind: command.payload.presentation ?? "headless",
       };
     case "terminal.run":
       return {
@@ -30,6 +37,9 @@ export function policyOperation(command: AgentCommand): AgentPolicyOperation {
         runKind: command.payload.tty === true ? "pty" : "captured",
         ...(command.payload.cwd ? { cwd: command.payload.cwd } : {}),
         ...(command.payload.shell ? { shell: command.payload.shell } : {}),
+        ...(command.payload.tty === true
+          ? { presentationKind: command.payload.presentation ?? "headless" }
+          : {}),
       };
     case "terminal.input":
       return { type: command.type, sessionId, inputKind: "input" };
@@ -37,6 +47,12 @@ export function policyOperation(command: AgentCommand): AgentPolicyOperation {
       return { type: command.type, sessionId, inputKind: "resize" };
     case "terminal.scroll":
       return { type: command.type, sessionId, inputKind: "scroll" };
+    case "terminal.setPresentation":
+      return {
+        type: command.type,
+        sessionId,
+        presentationKind: command.payload.presentation,
+      };
     case "terminal.observe":
       return {
         type: command.type,

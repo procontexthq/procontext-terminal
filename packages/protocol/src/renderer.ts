@@ -57,6 +57,16 @@ export type TerminalViewBootstrap = {
 export type OpenTerminalViewRequest = { sessionId: SessionId };
 export type CloseTerminalViewRequest = { sessionId: SessionId };
 export type ReportTerminalViewportRequest = { sessionId: SessionId; viewportY: number };
+export type RendererPresentationAction = "open" | "focus" | "hide" | "close";
+export type RendererPresentationCommand = {
+  commandId: RequestId;
+  sessionId: SessionId;
+  action: RendererPresentationAction;
+};
+export type RendererPresentationAcknowledgement = RendererPresentationCommand & {
+  status: "completed" | "failed";
+  message?: string;
+};
 
 export type RendererSessionEvent =
   | {
@@ -70,7 +80,8 @@ export type RendererSessionEvent =
   | { type: "session.updated"; payload: TerminalSessionSummary }
   | { type: "session.bell"; payload: { sessionId: SessionId } }
   | { type: "session.error"; payload: TerminalError }
-  | { type: "agent.activity"; payload: AgentActivityState };
+  | { type: "agent.activity"; payload: AgentActivityState }
+  | { type: "presentation.command"; payload: RendererPresentationCommand };
 
 export type AgentActivityState = {
   activeConnections: number;
@@ -97,7 +108,13 @@ export type RendererCommand =
   | { type: "recording.stop"; requestId: RequestId; payload: RecordingControlRequest }
   | { type: "recording.export"; requestId: RequestId; payload: RecordingControlRequest }
   | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> }
-  | { type: "settings.saveUiTheme"; requestId: RequestId; payload: SaveUiThemeRequest };
+  | { type: "settings.saveUiTheme"; requestId: RequestId; payload: SaveUiThemeRequest }
+  | { type: "presentation.ready"; requestId: RequestId; payload: Record<string, never> }
+  | {
+      type: "presentation.acknowledge";
+      requestId: RequestId;
+      payload: RendererPresentationAcknowledgement;
+    };
 
 export type RendererCommandType = RendererCommand["type"];
 export type RendererCommandPayload<TType extends RendererCommandType> = Extract<
@@ -108,6 +125,14 @@ export type RendererCommandResult<TValue = unknown> = CommandResult<TValue>;
 export type Unsubscribe = () => void;
 
 const viewRequestSchema = z.object({ sessionId: sessionIdSchema });
+const rendererPresentationActionSchema = z.enum(["open", "focus", "hide", "close"]);
+const rendererPresentationAcknowledgementSchema = z.object({
+  commandId: requestIdSchema,
+  sessionId: sessionIdSchema,
+  action: rendererPresentationActionSchema,
+  status: z.enum(["completed", "failed"]),
+  message: z.string().min(1).optional(),
+});
 
 export const rendererCommandSchema = z.discriminatedUnion("type", [
   z.object({
@@ -177,6 +202,16 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     requestId: requestIdSchema,
     payload: saveUiThemeRequestSchema,
   }),
+  z.object({
+    type: z.literal("presentation.ready"),
+    requestId: requestIdSchema,
+    payload: z.object({}),
+  }),
+  z.object({
+    type: z.literal("presentation.acknowledge"),
+    requestId: requestIdSchema,
+    payload: rendererPresentationAcknowledgementSchema,
+  }),
 ]);
 
 export const appShortcutActions = ["newTab", "closeTab", "previousTab", "nextTab"] as const;
@@ -198,6 +233,8 @@ export type RendererTerminalApi = {
   exportRecording(request: RecordingControlRequest): Promise<TerminalRecordingExport>;
   getConfig(): Promise<TerminalConfig>;
   saveUiTheme(theme: UiThemePreference): Promise<TerminalConfig>;
+  presentationReady(): Promise<void>;
+  acknowledgePresentation(request: RendererPresentationAcknowledgement): Promise<void>;
   onAppShortcut(handler: (action: AppShortcutAction) => void): Unsubscribe;
   onTerminalEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe;
   onSessionEvent(sessionId: SessionId, handler: (event: RendererSessionEvent) => void): Unsubscribe;
@@ -251,6 +288,15 @@ export function isRendererSessionEvent(value: unknown): value is RendererSession
       return (
         typeof value.payload.activeConnections === "number" &&
         typeof value.payload.authenticatedConnections === "number"
+      );
+    case "presentation.command":
+      return (
+        typeof value.payload.commandId === "string" &&
+        typeof value.payload.sessionId === "string" &&
+        (value.payload.action === "open" ||
+          value.payload.action === "focus" ||
+          value.payload.action === "hide" ||
+          value.payload.action === "close")
       );
     default:
       return false;

@@ -32,6 +32,15 @@ describe("renderer terminal api", () => {
     await expect(api.closeView({ sessionId })).resolves.toBe("session.closeView");
     await expect(api.startRecording({ sessionId })).resolves.toBe("recording.start");
     await expect(api.saveUiTheme("gamer")).resolves.toBe("settings.saveUiTheme");
+    await expect(api.presentationReady()).resolves.toBe("presentation.ready");
+    await expect(
+      api.acknowledgePresentation({
+        commandId: requestId,
+        sessionId,
+        action: "focus",
+        status: "completed",
+      }),
+    ).resolves.toBe("presentation.acknowledge");
 
     expect(Object.keys(api)).not.toEqual(
       expect.arrayContaining([
