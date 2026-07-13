@@ -95,6 +95,12 @@ describe("agent gateway", () => {
         scroll: { type: "edge", edge: "bottom" },
       }),
     );
+    await client.request(
+      createAgentCommand("terminal.setPresentation", {
+        sessionId,
+        presentation: "background",
+      }),
+    );
     await client.request(createAgentCommand("terminal.observe", { sessionId, timeoutMs: 100 }));
     await client.request(createAgentCommand("terminal.recording.start", { sessionId }));
     await client.request(createAgentCommand("terminal.recording.stop", { sessionId }));
@@ -112,6 +118,10 @@ describe("agent gateway", () => {
       expect.any(AbortSignal),
     );
     expect(services.close).toHaveBeenCalledWith({ sessionId });
+    expect(services.setPresentation).toHaveBeenCalledWith({
+      sessionId,
+      presentation: "background",
+    });
     client.close();
   });
 
@@ -293,6 +303,9 @@ function createServices() {
     create: vi.fn<AgentTerminalService["create"]>(() =>
       Promise.resolve(sessionSummary(createSessionId("created"))),
     ),
+    attach: vi.fn<AgentTerminalService["attach"]>(({ sessionId }) =>
+      Promise.resolve(sessionSummary(sessionId)),
+    ),
     run: vi.fn<AgentTerminalService["run"]>(() =>
       Promise.resolve({
         status: "completed",
@@ -314,6 +327,13 @@ function createServices() {
       status: "unchanged",
       observationVersion: 2,
     })),
+    setPresentation: vi.fn<AgentTerminalService["setPresentation"]>(() =>
+      Promise.resolve({
+        state: "background",
+        windowVisible: true,
+        windowFocused: false,
+      }),
+    ),
     observe: vi.fn<AgentTerminalService["observe"]>((request) =>
       Promise.resolve(
         "sessionId" in request

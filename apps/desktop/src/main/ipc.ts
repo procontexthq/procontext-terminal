@@ -6,6 +6,7 @@ import type { TerminalSessionManager } from "@terminal/session-core";
 
 import type { AppLogger } from "./logger";
 import type { TerminalPresentationRegistry } from "./presentation-registry";
+import type { TerminalPresentationController } from "./presentation-controller";
 import { handleRendererCommandPayload } from "./terminal-command-handler";
 
 export const IPC_CHANNELS = {
@@ -17,6 +18,7 @@ export const IPC_CHANNELS = {
 export function registerTerminalIpc({
   sessionManager,
   presentationRegistry,
+  presentationController,
   policy,
   logger,
   getConfig,
@@ -24,6 +26,7 @@ export function registerTerminalIpc({
 }: {
   sessionManager: TerminalSessionManager;
   presentationRegistry: TerminalPresentationRegistry;
+  presentationController: TerminalPresentationController;
   policy: TerminalPolicy;
   logger: AppLogger;
   getConfig: () => TerminalConfig;
@@ -35,12 +38,14 @@ export function registerTerminalIpc({
       sender: event.sender,
       trackedRendererIds,
       presentationRegistry,
+      presentationController,
       sessionManager,
       logger,
     });
     return handleRendererCommandPayload(payload, {
       sessionManager,
       presentationRegistry,
+      presentationController,
       rendererId: event.sender.id,
       getConfig,
       saveConfig,
@@ -72,12 +77,14 @@ function trackRendererCleanup({
   sender,
   trackedRendererIds,
   presentationRegistry,
+  presentationController,
   sessionManager,
   logger,
 }: {
   sender: WebContents;
   trackedRendererIds: Set<number>;
   presentationRegistry: TerminalPresentationRegistry;
+  presentationController: TerminalPresentationController;
   sessionManager: TerminalSessionManager;
   logger: Pick<AppLogger, "warn">;
 }): void {
@@ -89,6 +96,7 @@ function trackRendererCleanup({
     if (cleaned) return;
     cleaned = true;
     trackedRendererIds.delete(rendererId);
+    presentationController.rendererUnavailable(rendererId);
     for (const sessionId of presentationRegistry.removeRenderer(rendererId)) {
       setHeadlessIfPresent(sessionManager, sessionId, logger);
     }
@@ -137,6 +145,7 @@ function logSessionEvent(event: RendererSessionEvent, logger: AppLogger): void {
     case "session.output":
     case "session.viewport":
     case "agent.activity":
+    case "presentation.command":
       break;
   }
 }

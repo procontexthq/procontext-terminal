@@ -46,6 +46,9 @@ export function createRendererTerminalApi({
     getConfig: () => invokeCommand(invoke, createRendererCommand("settings.get", {})),
     saveUiTheme: (theme) =>
       invokeCommand(invoke, createRendererCommand("settings.saveUiTheme", { theme })),
+    presentationReady: () => invokeCommand(invoke, createRendererCommand("presentation.ready", {})),
+    acknowledgePresentation: (request) =>
+      invokeCommand(invoke, createRendererCommand("presentation.acknowledge", request)),
     onAppShortcut: (handler) =>
       subscribeAppShortcut((payload) => {
         if (isAppShortcutAction(payload)) handler(payload);
@@ -80,6 +83,7 @@ function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId):
     case "session.error":
       return event.payload.sessionId === sessionId;
     case "agent.activity":
+    case "presentation.command":
       return false;
   }
 }

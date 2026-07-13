@@ -171,6 +171,120 @@ describe("desktop terminal smoke", () => {
     }
   });
 
+  it("automates background, foreground, and headless presentation for agent sessions", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    const humanSessionId = await activeSessionId(page);
+    const descriptor = await waitForAgentDescriptor(userDataDir);
+    const agent = await authenticatedAgent(descriptor);
+
+    try {
+      const created = (await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.create", {
+            presentation: "background",
+          }),
+        ),
+      )) as TerminalSessionSummary;
+
+      await expectTabCount(page, 2);
+      if ((await activeSessionId(page)) !== humanSessionId) {
+        throw new Error("Background presentation unexpectedly selected the agent terminal.");
+      }
+      if (created.presentation.state !== "background") {
+        throw new Error(
+          `Expected background presentation: ${JSON.stringify(created.presentation)}`,
+        );
+      }
+
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.setPresentation", {
+            sessionId: created.sessionId,
+            presentation: "foreground",
+          }),
+        ),
+      );
+      await waitForActiveSession(page, created.sessionId);
+
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.setPresentation", {
+            sessionId: created.sessionId,
+            presentation: "headless",
+          }),
+        ),
+      );
+      await expectTabCount(page, 1);
+      await expectAgentOk(
+        agent.request(createAgentCommand("terminal.close", { sessionId: created.sessionId })),
+      );
+    } finally {
+      agent.close();
+    }
+  });
+
+  it("presents temporary PTY runs before completion and retains their exited view", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    const humanSessionId = await activeSessionId(page);
+    const descriptor = await waitForAgentDescriptor(userDataDir);
+    const agent = await authenticatedAgent(descriptor);
+
+    try {
+      const temporary = await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.run", {
+            input: nodeEvalCommand(
+              [
+                'process.stdout.write("PRESENTED_READY\\n");',
+                'process.stdin.setEncoding("utf8");',
+                'process.stdin.on("data", () => process.exit(0));',
+              ].join("\n"),
+            ),
+            tty: true,
+            timeoutMs: 50,
+            presentation: "background",
+          }),
+        ),
+      );
+      if (
+        !isRecord(temporary) ||
+        temporary.status !== "running" ||
+        temporary.tty !== true ||
+        typeof temporary.sessionId !== "string" ||
+        typeof temporary.operationId !== "string"
+      ) {
+        throw new Error(`Unexpected presented run result: ${JSON.stringify(temporary)}`);
+      }
+      const sessionId = createSessionId(temporary.sessionId);
+      const operationId = createOperationId(temporary.operationId);
+
+      await expectTabCount(page, 2);
+      if ((await activeSessionId(page)) !== humanSessionId) {
+        throw new Error("Background temporary PTY unexpectedly took focus.");
+      }
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.input", {
+            sessionId,
+            input: "finish\r",
+          }),
+        ),
+      );
+      await waitForSessionLifecycle(agent, sessionId, "exited");
+      await expectTabCount(page, 2);
+      await expectAgentOk(agent.request(createAgentCommand("terminal.close", { operationId })));
+      await expectTabCount(page, 1);
+    } finally {
+      agent.close();
+    }
+  });
+
   it("runs captured and interactive temporary one-shot operations headlessly", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
@@ -402,6 +516,14 @@ async function waitForObservation(
   );
 }
 
+async function waitForSessionLifecycle(
+  agent: E2EAgentClient,
+  sessionId: SessionId,
+  lifecycle: TerminalSessionSummary["lifecycle"],
+): Promise<void> {
+  await waitForObservation(agent, sessionId, (observation) => observation.lifecycle === lifecycle);
+}
+
 async function attachEventually(agent: E2EAgentClient, sessionId: SessionId): Promise<void> {
   const deadline = Date.now() + e2eUiTimeoutMs;
   while (Date.now() < deadline) {
@@ -624,6 +746,16 @@ async function expectTabCount(page: Page, count: number): Promise<void> {
   await page.waitForFunction(
     (expected) => document.querySelectorAll("[data-terminal-tab='true']").length === expected,
     count,
+    { timeout: e2eUiTimeoutMs },
+  );
+}
+
+async function waitForActiveSession(page: Page, sessionId: SessionId): Promise<void> {
+  await page.waitForFunction(
+    (expectedSessionId) =>
+      document.querySelector("[data-testid='terminal-ready']")?.getAttribute("data-session-id") ===
+      expectedSessionId,
+    sessionId,
     { timeout: e2eUiTimeoutMs },
   );
 }

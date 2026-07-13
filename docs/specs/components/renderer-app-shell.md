@@ -19,6 +19,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Display session status such as running, exited, disconnected, or blocked by policy.
 - Keep UI state separate from terminal process state.
 - Request terminal operations through the preload bridge.
+- Handle correlated presentation open, focus, hide, and close commands from
+  main and acknowledge them after the requested tab/view action settles.
 
 ## Boundaries
 
@@ -100,6 +102,9 @@ The first multi-session milestone supports tabs only.
 - Startup reconciliation may create visible views for live headless sessions
   according to presentation policy. A missing renderer view never changes PTY
   lifecycle.
+- Background presentation opens a tab without selecting it. Foreground
+  presentation selects the tab and focuses its xterm instance. Headless
+  presentation removes the view without terminating the PTY.
 - Startup creates one default human terminal tab. Human tab count, tab order,
   active tab, cwd, and shell launch metadata are not persisted or restored from
   settings across app restarts.

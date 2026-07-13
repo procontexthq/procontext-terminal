@@ -35,7 +35,10 @@ describe("terminal protocol", () => {
   it("validates the foundation session requests", () => {
     const sessionId = createSessionId("session-1");
 
-    expect(parseCreateTerminalRequest({ cwd: "/tmp" })).toEqual({ cwd: "/tmp" });
+    expect(parseCreateTerminalRequest({ cwd: "/tmp", presentation: "foreground" })).toEqual({
+      cwd: "/tmp",
+      presentation: "foreground",
+    });
     expect(parseTerminalInputRequest({ sessionId, input: "echo ok\r" })).toEqual({
       sessionId,
       input: "echo ok\r",
@@ -142,6 +145,12 @@ describe("terminal protocol", () => {
     expect(createAgentCommand("terminal.recording.export", { sessionId }, requestId)).toMatchObject(
       { type: "terminal.recording.export" },
     );
+    expect(
+      createAgentCommand("terminal.attach", { sessionId, presentation: "unchanged" }, requestId),
+    ).toMatchObject({
+      type: "terminal.attach",
+      payload: { sessionId, presentation: "unchanged" },
+    });
 
     expect(() =>
       parseAgentCommand({
@@ -162,6 +171,7 @@ describe("terminal protocol", () => {
   it("validates one-shot run and operation-target requests", () => {
     const requestId = createRequestId("request-operation");
     const operationId = createOperationId("operation-1");
+    const sessionId = createSessionId("session-presentation");
 
     expect(
       parseRunTerminalRequest({
@@ -179,10 +189,20 @@ describe("terminal protocol", () => {
     expect(
       createAgentCommand(
         "terminal.run",
-        { input: "vim", tty: true, presentation: "headless" },
+        { input: "vim", tty: true, presentation: "foreground" },
         requestId,
       ),
     ).toMatchObject({ type: "terminal.run", payload: { tty: true } });
+    expect(
+      createAgentCommand(
+        "terminal.setPresentation",
+        { sessionId, presentation: "background" },
+        requestId,
+      ),
+    ).toMatchObject({
+      type: "terminal.setPresentation",
+      payload: { sessionId, presentation: "background" },
+    });
     expect(
       createAgentCommand(
         "terminal.observe",
@@ -212,10 +232,17 @@ describe("terminal protocol", () => {
         maxOutputBytesPerStream: 1024,
       }),
     ).toThrow();
-    expect(() =>
+    expect(
       parseRunTerminalRequest({
         input: "x",
         tty: true,
+        presentation: "foreground",
+      }),
+    ).toMatchObject({ presentation: "foreground" });
+    expect(() =>
+      parseRunTerminalRequest({
+        input: "x",
+        tty: false,
         presentation: "foreground",
       }),
     ).toThrow();
@@ -266,6 +293,7 @@ describe("terminal protocol", () => {
   it("validates renderer bootstrap and sequenced events", () => {
     const requestId = createRequestId("request-renderer");
     const sessionId = createSessionId("session-renderer");
+    const commandId = createRequestId("presentation-command");
 
     expect(createRendererCommand("session.openView", { sessionId }, requestId)).toMatchObject({
       type: "session.openView",
@@ -289,6 +317,19 @@ describe("terminal protocol", () => {
         payload: { sessionId, viewportY: 2, observationVersion: 8 },
       }),
     ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "presentation.command",
+        payload: { commandId, sessionId, action: "focus" },
+      }),
+    ).toBe(true);
+    expect(
+      createRendererCommand(
+        "presentation.acknowledge",
+        { commandId, sessionId, action: "focus", status: "completed" },
+        requestId,
+      ),
+    ).toMatchObject({ type: "presentation.acknowledge" });
   });
 
   it("keeps configuration and recording formats compatible", () => {

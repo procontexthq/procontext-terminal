@@ -103,6 +103,7 @@ export async function createTerminalSession(
         options.onError?.(event.payload);
         break;
       case "agent.activity":
+      case "presentation.command":
         break;
     }
   };
@@ -261,6 +262,7 @@ function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId):
     case "session.error":
       return event.payload.sessionId === sessionId;
     case "agent.activity":
+    case "presentation.command":
       return false;
   }
 }

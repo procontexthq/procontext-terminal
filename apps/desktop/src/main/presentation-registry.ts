@@ -6,6 +6,7 @@ export type TerminalPresentationRegistry = {
   removeRenderer(rendererId: number): SessionId[];
   removeSession(sessionId: SessionId): void;
   owns(sessionId: SessionId, rendererId: number): boolean;
+  rendererIdFor(sessionId: SessionId): number | undefined;
 };
 
 export function createTerminalPresentationRegistry(): TerminalPresentationRegistry {
@@ -42,6 +43,9 @@ export function createTerminalPresentationRegistry(): TerminalPresentationRegist
     },
     owns(sessionId, rendererId) {
       return rendererBySession.get(sessionId) === rendererId;
+    },
+    rendererIdFor(sessionId) {
+      return rendererBySession.get(sessionId);
     },
   };
 }

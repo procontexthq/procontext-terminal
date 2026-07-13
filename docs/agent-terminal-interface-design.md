@@ -10,8 +10,9 @@ defined by the documents under `docs/specs/`.
 
 The current release implements persistent-session lifecycle, raw input,
 canonical observation, shared viewport control, close, recording, and headless
-one-shot execution. Presentation automation and shell integration follow in
-later implementation phases without changing the model defined here.
+one-shot execution plus automated headless, background, and foreground
+presentation. Shell integration follows in a later implementation phase
+without changing the model defined here.
 
 ## Purpose
 
@@ -208,9 +209,9 @@ operation.
 and may be set up to 16 MiB. Supplying it for `tty: true` is invalid because
 temporary PTY output uses the fixed terminal-run journal described below.
 
-During Phase 2, one-shot PTY runs support only omitted or `headless`
-presentation. `background` and `foreground` are accepted only after Phase 3
-presentation automation is implemented.
+One-shot PTY runs support omitted, `headless`, `background`, and `foreground`
+presentation. Captured runs reject non-headless presentation because they do
+not own a terminal view.
 
 The input is a single shell string. Agents can use normal shell syntax:
 

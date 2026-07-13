@@ -23,6 +23,8 @@ type RendererTerminalApi = {
   openView(request: OpenTerminalViewRequest): Promise<TerminalViewBootstrap>;
   reportViewport(request: ReportTerminalViewportRequest): Promise<void>;
   getConfig(): Promise<TerminalConfig>;
+  presentationReady(): Promise<void>;
+  acknowledgePresentation(request: RendererPresentationAcknowledgement): Promise<void>;
   onSessionEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe;
 };
 ```
@@ -31,6 +33,10 @@ The renderer bootstrap contains serialized terminal state and an output
 sequence fence. Session output events carry monotonically increasing sequence
 numbers. Renderer-only view registration is not agent attachment and does not
 change lifecycle.
+
+Main-to-renderer presentation commands carry a command ID. The renderer
+acknowledges completion or failure through the typed command API only after the
+requested tab/view mutation settles.
 
 ## Boundaries
 

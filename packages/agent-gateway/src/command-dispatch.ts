@@ -35,9 +35,13 @@ export async function dispatchAgentCommand(
       return session;
     }
     case "terminal.attach": {
-      const session = services.get(command.payload);
-      ownership.attach(session.sessionId);
-      return session;
+      ownership.attach(command.payload.sessionId);
+      try {
+        return await services.attach(command.payload);
+      } catch (error: unknown) {
+        ownership.detach(command.payload.sessionId);
+        throw error;
+      }
     }
     case "terminal.input":
       return services.input(command.payload);
@@ -45,6 +49,8 @@ export async function dispatchAgentCommand(
       return services.resize(command.payload);
     case "terminal.scroll":
       return services.scroll(command.payload);
+    case "terminal.setPresentation":
+      return services.setPresentation(command.payload);
     case "terminal.observe":
       return services.observe(command.payload, signal);
     case "terminal.close": {

@@ -165,6 +165,28 @@ describe("default agent policy", () => {
       }),
     ).toMatchObject({ type: "allow" });
   });
+
+  it("receives presentation intent as safe policy metadata", () => {
+    const policy = createDefaultAgentPolicy({ createDecisionId: () => "decision-presentation" });
+    const sessionId = createSessionId("session-presentation");
+    const actor = {
+      kind: "agent" as const,
+      authenticated: true,
+      local: true,
+      attachedSessionIds: new Set([sessionId]),
+    };
+
+    expect(
+      policy.authorize({
+        actor,
+        operation: {
+          type: "terminal.setPresentation",
+          sessionId,
+          presentationKind: "foreground",
+        },
+      }),
+    ).toMatchObject({ type: "allow" });
+  });
 });
 
 describe("default terminal policy", () => {

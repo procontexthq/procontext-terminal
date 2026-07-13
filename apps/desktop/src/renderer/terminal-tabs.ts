@@ -44,8 +44,9 @@ export function addTerminalTab(
 export function addAttachedTerminalTab(
   state: TerminalTabsState,
   snapshot: TerminalSessionSummary,
-  options: { reusePlaceholder?: boolean } = {},
+  options: { reusePlaceholder?: boolean; activate?: boolean } = {},
 ): TerminalTabsState {
+  const activate = options.activate ?? true;
   const existingTab = state.tabs.find((tab) => tab.sessionId === snapshot.sessionId);
   if (existingTab) {
     return {
@@ -59,7 +60,7 @@ export function addAttachedTerminalTab(
             }
           : tab,
       ),
-      activeTabId: existingTab.id,
+      activeTabId: activate ? existingTab.id : state.activeTabId,
     };
   }
 
@@ -77,13 +78,13 @@ export function addAttachedTerminalTab(
   if (reusableTab) {
     return {
       tabs: state.tabs.map((tab) => (tab.id === reusableTab.id ? nextTab : tab)),
-      activeTabId: nextTab.id,
+      activeTabId: activate ? nextTab.id : state.activeTabId,
     };
   }
 
   return {
     tabs: [...state.tabs, nextTab],
-    activeTabId: nextTab.id,
+    activeTabId: activate ? nextTab.id : state.activeTabId,
   };
 }
 

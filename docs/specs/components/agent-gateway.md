@@ -28,12 +28,13 @@ terminal.list()
 terminal.get({ sessionId })
 terminal.run({ input, cwd?, env?, shell?, tty?, timeoutMs?, maxOutputBytesPerStream? })
 terminal.create({ cwd?, env?, shell?, cols?, rows? })
-terminal.attach({ sessionId })
+terminal.attach({ sessionId, presentation? })
 terminal.input({ sessionId, input })
 terminal.resize({ sessionId, cols, rows })
 terminal.scroll({ sessionId, scroll })
 terminal.observe({ sessionId, afterVersion?, timeoutMs })
 terminal.observe({ operationId, afterVersion?, timeoutMs })
+terminal.setPresentation({ sessionId, presentation })
 terminal.close({ sessionId })
 terminal.close({ operationId })
 
@@ -52,7 +53,11 @@ bytes, title updates, screen snapshots, or lifecycle events independently of
 - Authenticated local agents may list sessions and read session summaries.
 - Creating a session grants the connection its exclusive agent attachment.
 - Attaching succeeds only when no other agent connection controls the session.
+- Agent-created sessions default to headless presentation. Attach defaults to
+  leaving presentation unchanged.
 - Input, resize, scroll, observation, close, and recording require attachment.
+- Presentation changes require attachment and remain independent from PTY
+  lifecycle.
 - `terminal.run({ tty: true })` automatically attaches its temporary session to
   the creating connection when the operation remains running.
 - An authenticated local connection that possesses an unguessable operation ID
@@ -86,3 +91,5 @@ Electron windows, interpret terminal content, or bypass the terminal service.
 - Temporary PTY runs grant session attachment only to the creating connection.
 - Operation-ID observation and close work after reconnect.
 - Run input is absent from policy and audit records.
+- Failed renderer presentation does not fail session creation or remove
+  headless agent control.

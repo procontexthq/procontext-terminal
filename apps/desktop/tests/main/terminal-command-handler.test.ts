@@ -4,6 +4,7 @@ import { defaultTerminalConfig } from "@terminal/config";
 import { createDefaultTerminalPolicy, type TerminalPolicy } from "@terminal/policy-engine";
 import {
   createRendererCommand,
+  createRequestId,
   createSessionId,
   type TerminalConfig,
   type TerminalSessionSummary,
@@ -162,6 +163,30 @@ describe("terminal command handler", () => {
     expect(base.sessionManager.startRecording).toHaveBeenCalledWith({ sessionId });
   });
 
+  it("routes renderer presentation readiness and acknowledgements", async () => {
+    const base = createServices();
+    const commandId = createRequestId("presentation-command");
+
+    await handleRendererCommandPayload(createRendererCommand("presentation.ready", {}), base);
+    await handleRendererCommandPayload(
+      createRendererCommand("presentation.acknowledge", {
+        commandId,
+        sessionId,
+        action: "open",
+        status: "completed",
+      }),
+      base,
+    );
+
+    expect(base.presentationController.rendererReady).toHaveBeenCalledWith(11);
+    expect(base.presentationController.acknowledge).toHaveBeenCalledWith(11, {
+      commandId,
+      sessionId,
+      action: "open",
+      status: "completed",
+    });
+  });
+
   it("rejects obsolete renderer commands at the protocol boundary", async () => {
     const result = await handleRendererCommandPayload(
       {
@@ -181,6 +206,13 @@ function createServices(overrides: { policy?: TerminalPolicy } = {}): TerminalCo
   return {
     rendererId: 11,
     presentationRegistry: createTerminalPresentationRegistry(),
+    presentationController: {
+      setPresentation: vi.fn(),
+      closeView: vi.fn(),
+      rendererReady: vi.fn(),
+      acknowledge: vi.fn(),
+      rendererUnavailable: vi.fn(),
+    },
     sessionManager: {
       createSession: vi.fn(() => Promise.resolve(summary)),
       listSessions: vi.fn(() => [summary]),

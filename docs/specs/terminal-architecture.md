@@ -88,7 +88,7 @@ Owns loopback transport, authentication, fixed protocol-version validation,
 exclusive agent attachment, policy checks, audit metadata, request dispatch,
 and disconnect cleanup. It calls one narrow terminal service.
 
-## Agent Contract Through Phase 2
+## Agent Contract Through Phase 3
 
 ```ts
 type AgentTerminalCommand =
@@ -100,6 +100,10 @@ type AgentTerminalCommand =
   | { type: "terminal.input"; payload: TerminalInputRequest }
   | { type: "terminal.resize"; payload: ResizeTerminalRequest }
   | { type: "terminal.scroll"; payload: ScrollTerminalRequest }
+  | {
+      type: "terminal.setPresentation";
+      payload: SetTerminalPresentationRequest;
+    }
   | {
       type: "terminal.observe";
       payload: ObserveTerminalRequest | ObserveCapturedOperationRequest;
@@ -119,8 +123,10 @@ is no independent agent PTY-output event stream.
 
 `terminal.run({ tty: false })` owns a captured child process with separate
 bounded stdout and stderr journals. `terminal.run({ tty: true })` owns a
-temporary command PTY that reuses the canonical session model. Phase 2 supports
-headless one-shot PTYs; renderer presentation automation remains deferred.
+temporary command PTY that reuses the canonical session model. Temporary and
+persistent PTYs support headless, background, and foreground presentation
+through correlated renderer commands. Renderer failure changes presentation
+state without changing PTY lifecycle or agent attachment.
 
 ## Session Lifecycle
 
@@ -210,7 +216,6 @@ is unchanged; keys intended for the application remain terminal input.
 
 ## Subsequent Phases
 
-- Automated headless/background/foreground presentation.
 - Automatic shell integration and semantic top-level command state.
 - Panes, search, links, settings UI, and release packaging improvements.
 

@@ -10,6 +10,7 @@ export { ManagedTerminalSession, type TerminalRecorder } from "./managed-session
 export {
   TerminalOperationManager,
   type TerminalOperationManagerOptions,
+  type TerminalOperationRunHooks,
   type TerminalOperationShutdownResult,
 } from "./operation-manager.js";
 export { SessionRecording } from "./session-recording.js";

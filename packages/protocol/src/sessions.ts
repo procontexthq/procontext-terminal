@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { terminalErrorSchema, type TerminalError } from "./errors.js";
 import { sessionIdSchema, type SessionId } from "./ids.js";
+import { terminalPresentationModeSchema, type TerminalPresentationMode } from "./operations.js";
 
 export type InputOrigin = "human" | "agent" | "system";
 export type TerminalLifecycleState = "creating" | "running" | "exiting" | "exited" | "failed";
@@ -54,6 +55,7 @@ export type CreateTerminalRequest = {
   env?: Record<string, string>;
   cols?: number;
   rows?: number;
+  presentation?: TerminalPresentationMode;
 };
 
 export type RendererCreateTerminalRequest = CreateTerminalRequest & {
@@ -61,7 +63,14 @@ export type RendererCreateTerminalRequest = CreateTerminalRequest & {
 };
 
 export type GetTerminalRequest = { sessionId: SessionId };
-export type AttachTerminalRequest = { sessionId: SessionId };
+export type AttachTerminalRequest = {
+  sessionId: SessionId;
+  presentation?: TerminalPresentationMode | "unchanged";
+};
+export type SetTerminalPresentationRequest = {
+  sessionId: SessionId;
+  presentation: TerminalPresentationMode;
+};
 
 export type TerminalInputRequest = {
   sessionId: SessionId;
@@ -193,6 +202,7 @@ export const createTerminalRequestSchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
   cols: terminalDimensionsSchema.shape.cols.optional(),
   rows: terminalDimensionsSchema.shape.rows.optional(),
+  presentation: terminalPresentationModeSchema.optional(),
 });
 
 export const rendererCreateTerminalRequestSchema = createTerminalRequestSchema.extend({
@@ -200,7 +210,14 @@ export const rendererCreateTerminalRequestSchema = createTerminalRequestSchema.e
 });
 
 export const getTerminalRequestSchema = z.object({ sessionId: sessionIdSchema });
-export const attachTerminalRequestSchema = getTerminalRequestSchema;
+export const attachTerminalRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  presentation: z.union([terminalPresentationModeSchema, z.literal("unchanged")]).optional(),
+});
+export const setTerminalPresentationRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  presentation: terminalPresentationModeSchema,
+});
 export const closeTerminalRequestSchema = getTerminalRequestSchema;
 
 export const terminalInputRequestSchema = z.object({

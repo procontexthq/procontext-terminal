@@ -76,6 +76,7 @@ The architecture specs describe components. The repository structure groups some
 | --- | --- |
 | Electron main process | `apps/desktop/src/main` |
 | Window manager | `apps/desktop/src/main` |
+| Presentation controller | `apps/desktop/src/main/presentation-controller.ts` |
 | Preload bridge | `apps/desktop/src/preload` |
 | Renderer app shell | `apps/desktop/src/renderer` |
 | Terminal view | `apps/desktop/src/renderer` |
@@ -188,6 +189,8 @@ Responsibilities:
 - Wire session manager, PTY host, settings, policy, recorder, logger, and agent gateway.
 - Adapt session and operation managers to the narrow agent service in a focused
   main-process module.
+- Correlate renderer presentation commands and acknowledgements while keeping
+  view state independent from PTY lifecycle.
 - Own app lifecycle and graceful shutdown.
 - Own native OS integration.
 - Persist structured app diagnostics through the main-process logger.

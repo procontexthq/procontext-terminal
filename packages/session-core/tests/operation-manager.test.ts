@@ -289,6 +289,40 @@ describe("TerminalOperationManager captured runs", () => {
       vi.useRealTimers();
     }
   });
+
+  it("retains completed presented temporary PTYs until explicit close", async () => {
+    vi.useFakeTimers();
+    try {
+      const ptyHost = new FakePtyHost();
+      const sessions = new TerminalSessionManager(ptyHost);
+      const onTemporarySessionCreated = vi.fn(() => Promise.resolve());
+      const manager = createManager(new FakeCapturedProcessHost(), { retentionMs: 50 }, sessions);
+      const runningPromise = manager.run(
+        runRequest({
+          input: "watch",
+          tty: true,
+          timeoutMs: 1,
+          presentation: "background",
+        }),
+        { onTemporarySessionCreated },
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      const running = await runningPromise;
+      if (!running.tty) throw new Error("Expected a terminal run.");
+
+      expect(onTemporarySessionCreated).toHaveBeenCalledWith(running.sessionId, "background");
+      ptyHost.pty.emitExit({ exitCode: 0, signal: null });
+      vi.runAllTicks();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(sessions.getSession({ sessionId: running.sessionId }).lifecycle).toBe("exited");
+      await expect(manager.close({ operationId: running.operationId })).resolves.toMatchObject({
+        status: "closed",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 class FakeCapturedProcessHost implements CapturedProcessHost {
