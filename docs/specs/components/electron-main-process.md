@@ -15,6 +15,10 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Create and manage `BrowserWindow` instances through the window manager.
 - Use packaged app icon resources for BrowserWindow and desktop shell branding
   when those resources are available.
+- Set the internal product name before resolving app-specific data and log paths.
+- On macOS, rely on the native bundle icon for packaged apps. Development may
+  replace the stock Electron Dock image as soon as the app is ready, but must
+  not override the packaged multi-resolution `.icns` resource at runtime.
 - Configure secure renderer settings.
 - Register typed IPC handlers.
 - Start and stop the local agent gateway.
@@ -49,8 +53,8 @@ The main process must not:
   PTY output, or transcript payloads.
 - Treat destroyed or crashed renderer web contents as unavailable for
   renderer-dependent display and observation.
-- Detach live sessions when their last renderer owner is destroyed so the
-  session can be rediscovered and reattached by a replacement renderer.
+- Remove renderer ownership when a renderer is destroyed and return preserved
+  sessions to headless presentation without changing PTY lifecycle.
 
 ## Collaborators
 
@@ -68,7 +72,10 @@ The main process must not:
 - IPC handlers validate request payloads and return typed domain errors.
 - IPC recording start, stop, and export handlers deny cleanly without recorder
   side effects when policy denies the request.
-- Renderer destruction removes renderer ownership and detaches orphaned running
-  sessions without killing their PTYs.
-- Phase 1 app shutdown terminates active sessions with a bounded timeout; later restore or detach policies must preserve the view/session distinction.
+- Renderer destruction removes renderer ownership and leaves preserved running
+  sessions headless without terminating their PTYs.
+- Phase 1 app shutdown terminates active sessions with a bounded timeout; later
+  restore or presentation policies must preserve the view/session distinction.
 - Main-process services can be wired without renderer imports or circular dependencies.
+- Packaged app verification checks native product name, identifier, executable,
+  and icon metadata in addition to checking that icon files exist.

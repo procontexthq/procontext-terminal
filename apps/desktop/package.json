@@ -1,5 +1,6 @@
 {
   "name": "@terminal/desktop",
+  "productName": "ProContext Terminal",
   "version": "0.1.0",
   "description": "ProContext Terminal desktop app.",
   "author": "ProContext",
