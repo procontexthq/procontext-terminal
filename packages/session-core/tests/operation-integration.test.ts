@@ -20,6 +20,7 @@ describe("terminal operation integration", () => {
       input: nodeEvalCommand(
         'process.stdout.write("CAPTURED_OUT"); process.stderr.write("CAPTURED_ERR");',
       ),
+      shell: platformShell(),
       tty: false,
       timeoutMs: 5_000,
     });
@@ -33,6 +34,7 @@ describe("terminal operation integration", () => {
 
     const terminal = await manager.run({
       input: nodeEvalCommand('process.stdout.write("PTY_OUT");'),
+      shell: platformShell(),
       tty: true,
       timeoutMs: 5_000,
     });
@@ -56,4 +58,11 @@ describe("terminal operation integration", () => {
 function nodeEvalCommand(source: string): string {
   const encoded = Buffer.from(source, "utf8").toString("base64");
   return `node -e "eval(Buffer.from('${encoded}', 'base64').toString('utf8'))"`;
+}
+
+function platformShell(): string {
+  if (process.platform === "win32") {
+    return process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe";
+  }
+  return "/bin/sh";
 }
