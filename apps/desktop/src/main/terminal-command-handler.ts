@@ -5,54 +5,39 @@ import {
   createTerminalError,
   parseRendererCommand,
   terminalErrorSchema,
-  type CreateSessionRequest,
+  type CreateTerminalRequest,
   type RendererCommand,
   type RendererCommandResult,
-  type RequestId,
   type TerminalConfig,
   type TerminalError,
-  type TerminalScreenSnapshot,
 } from "@terminal/protocol";
 import type { TerminalPolicy, TerminalPolicyOperation } from "@terminal/policy-engine";
 import type { TerminalSessionManager } from "@terminal/session-core";
+
 import type { AppLogger } from "./logger";
+import type { TerminalPresentationRegistry } from "./presentation-registry";
+
+type RendererTerminalSessionService = Pick<
+  TerminalSessionManager,
+  | "createSession"
+  | "listSessions"
+  | "getSession"
+  | "input"
+  | "resize"
+  | "scroll"
+  | "close"
+  | "getViewBootstrap"
+  | "setPresentation"
+  | "reportViewport"
+  | "startRecording"
+  | "stopRecording"
+  | "exportRecording"
+>;
 
 export type TerminalCommandServices = {
-  sessionManager: Pick<
-    TerminalSessionManager,
-    | "createSession"
-    | "listSessions"
-    | "write"
-    | "sendKey"
-    | "paste"
-    | "sendMouse"
-    | "setTitle"
-    | "reportBell"
-    | "interrupt"
-    | "resize"
-    | "kill"
-    | "detachSession"
-    | "attachSession"
-    | "getSession"
-    | "releaseSession"
-    | "readRecentOutput"
-    | "getLastActivityAt"
-    | "startRecording"
-    | "stopRecording"
-    | "exportRecording"
-  >;
-  requestScreenSnapshot(
-    sessionId: TerminalScreenSnapshot["sessionId"],
-    timeoutMs: number,
-  ): Promise<TerminalScreenSnapshot>;
-  resolveSnapshotResponse(requestId: RequestId, snapshot: TerminalScreenSnapshot): void;
-  rejectSnapshotResponse(
-    requestId: RequestId,
-    sessionId: TerminalScreenSnapshot["sessionId"],
-    reason: string,
-  ): void;
-  registerRendererSession?(sessionId: TerminalScreenSnapshot["sessionId"]): void;
-  unregisterRendererSession?(sessionId: TerminalScreenSnapshot["sessionId"]): void;
+  sessionManager: RendererTerminalSessionService;
+  presentationRegistry: TerminalPresentationRegistry;
+  rendererId: number;
   getConfig(): TerminalConfig;
   saveConfig(config: TerminalConfig): Promise<TerminalConfig>;
   policy: TerminalPolicy;
@@ -67,174 +52,106 @@ export async function handleRendererCommandPayload(
   try {
     command = parseRendererCommand(payload);
   } catch (error: unknown) {
-    const requestId = extractRequestId(payload);
-    const terminalError = createTerminalError(
-      "invalid_request",
-      "Invalid renderer command payload.",
-      {
+    return createRendererCommandFailure(
+      extractRequestId(payload),
+      createTerminalError("invalid_request", "Invalid renderer command payload.", {
         operation: "ipc",
         cause: errorMessage(error),
-      },
+      }),
     );
-    services.logger?.warn("ipc", "command.invalid", {
-      requestId,
-      errorType: terminalError.type,
-      cause: terminalError.cause,
-    });
-    return createRendererCommandFailure(requestId, terminalError);
   }
 
   try {
-    services.logger?.debug("ipc", "command.received", {
-      requestId: command.requestId,
-      commandType: command.type,
-    });
-    return await handleRendererCommand(command, services);
+    authorizeRendererCommand(command, services);
+    return await executeRendererCommand(command, services);
   } catch (error: unknown) {
     const terminalError = normalizeTerminalError(error);
-    services.logger?.warn("ipc", "command.failed", {
+    services.logger?.warn("ipc", "command_failed", {
       requestId: command.requestId,
       commandType: command.type,
-      errorType: terminalError.type,
       sessionId: terminalError.sessionId,
+      errorType: terminalError.type,
       cause: terminalError.cause,
     });
     return createRendererCommandFailure(command.requestId, terminalError);
   }
 }
 
-async function handleRendererCommand(
+async function executeRendererCommand(
   command: RendererCommand,
   services: TerminalCommandServices,
 ): Promise<RendererCommandResult<unknown>> {
+  const manager = services.sessionManager;
   switch (command.type) {
-    case "session.create": {
-      services.logger?.info("session", "create_requested", {
-        requestId: command.requestId,
-        cwd: command.payload.cwd,
-        hasExplicitShell: Boolean(command.payload.shell),
-      });
-      const created = await services.sessionManager.createSession(
-        applyConfiguredShell(command.payload, services.getConfig()),
+    case "session.create":
+      return createRendererCommandSuccess(
+        command.requestId,
+        await manager.createSession({
+          ...applyConfiguredShell(command.payload, services.getConfig()),
+          createdBy: "human",
+        }),
       );
-      services.registerRendererSession?.(created.sessionId);
-      return createRendererCommandSuccess(command.requestId, created);
-    }
     case "session.list":
-      return createRendererCommandSuccess(
-        command.requestId,
-        services.sessionManager.listSessions(),
-      );
-    case "session.write":
-      await services.sessionManager.write(command.payload);
-      return createRendererCommandSuccess(command.requestId, null);
-    case "session.sendKey":
-      await services.sessionManager.sendKey(command.payload);
-      return createRendererCommandSuccess(command.requestId, null);
-    case "session.paste":
-      await services.sessionManager.paste(command.payload);
-      return createRendererCommandSuccess(command.requestId, null);
-    case "session.mouse":
-      await services.sessionManager.sendMouse(command.payload);
-      return createRendererCommandSuccess(command.requestId, null);
-    case "session.setTitle":
-      return createRendererCommandSuccess(
-        command.requestId,
-        services.sessionManager.setTitle(command.payload),
-      );
-    case "session.bell":
-      services.sessionManager.reportBell(command.payload);
-      return createRendererCommandSuccess(command.requestId, null);
-    case "session.interrupt":
-      await services.sessionManager.interrupt(command.payload);
-      return createRendererCommandSuccess(command.requestId, null);
-    case "session.resize":
-      await services.sessionManager.resize(command.payload);
-      return createRendererCommandSuccess(command.requestId, null);
-    case "session.kill":
-      services.logger?.info("session", "kill_requested", {
-        requestId: command.requestId,
-        sessionId: command.payload.sessionId,
-      });
-      await services.sessionManager.kill(command.payload);
-      services.unregisterRendererSession?.(command.payload.sessionId);
-      return createRendererCommandSuccess(command.requestId, null);
-    case "session.detach": {
-      const snapshot = services.sessionManager.detachSession(command.payload);
-      services.unregisterRendererSession?.(snapshot.sessionId);
-      return createRendererCommandSuccess(command.requestId, snapshot);
-    }
-    case "session.attach": {
-      const snapshot = services.sessionManager.attachSession(command.payload);
-      services.registerRendererSession?.(snapshot.sessionId);
-      return createRendererCommandSuccess(command.requestId, snapshot);
-    }
-    case "session.release":
-      services.logger?.info("session", "release_requested", {
-        requestId: command.requestId,
-        sessionId: command.payload.sessionId,
-      });
-      await services.sessionManager.releaseSession(command.payload);
-      services.unregisterRendererSession?.(command.payload.sessionId);
-      return createRendererCommandSuccess(command.requestId, null);
+      return createRendererCommandSuccess(command.requestId, manager.listSessions());
     case "session.get":
+      return createRendererCommandSuccess(command.requestId, manager.getSession(command.payload));
+    case "session.input":
       return createRendererCommandSuccess(
         command.requestId,
-        services.sessionManager.getSession(command.payload),
+        await manager.input({ ...command.payload, origin: "human" }),
       );
-    case "session.readRecentOutput":
-      return createRendererCommandSuccess(
-        command.requestId,
-        services.sessionManager.readRecentOutput(command.payload),
-      );
-    case "session.captureScreen":
-      return createRendererCommandSuccess(
-        command.requestId,
-        await services.requestScreenSnapshot(command.payload.sessionId, command.payload.timeoutMs),
-      );
-    case "session.snapshot.response":
-      services.resolveSnapshotResponse(command.payload.requestId, command.payload.snapshot);
+    case "session.resize":
+      return createRendererCommandSuccess(command.requestId, await manager.resize(command.payload));
+    case "session.scroll":
+      return createRendererCommandSuccess(command.requestId, manager.scroll(command.payload));
+    case "session.close": {
+      const result = await manager.close(command.payload);
+      if (result.status === "closed") {
+        services.presentationRegistry.removeSession(command.payload.sessionId);
+      }
+      return createRendererCommandSuccess(command.requestId, result);
+    }
+    case "session.openView": {
+      services.presentationRegistry.open(command.payload.sessionId, services.rendererId);
+      try {
+        manager.setPresentation(command.payload.sessionId, {
+          state: "background",
+          windowVisible: true,
+          windowFocused: false,
+        });
+        return createRendererCommandSuccess(
+          command.requestId,
+          manager.getViewBootstrap(command.payload),
+        );
+      } catch (error: unknown) {
+        services.presentationRegistry.close(command.payload.sessionId, services.rendererId);
+        throw error;
+      }
+    }
+    case "session.closeView":
+      if (services.presentationRegistry.close(command.payload.sessionId, services.rendererId)) {
+        setHeadlessIfPresent(manager, command.payload.sessionId);
+      }
       return createRendererCommandSuccess(command.requestId, null);
-    case "session.snapshot.unavailable":
-      services.rejectSnapshotResponse(
-        command.payload.requestId,
-        command.payload.sessionId,
-        command.payload.reason,
-      );
+    case "session.reportViewport":
+      if (!services.presentationRegistry.owns(command.payload.sessionId, services.rendererId)) {
+        throw createTerminalError("view_unavailable", "Renderer does not own this terminal view.", {
+          sessionId: command.payload.sessionId,
+          operation: command.type,
+        });
+      }
+      manager.reportViewport(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
-    case "session.waitForText":
-      return createRendererCommandSuccess(
-        command.requestId,
-        await waitForText(command.payload, services),
-      );
-    case "session.waitForScreenChange":
-      return createRendererCommandSuccess(
-        command.requestId,
-        await waitForScreenChange(command.payload, services),
-      );
-    case "session.waitForQuiet":
-      return createRendererCommandSuccess(
-        command.requestId,
-        await waitForQuiet(command.payload, services),
-      );
-    case "session.waitForPrompt":
-      return createRendererCommandSuccess(
-        command.requestId,
-        await waitForPrompt(command.payload, services),
-      );
     case "recording.start":
-      authorizeRendererRecordingCommand(command, "start", services);
-      await services.sessionManager.startRecording(command.payload);
+      await manager.startRecording(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
     case "recording.stop":
-      authorizeRendererRecordingCommand(command, "stop", services);
-      await services.sessionManager.stopRecording(command.payload);
+      await manager.stopRecording(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
     case "recording.export":
-      authorizeRendererRecordingCommand(command, "export", services);
       return createRendererCommandSuccess(
         command.requestId,
-        await services.sessionManager.exportRecording(command.payload),
+        await manager.exportRecording(command.payload),
       );
     case "settings.get":
       return createRendererCommandSuccess(command.requestId, services.getConfig());
@@ -243,15 +160,12 @@ async function handleRendererCommand(
       try {
         const saved = await services.saveConfig({
           ...current,
-          ui: {
-            ...current.ui,
-            theme: command.payload.theme,
-          },
+          ui: { ...current.ui, theme: command.payload.theme },
         });
         return createRendererCommandSuccess(command.requestId, saved);
       } catch (error: unknown) {
         throw createTerminalError("settings_save_failed", "Could not save UI theme settings.", {
-          operation: "settings.saveUiTheme",
+          operation: command.type,
           cause: errorMessage(error),
         });
       }
@@ -259,200 +173,103 @@ async function handleRendererCommand(
   }
 }
 
-function authorizeRendererRecordingCommand(
-  command: Extract<
-    RendererCommand,
-    { type: "recording.start" | "recording.stop" | "recording.export" }
-  >,
-  recordingKind: NonNullable<TerminalPolicyOperation["recordingKind"]>,
+function authorizeRendererCommand(
+  command: RendererCommand,
   services: TerminalCommandServices,
 ): void {
-  const operation = {
-    type: command.type,
-    sessionId: command.payload.sessionId,
-    recordingKind,
-  } satisfies TerminalPolicyOperation;
+  const operation = policyOperation(command);
   const decision = services.policy.authorize({
     actor: { kind: "human", local: true },
     operation,
   });
-
   services.logger?.info("policy", "decision", {
     requestId: command.requestId,
     commandType: command.type,
-    sessionId: command.payload.sessionId,
+    sessionId: operation.sessionId,
     origin: "human",
     decisionId: decision.decisionId,
     outcome: decision.type,
     ...(decision.type === "deny" ? { denialCode: decision.reason.code } : {}),
   });
-
   if (decision.type === "deny") {
     throw createTerminalError(
       decision.reason.code === "auth_required" ? "auth_required" : "policy_denied",
       decision.reason.message,
       {
         operation: command.type,
-        sessionId: command.payload.sessionId,
+        ...(operation.sessionId ? { sessionId: operation.sessionId } : {}),
         cause: decision.reason.code,
       },
     );
   }
 }
 
-function applyConfiguredShell(
-  request: CreateSessionRequest,
-  config: TerminalConfig,
-): CreateSessionRequest {
-  if (request.shell || !config.shell.defaultProfile) {
-    return request;
+function policyOperation(command: RendererCommand): TerminalPolicyOperation {
+  switch (command.type) {
+    case "session.create":
+      return {
+        type: command.type,
+        ...(command.payload.cwd ? { cwd: command.payload.cwd } : {}),
+        ...(command.payload.shell ? { shell: command.payload.shell } : {}),
+      };
+    case "session.list":
+      return { type: command.type, observationKind: "list" };
+    case "session.get":
+    case "session.openView":
+      return { type: command.type, sessionId: command.payload.sessionId, observationKind: "get" };
+    case "session.input":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "input" };
+    case "session.resize":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "resize" };
+    case "session.scroll":
+    case "session.reportViewport":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "scroll" };
+    case "session.close":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "close" };
+    case "session.closeView":
+      return { type: command.type, sessionId: command.payload.sessionId };
+    case "recording.start":
+      return { type: command.type, sessionId: command.payload.sessionId, recordingKind: "start" };
+    case "recording.stop":
+      return { type: command.type, sessionId: command.payload.sessionId, recordingKind: "stop" };
+    case "recording.export":
+      return { type: command.type, sessionId: command.payload.sessionId, recordingKind: "export" };
+    case "settings.get":
+    case "settings.saveUiTheme":
+      return { type: command.type };
   }
+}
 
+export function applyConfiguredShell(
+  request: CreateTerminalRequest,
+  config: TerminalConfig,
+): CreateTerminalRequest {
+  if (request.shell || !config.shell.defaultProfile) return request;
   const profile = config.shell.profiles.find(
     (candidate) => candidate.id === config.shell.defaultProfile,
   );
-  if (profile) {
-    return {
-      ...request,
-      shell: profile.shell,
-      ...(profile.cwd ? { cwd: profile.cwd } : {}),
-      env: {
-        ...request.env,
-        ...profile.env,
-      },
-    };
+  if (!profile) return { ...request, shell: config.shell.defaultProfile };
+  return {
+    ...request,
+    shell: profile.shell,
+    ...(profile.cwd ? { cwd: profile.cwd } : {}),
+    env: { ...request.env, ...profile.env },
+  };
+}
+
+function setHeadlessIfPresent(
+  manager: RendererTerminalSessionService,
+  sessionId: Parameters<RendererTerminalSessionService["setPresentation"]>[0],
+): void {
+  try {
+    manager.setPresentation(sessionId, {
+      state: "headless",
+      windowVisible: false,
+      windowFocused: false,
+    });
+  } catch (error: unknown) {
+    if (!isTerminalError(error) || error.type !== "session_not_found") throw error;
   }
-
-  return { ...request, shell: config.shell.defaultProfile };
-}
-
-export async function waitForText(
-  request: Extract<RendererCommand, { type: "session.waitForText" }>["payload"],
-  services: TerminalCommandServices,
-) {
-  const deadline = Date.now() + request.timeoutMs;
-  while (Date.now() <= deadline) {
-    const recentOutput =
-      request.includeRecentOutput === false
-        ? ""
-        : services.sessionManager.readRecentOutput({
-            sessionId: request.sessionId,
-            maxBytes: 100_000,
-          }).data;
-
-    if (recentOutput.includes(request.text)) {
-      return { sessionId: request.sessionId, matchedAt: new Date().toISOString() };
-    }
-
-    let snapshot: TerminalScreenSnapshot;
-    try {
-      snapshot = await services.requestScreenSnapshot(
-        request.sessionId,
-        Math.min(remainingTimeout(deadline), 500),
-      );
-    } catch (error: unknown) {
-      if (request.includeRecentOutput === false) {
-        throw error;
-      }
-      await delay(50);
-      continue;
-    }
-    const viewportText = snapshot.viewport.map((row) => row.text).join("\n");
-    if (viewportText.includes(request.text)) {
-      return { sessionId: request.sessionId, matchedAt: new Date().toISOString(), snapshot };
-    }
-    await delay(50);
-  }
-
-  throw createTerminalError("wait_timeout", `Timed out waiting for text: ${request.text}`, {
-    sessionId: request.sessionId,
-    operation: "session.waitForText",
-  });
-}
-
-export async function waitForScreenChange(
-  request: Extract<RendererCommand, { type: "session.waitForScreenChange" }>["payload"],
-  services: TerminalCommandServices,
-) {
-  const deadline = Date.now() + request.timeoutMs;
-  const initial =
-    request.baselineHash ??
-    snapshotHash(
-      await services.requestScreenSnapshot(request.sessionId, remainingTimeout(deadline)),
-    );
-  while (Date.now() <= deadline) {
-    const snapshot = await services.requestScreenSnapshot(
-      request.sessionId,
-      Math.min(remainingTimeout(deadline), 500),
-    );
-    if (snapshotHash(snapshot) !== initial) {
-      return { sessionId: request.sessionId, matchedAt: new Date().toISOString(), snapshot };
-    }
-    await delay(50);
-  }
-
-  throw createTerminalError("wait_timeout", "Timed out waiting for screen change.", {
-    sessionId: request.sessionId,
-    operation: "session.waitForScreenChange",
-  });
-}
-
-export async function waitForQuiet(
-  request: Extract<RendererCommand, { type: "session.waitForQuiet" }>["payload"],
-  services: TerminalCommandServices,
-) {
-  const deadline = Date.now() + request.timeoutMs;
-  while (Date.now() <= deadline) {
-    const elapsed = Date.now() - services.sessionManager.getLastActivityAt(request.sessionId);
-    if (elapsed >= request.quietMs) {
-      return { sessionId: request.sessionId, matchedAt: new Date().toISOString() };
-    }
-    await delay(Math.min(50, request.quietMs));
-  }
-
-  throw createTerminalError("wait_timeout", "Timed out waiting for terminal quiet.", {
-    sessionId: request.sessionId,
-    operation: "session.waitForQuiet",
-  });
-}
-
-export async function waitForPrompt(
-  request: Extract<RendererCommand, { type: "session.waitForPrompt" }>["payload"],
-  services: TerminalCommandServices,
-) {
-  const deadline = Date.now() + request.timeoutMs;
-  while (Date.now() <= deadline) {
-    const snapshot = await services.requestScreenSnapshot(
-      request.sessionId,
-      Math.min(remainingTimeout(deadline), 500),
-    );
-    const lastLine = [...snapshot.viewport].reverse().find((row) => row.text.trim().length > 0);
-    if (lastLine && /[$#>]\s*$/.test(lastLine.text)) {
-      return { sessionId: request.sessionId, matchedAt: new Date().toISOString(), snapshot };
-    }
-    await delay(50);
-  }
-
-  throw createTerminalError("wait_timeout", "Timed out waiting for prompt.", {
-    sessionId: request.sessionId,
-    operation: "session.waitForPrompt",
-  });
-}
-
-function snapshotHash(snapshot: TerminalScreenSnapshot): string {
-  return JSON.stringify({
-    cursor: snapshot.cursor,
-    alternateScreen: snapshot.alternateScreen,
-    viewport: snapshot.viewport,
-  });
-}
-
-function remainingTimeout(deadline: number): number {
-  return Math.max(1, deadline - Date.now());
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function extractRequestId(payload: unknown) {
@@ -466,20 +283,20 @@ function extractRequestId(payload: unknown) {
       }
     }
   }
-
   return createRequestId();
 }
 
 function normalizeTerminalError(error: unknown): TerminalError {
   const parsed = terminalErrorSchema.safeParse(error);
-  if (parsed.success) {
-    return parsed.data;
-  }
-
+  if (parsed.success) return parsed.data;
   return createTerminalError("invalid_request", errorMessage(error), {
     operation: "ipc",
     cause: errorMessage(error),
   });
+}
+
+function isTerminalError(value: unknown): value is TerminalError {
+  return terminalErrorSchema.safeParse(value).success;
 }
 
 function errorMessage(error: unknown): string {

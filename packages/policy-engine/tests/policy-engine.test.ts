@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createSessionId } from "@terminal/protocol";
+import { createOperationId, createSessionId } from "@terminal/protocol";
 
 import { createDefaultAgentPolicy, createDefaultTerminalPolicy } from "../src/index";
 
@@ -11,7 +11,7 @@ describe("default agent policy", () => {
       kind: "agent" as const,
       authenticated: true,
       local: true,
-      ownedSessionIds: new Set<string>(),
+      attachedSessionIds: new Set<string>(),
     };
     const sessionId = createSessionId("session-policy-1");
 
@@ -35,7 +35,7 @@ describe("default agent policy", () => {
       kind: "agent" as const,
       authenticated: false,
       local: true,
-      ownedSessionIds: new Set<string>(),
+      attachedSessionIds: new Set<string>(),
     };
     const createOperation = {
       type: "terminal.create" as const,
@@ -65,9 +65,9 @@ describe("default agent policy", () => {
           kind: "agent",
           authenticated: false,
           local: true,
-          ownedSessionIds: new Set(),
+          attachedSessionIds: new Set(),
         },
-        operation: { type: "terminal.sendText", sessionId },
+        operation: { type: "terminal.input", sessionId },
       }),
     ).toEqual({
       type: "deny",
@@ -76,7 +76,7 @@ describe("default agent policy", () => {
         decisionId: "decision-deny",
         code: "auth_required",
         message: "Agent authentication is required.",
-        operation: "terminal.sendText",
+        operation: "terminal.input",
         sessionId,
       },
     });
@@ -87,15 +87,15 @@ describe("default agent policy", () => {
           kind: "agent",
           authenticated: true,
           local: false,
-          ownedSessionIds: new Set([sessionId]),
+          attachedSessionIds: new Set([sessionId]),
         },
-        operation: { type: "terminal.sendText", sessionId },
+        operation: { type: "terminal.input", sessionId },
       }),
     ).toMatchObject({
       type: "deny",
       reason: {
         code: "remote_control_disabled",
-        operation: "terminal.sendText",
+        operation: "terminal.input",
         sessionId,
       },
     });
@@ -112,15 +112,15 @@ describe("default agent policy", () => {
           kind: "agent",
           authenticated: true,
           local: true,
-          ownedSessionIds: new Set([sessionId]),
+          attachedSessionIds: new Set([sessionId]),
         },
-        operation: { type: "terminal.kill", sessionId: otherSessionId },
+        operation: { type: "terminal.close", sessionId: otherSessionId },
       }),
     ).toMatchObject({
       type: "deny",
       reason: {
         code: "session_not_owned",
-        operation: "terminal.kill",
+        operation: "terminal.close",
         sessionId: otherSessionId,
       },
     });
@@ -131,9 +131,37 @@ describe("default agent policy", () => {
           kind: "agent",
           authenticated: true,
           local: true,
-          ownedSessionIds: new Set([sessionId]),
+          attachedSessionIds: new Set([sessionId]),
         },
-        operation: { type: "terminal.kill", sessionId },
+        operation: { type: "terminal.close", sessionId },
+      }),
+    ).toMatchObject({ type: "allow" });
+  });
+
+  it("allows authenticated operation capability access without session attachment", () => {
+    const policy = createDefaultAgentPolicy({ createDecisionId: () => "decision-operation" });
+    const actor = {
+      kind: "agent" as const,
+      authenticated: true,
+      local: true,
+      attachedSessionIds: new Set<string>(),
+    };
+    const operationId = createOperationId("operation-policy");
+
+    expect(
+      policy.authorize({
+        actor,
+        operation: {
+          type: "terminal.observe",
+          operationId,
+          observationKind: "observe",
+        },
+      }),
+    ).toMatchObject({ type: "allow" });
+    expect(
+      policy.authorize({
+        actor,
+        operation: { type: "terminal.close", operationId, inputKind: "close" },
       }),
     ).toMatchObject({ type: "allow" });
   });

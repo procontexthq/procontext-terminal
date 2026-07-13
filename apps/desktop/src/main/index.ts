@@ -7,7 +7,6 @@ import {
   resolveAgentGatewayDescriptorPath,
   startAgentGateway,
   type AgentGateway,
-  type AgentGatewayTerminalServices,
 } from "@terminal/agent-gateway";
 import {
   defaultTerminalConfig,
@@ -18,31 +17,20 @@ import {
 import { createDefaultAgentPolicy, createDefaultTerminalPolicy } from "@terminal/policy-engine";
 import { NodePtyHost } from "@terminal/pty-host";
 import { FileTerminalRecorder, createPatternRedactor } from "@terminal/recorder";
-import { TerminalSessionManager } from "@terminal/session-core";
-import type { TerminalConfig, TerminalSessionSnapshot } from "@terminal/protocol";
+import {
+  NodeCapturedProcessHost,
+  TerminalOperationManager,
+  TerminalSessionManager,
+} from "@terminal/session-core";
+import type { TerminalConfig, TerminalSessionSummary } from "@terminal/protocol";
 
-import {
-  broadcastRendererEvent,
-  createScreenSnapshotService,
-  IPC_CHANNELS,
-  registerTerminalIpc,
-  type ScreenSnapshotService,
-} from "./ipc";
+import { broadcastRendererEvent, IPC_CHANNELS, registerTerminalIpc } from "./ipc";
 import { resolveAppShortcut, type AppShortcutPlatform } from "../shared/app-shortcuts";
-import {
-  createAgentSessionDisplayService,
-  type AgentSessionDisplayService,
-} from "./agent-session-display";
+import { createAgentTerminalService } from "./agent-terminal-service";
 import { PRODUCT_NAME, shouldSetDevelopmentDockIcon } from "./app-branding";
 import { resolveDefaultTerminalCwd } from "./default-terminal-cwd";
 import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
-import {
-  waitForPrompt,
-  waitForQuiet,
-  waitForScreenChange,
-  waitForText,
-  type TerminalCommandServices,
-} from "./terminal-command-handler";
+import { createTerminalPresentationRegistry } from "./presentation-registry";
 import { attachWindowCloseSessionCleanup } from "./window-lifecycle";
 
 app.setName(PRODUCT_NAME);
@@ -74,7 +62,19 @@ const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
     });
   },
 });
-const screenSnapshotService = createScreenSnapshotService();
+const operationManager = new TerminalOperationManager(
+  new NodeCapturedProcessHost(),
+  sessionManager,
+  {
+    defaultCwd: defaultTerminalCwd,
+    onBackgroundError: (error) => {
+      logger.error("operation", "background_failure", {
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    },
+  },
+);
+const presentationRegistry = createTerminalPresentationRegistry();
 const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
 let agentGateway: AgentGateway | null = null;
@@ -245,14 +245,14 @@ void app
       redactors: [createPatternRedactor(terminalConfig.recording.redactedPatterns)],
     });
 
-    unregisterIpc = registerTerminalIpc(
+    unregisterIpc = registerTerminalIpc({
       sessionManager,
-      terminalPolicy,
+      presentationRegistry,
+      policy: terminalPolicy,
       logger,
-      () => terminalConfig,
+      getConfig: () => terminalConfig,
       saveConfig,
-      screenSnapshotService,
-    );
+    });
     let startupWindowCreated = false;
     await createMainWindow()
       .then(() => {
@@ -268,7 +268,7 @@ void app
       if (startupSession.status === "settled") {
         logger.info("agent", "gateway_startup_session_ready", {
           sessionId: startupSession.session.sessionId,
-          sessionState: startupSession.session.state,
+          sessionState: startupSession.session.lifecycle,
         });
       } else {
         logger.warn("agent", "gateway_startup_session_timeout", {
@@ -276,18 +276,9 @@ void app
         });
       }
     }
-    const agentSessionDisplay = createAgentSessionDisplayService({
-      getWindows: () => BrowserWindow.getAllWindows(),
-      createWindow: createMainWindow,
-      logger,
-    });
     agentGateway = await startAgentGateway({
       descriptorPath: resolveAgentGatewayDescriptorPath(app.getPath("userData")),
-      services: createAgentGatewayServices(
-        sessionManager,
-        screenSnapshotService,
-        agentSessionDisplay,
-      ),
+      services: createAgentTerminalService(sessionManager, operationManager),
       policy: createDefaultAgentPolicy(),
       audit: (event) => {
         logger.info("agent", "audit", {
@@ -296,6 +287,7 @@ void app
           outcome: event.outcome,
           requestId: event.requestId,
           sessionId: event.sessionId,
+          operationId: event.operationId,
           errorType: event.errorType,
           denialCode: event.denialCode,
         });
@@ -422,58 +414,24 @@ async function shutdownApp() {
   }
   unregisterIpc?.();
   unregisterIpc = null;
+  let operationShutdownError: unknown;
+  try {
+    const operationResult = await operationManager.shutdown();
+    logger.info("operation", "shutdown_completed", operationResult);
+  } catch (error: unknown) {
+    operationShutdownError = error;
+    logger.error("operation", "shutdown_failed", {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
   logger.info("session", "shutdown_started", { timeoutMs: 1500 });
-  return sessionManager.shutdown({ timeoutMs: 1500 });
-}
-
-function createAgentGatewayServices(
-  manager: TerminalSessionManager,
-  snapshotService: ScreenSnapshotService,
-  agentSessionDisplay: AgentSessionDisplayService,
-): AgentGatewayTerminalServices {
-  const waitServices: TerminalCommandServices = {
-    sessionManager: manager,
-    requestScreenSnapshot: (sessionId, timeoutMs) =>
-      snapshotService.requestScreenSnapshot(sessionId, timeoutMs),
-    resolveSnapshotResponse: (requestId, snapshot) =>
-      snapshotService.resolveSnapshotResponse(requestId, snapshot),
-    rejectSnapshotResponse: (requestId, sessionId, reason) =>
-      snapshotService.rejectSnapshotResponse(requestId, sessionId, reason),
-    getConfig: () => terminalConfig,
-    saveConfig,
-    policy: terminalPolicy,
-    logger,
-  };
-
-  return {
-    listSessions: () => manager.listSessions(),
-    createSession: (request) => manager.createSession(request),
-    displaySession: (snapshot) => agentSessionDisplay.displaySession(snapshot),
-    getSession: (request) => manager.getSession(request),
-    write: (request) => manager.write(request),
-    sendKey: (request) => manager.sendKey(request),
-    paste: (request) => manager.paste(request),
-    sendMouse: (request) => manager.sendMouse(request),
-    interrupt: (request) => manager.interrupt(request),
-    resize: (request) => manager.resize(request),
-    readRecentOutput: (request) => manager.readRecentOutput(request),
-    captureScreen: (request) =>
-      snapshotService.requestScreenSnapshot(request.sessionId, request.timeoutMs),
-    waitForText: (request) => waitForText(request, waitServices),
-    waitForQuiet: (request) => waitForQuiet(request, waitServices),
-    waitForScreenChange: (request) => waitForScreenChange(request, waitServices),
-    waitForPrompt: (request) => waitForPrompt(request, waitServices),
-    kill: (request) => manager.kill(request),
-    release: (request) => manager.releaseSession(request),
-    startRecording: (request) => manager.startRecording(request),
-    stopRecording: (request) => manager.stopRecording(request),
-    exportRecording: (request) => manager.exportRecording(request),
-    onSessionEvent: (handler) => manager.onSessionEvent(handler),
-  };
+  const sessionResult = await sessionManager.shutdown({ timeoutMs: 1500 });
+  if (operationShutdownError) throw operationShutdownError;
+  return sessionResult;
 }
 
 type InitialHumanSessionWaitResult =
-  | { status: "settled"; session: TerminalSessionSnapshot }
+  | { status: "settled"; session: TerminalSessionSummary }
   | { status: "timed_out"; timeoutMs: number };
 
 function waitForInitialHumanSessionSettled(
@@ -512,10 +470,10 @@ function waitForInitialHumanSessionSettled(
 
 function findSettledHumanSession(
   manager: TerminalSessionManager,
-): TerminalSessionSnapshot | undefined {
+): TerminalSessionSummary | undefined {
   return manager
     .listSessions()
-    .find((session) => session.createdBy === "human" && session.state !== "creating");
+    .find((session) => session.createdBy === "human" && session.lifecycle !== "creating");
 }
 
 function sanitizeUrlForLog(value: string): string {

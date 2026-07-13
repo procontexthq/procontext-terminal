@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createSessionId, type TerminalSessionSnapshot } from "@terminal/protocol";
+import { createSessionId, type TerminalSessionSummary } from "@terminal/protocol";
 
 import { attachWindowCloseSessionCleanup } from "../../src/main/window-lifecycle";
 
@@ -33,17 +33,35 @@ class FakeWindow {
   }
 }
 
-const runningSession: TerminalSessionSnapshot = {
+const runningSession: TerminalSessionSummary = {
   sessionId: createSessionId("session-running"),
-  state: "running",
+  lifecycle: "running",
   shell: "/bin/sh",
   cwd: "/tmp",
-  cols: 80,
-  rows: 24,
+  dimensions: { cols: 80, rows: 24 },
   title: null,
   createdBy: "human",
   createdAt: "2026-06-10T00:00:00.000Z",
   updatedAt: "2026-06-10T00:00:00.000Z",
+  observationVersion: 1,
+  presentation: {
+    state: "background",
+    windowVisible: true,
+    windowFocused: false,
+  },
+  shellIntegration: {
+    status: "unavailable",
+    capabilities: {
+      prompt: false,
+      commandStart: false,
+      commandFinish: false,
+      commandLine: false,
+      exitCode: false,
+      cwd: false,
+    },
+  },
+  command: { state: "unknown" },
+  recording: { state: "inactive" },
 };
 
 describe("window lifecycle", () => {

@@ -28,12 +28,13 @@ through an explicit policy decision point.
 Sensitive operations include:
 
 - Creating terminals in protected directories.
+- Starting captured or temporary-PTY one-shot runs.
 - Sending input from agents.
-- Sending paste blocks from agents.
+- Sending raw terminal input from agents.
 - Enabling recording.
 - Exporting transcripts.
 - Enabling external agent gateway access.
-- Killing sessions not owned by the caller.
+- Closing sessions not controlled by the caller.
 
 ## Boundaries
 
@@ -72,19 +73,13 @@ type TerminalPolicyActor =
 
 type TerminalPolicyOperation = {
   type: AgentCommandType | RendererCommandType;
+  operationId?: OperationId;
   sessionId?: SessionId;
   cwd?: string;
   shell?: string;
-  inputKind?: "text" | "key" | "paste" | "mouse" | "interrupt" | "resize" | "kill";
-  observationKind?:
-    | "list"
-    | "get"
-    | "recentOutput"
-    | "screen"
-    | "waitText"
-    | "waitScreenChange"
-    | "waitQuiet"
-    | "waitPrompt";
+  inputKind?: "input" | "resize" | "scroll" | "close";
+  runKind?: "captured" | "pty";
+  observationKind?: "list" | "get" | "observe";
   recordingKind?: "start" | "stop" | "export";
 };
 
@@ -95,9 +90,9 @@ type PolicyDecision =
 
 Denial reasons must be machine-readable and include enough context for UI, logs, and agent responses.
 Operation metadata is intentionally safe context only. It can include `cwd`,
-`shell`, the session ID, and coarse operation kinds, but it must not include raw
-terminal input text, PTY output, clipboard data, tokens, secrets, or transcript
-payloads by default.
+`shell`, operation and session IDs, and coarse operation kinds, but it must not
+include raw terminal input text, one-shot run input, PTY output, clipboard data,
+tokens, secrets, environment values, or transcript payloads by default.
 
 The agent gateway may expose an agent-specific wrapper over this generic
 terminal policy surface, but it must preserve the same decision semantics for
@@ -113,4 +108,6 @@ agent authentication, ownership, and remote-control checks.
 - Renderer recording start, stop, and export requests are authorized as local
   human operations before recorder side effects.
 - Agent input policy checks receive safe input metadata, not raw terminal text.
+- Run policy checks receive execution kind and safe launch metadata, not the
+  supplied shell input or environment values.
 - Default local policy allows intended development flows without skipping decision points.

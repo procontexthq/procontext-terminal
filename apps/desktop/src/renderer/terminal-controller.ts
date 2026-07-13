@@ -4,12 +4,10 @@ import type {
   RendererSessionEvent,
   RendererTerminalApi,
   SessionId,
-  TerminalError,
+  TerminalLifecycleState,
   TerminalTheme,
   Unsubscribe,
 } from "@terminal/protocol";
-
-import { captureTerminalScreen, isObservableTerminal } from "./screen-observer";
 
 export type TerminalLike = {
   options?: {
@@ -19,20 +17,18 @@ export type TerminalLike = {
   };
   rows?: number;
   open(element: HTMLElement): void;
-  write(data: string): void;
+  write(data: string, callback?: () => void): void;
+  scrollToLine?(line: number): void;
   refresh?(start: number, end: number): void;
   onData(handler: (data: string) => void): { dispose: () => void };
-  onTitleChange?(handler: (title: string) => void): { dispose: () => void };
-  onBell?(handler: () => void): { dispose: () => void };
+  onScroll?(handler: (viewportY: number) => void): { dispose: () => void };
   focus?(): void;
   dispose(): void;
   loadAddon?(addon: unknown): void;
 };
 
 export type FitAddonLike = Pick<FitAddon, "fit" | "proposeDimensions">;
-
 export type TerminalSessionDisposeLifecycle = "detach" | "terminate";
-
 export type TerminalControllerDisposeOptions = {
   sessionLifecycle?: TerminalSessionDisposeLifecycle;
 };
@@ -40,10 +36,6 @@ export type TerminalControllerDisposeOptions = {
 export type TerminalLaunchMetadata = {
   cwd: string | null;
   shell: string | null;
-};
-
-type DataSubscription = {
-  dispose: () => void;
 };
 
 export type TerminalController = {
@@ -68,244 +60,159 @@ export type CreateTerminalSessionOptions = {
   onError?: (error: unknown) => void;
 };
 
-export async function createTerminalSession({
-  api,
-  element,
-  session,
-  attachSessionId,
-  createTerminal,
-  createFitAddon,
-  onTitleChange,
-  onBell,
-  onSessionEvent,
-  onError,
-}: CreateTerminalSessionOptions): Promise<TerminalController> {
-  const terminal = createTerminal();
-  const fitAddon = createFitAddon();
-  let dataSubscription: DataSubscription | null = null;
-  let titleSubscription: DataSubscription | null = null;
-  let bellSubscription: DataSubscription | null = null;
+export async function createTerminalSession(
+  options: CreateTerminalSessionOptions,
+): Promise<TerminalController> {
+  const terminal = options.createTerminal();
+  const fitAddon = options.createFitAddon();
+  const subscriptions: Array<{ dispose(): void }> = [];
   let eventSubscription: Unsubscribe | null = null;
-  let currentTitle: string | null = null;
+  let sessionId: SessionId | null = null;
+  let lifecycle: TerminalLifecycleState = "creating";
+  let disposed = false;
+  let createdSession = false;
+  let lastOutputSequence = 0;
+  let bootstrapComplete = false;
+  let bufferedEvents: RendererSessionEvent[] = [];
+  let suppressViewportReport = false;
+
+  const processEvent = (event: RendererSessionEvent): void => {
+    if (!sessionId || !eventMatchesSession(event, sessionId)) return;
+    options.onSessionEvent?.(event);
+    switch (event.type) {
+      case "session.output":
+        if (event.payload.sequence <= lastOutputSequence) return;
+        lastOutputSequence = event.payload.sequence;
+        terminal.write(event.payload.data);
+        break;
+      case "session.viewport":
+        suppressViewportReport = true;
+        terminal.scrollToLine?.(event.payload.viewportY);
+        queueMicrotask(() => {
+          suppressViewportReport = false;
+        });
+        break;
+      case "session.updated":
+        lifecycle = event.payload.lifecycle;
+        if (event.payload.title) options.onTitleChange?.(event.payload.title);
+        break;
+      case "session.bell":
+        options.onBell?.();
+        break;
+      case "session.error":
+        options.onError?.(event.payload);
+        break;
+      case "agent.activity":
+        break;
+    }
+  };
 
   try {
     terminal.loadAddon?.(fitAddon);
-    terminal.open(element);
+    terminal.open(options.element);
     fitAddon.fit();
-
     const dimensions = fitAddon.proposeDimensions() ?? { cols: 80, rows: 24 };
-    let sessionId: SessionId | null = null;
-    let bufferedEvents: RendererSessionEvent[] = [];
-    let rendererInputEnabled = false;
-    let sessionCanAcceptPtyOperations = false;
-    const processSessionEvent = (event: RendererSessionEvent): void => {
-      onSessionEvent?.(event);
-      switch (event.type) {
-        case "session.output":
-          terminal.write(event.payload.data);
-          break;
-        case "session.title":
-          currentTitle = event.payload.title;
-          onTitleChange?.(event.payload.title);
-          break;
-        case "session.bell":
-          onBell?.();
-          break;
-        case "session.attached":
-          rendererInputEnabled = true;
-          sessionCanAcceptPtyOperations = true;
-          break;
-        case "session.detached":
-          rendererInputEnabled = false;
-          sessionCanAcceptPtyOperations = true;
-          break;
-        case "session.exited":
-          rendererInputEnabled = false;
-          sessionCanAcceptPtyOperations = false;
-          break;
-        case "session.error":
-          onError?.(event.payload);
-          break;
-        case "session.snapshot.request":
-          if (!sessionId) {
-            break;
-          }
-          if (!isObservableTerminal(terminal)) {
-            void api
-              .reportSnapshotUnavailable({
-                requestId: event.requestId,
-                sessionId,
-                reason: "Terminal screen snapshot is not supported by this terminal.",
-              })
-              .catch((error: unknown) => {
-                onError?.(error);
-              });
-            break;
-          }
-          void api
-            .respondToSnapshot({
-              requestId: event.requestId,
-              snapshot: captureTerminalScreen({
-                terminal,
-                sessionId,
-                title: currentTitle,
-              }),
-            })
-            .catch((error: unknown) => {
-              onError?.(error);
-            });
-          break;
-        case "agent.activity":
-        case "session.created":
-          break;
-      }
-    };
-    eventSubscription = api.onTerminalEvent((event) => {
-      if (!sessionId) {
+
+    eventSubscription = options.api.onTerminalEvent((event) => {
+      if (!bootstrapComplete) {
         bufferedEvents.push(event);
         return;
       }
-      if (eventMatchesSession(event, sessionId)) {
-        processSessionEvent(event);
-      }
+      processEvent(event);
     });
-    const snapshot = attachSessionId
-      ? await api.attachSession({ sessionId: attachSessionId })
-      : await api.createSession({
-          ...dimensions,
-          ...(session?.cwd ? { cwd: session.cwd } : {}),
-          ...(session?.shell ? { shell: session.shell } : {}),
-        });
-    sessionId = snapshot.sessionId;
-    rendererInputEnabled = snapshot.state !== "detached";
-    sessionCanAcceptPtyOperations = snapshot.state === "running" || snapshot.state === "detached";
-    const eventsToFlush = bufferedEvents;
-    bufferedEvents = [];
-    for (const event of eventsToFlush) {
-      if (eventMatchesSession(event, sessionId)) {
-        processSessionEvent(event);
-      }
-    }
-    dataSubscription = terminal.onData((data) => {
-      if (!rendererInputEnabled) {
-        return;
-      }
-      void api.write({ sessionId: snapshot.sessionId, data }).catch((error: unknown) => {
-        onError?.(error);
-      });
-    });
-    if (attachSessionId) {
-      const recentOutput = await api.readRecentOutput({
-        sessionId: snapshot.sessionId,
-        maxBytes: 100_000,
-      });
-      if (recentOutput.data) {
-        terminal.write(recentOutput.data);
-      }
-    }
-    titleSubscription =
-      terminal.onTitleChange?.((title) => {
-        if (!sessionId) {
-          return;
-        }
-        void api.setTitle({ sessionId, title }).catch((error: unknown) => {
-          onError?.(error);
-        });
-      }) ?? null;
-    bellSubscription =
-      terminal.onBell?.(() => {
-        if (!sessionId) {
-          return;
-        }
-        void api.reportBell({ sessionId }).catch((error: unknown) => {
-          onError?.(error);
-        });
-      }) ?? null;
-    let disposed = false;
 
+    const summary = options.attachSessionId
+      ? await options.api.getSession({ sessionId: options.attachSessionId })
+      : await options.api.createSession({
+          ...dimensions,
+          ...(options.session?.cwd ? { cwd: options.session.cwd } : {}),
+          ...(options.session?.shell ? { shell: options.session.shell } : {}),
+        });
+    sessionId = summary.sessionId;
+    createdSession = !options.attachSessionId;
+    lifecycle = summary.lifecycle;
+
+    const bootstrap = await options.api.openView({ sessionId });
+    await writeTerminal(terminal, bootstrap.serialized);
+    lastOutputSequence = bootstrap.sequence;
+    lifecycle = bootstrap.session.lifecycle;
+    if (bootstrap.session.title) options.onTitleChange?.(bootstrap.session.title);
+    terminal.scrollToLine?.(bootstrap.viewportY);
+    bootstrapComplete = true;
+    for (const event of bufferedEvents) processEvent(event);
+    bufferedEvents = [];
+
+    subscriptions.push(
+      terminal.onData((input) => {
+        if (lifecycle !== "running" || !sessionId) return;
+        void options.api.input({ sessionId, input }).catch(options.onError);
+      }),
+    );
+    const scrollSubscription = terminal.onScroll?.((viewportY) => {
+      if (suppressViewportReport || !sessionId) return;
+      void options.api.reportViewport({ sessionId, viewportY }).catch(options.onError);
+    });
+    if (scrollSubscription) subscriptions.push(scrollSubscription);
+
+    const activeSessionId = sessionId;
     return {
-      sessionId: snapshot.sessionId,
+      sessionId: activeSessionId,
       focus() {
         terminal.focus?.();
       },
       setFontFamily(fontFamily) {
-        if (terminal.options) {
-          terminal.options.fontFamily = fontFamily;
-        }
-        refreshTerminal(terminal, onError);
+        if (terminal.options) terminal.options.fontFamily = fontFamily;
+        refreshTerminal(terminal, options.onError);
       },
       setTheme(theme) {
-        if (terminal.options) {
-          terminal.options.theme = theme;
-        }
-        refreshTerminal(terminal, onError);
+        if (terminal.options) terminal.options.theme = theme;
+        refreshTerminal(terminal, options.onError);
       },
       async resize() {
-        if (disposed) {
-          return;
-        }
+        if (disposed || lifecycle !== "running") return;
         fitAddon.fit();
         const nextDimensions = fitAddon.proposeDimensions() ?? dimensions;
-        if (!rendererInputEnabled) {
-          return;
-        }
         try {
-          await api.resize({ sessionId: snapshot.sessionId, ...nextDimensions });
+          await options.api.resize({ sessionId: activeSessionId, ...nextDimensions });
         } catch (error: unknown) {
-          onError?.(error);
+          options.onError?.(error);
         }
       },
-      async dispose(options = {}) {
-        if (disposed) {
-          return true;
-        }
-        if (options.sessionLifecycle === "terminate" && sessionCanAcceptPtyOperations) {
+      async dispose(disposeOptions = {}) {
+        if (disposed) return true;
+        if (disposeOptions.sessionLifecycle === "terminate") {
           try {
-            await api.kill({ sessionId: snapshot.sessionId });
-            rendererInputEnabled = false;
-            sessionCanAcceptPtyOperations = false;
+            const result = await options.api.close({ sessionId: activeSessionId });
+            if (result.status !== "closed") return false;
+            lifecycle = "exited";
           } catch (error: unknown) {
-            onError?.(error);
+            options.onError?.(error);
             return false;
           }
         }
-        if (
-          options.sessionLifecycle !== "terminate" &&
-          rendererInputEnabled &&
-          sessionCanAcceptPtyOperations
-        ) {
-          try {
-            await api.detachSession({ sessionId: snapshot.sessionId });
-            rendererInputEnabled = false;
-          } catch (error: unknown) {
-            onError?.(error);
-            return false;
-          }
+        try {
+          await options.api.closeView({ sessionId: activeSessionId });
+        } catch (error: unknown) {
+          options.onError?.(error);
+          if (disposeOptions.sessionLifecycle !== "terminate") return false;
         }
         disposed = true;
-        disposeRendererResources({
-          dataSubscription,
-          titleSubscription,
-          bellSubscription,
-          eventSubscription,
-          terminal,
-          onError,
-        });
+        disposeResources(terminal, subscriptions, eventSubscription, options.onError);
         return true;
       },
     };
   } catch (error: unknown) {
-    await releaseFailedSession(api, error);
-    disposeRendererResources({
-      dataSubscription,
-      titleSubscription,
-      bellSubscription,
-      eventSubscription,
-      terminal,
-      onError,
-    });
+    if (createdSession && sessionId) {
+      await options.api.close({ sessionId }).catch(() => undefined);
+    }
+    disposeResources(terminal, subscriptions, eventSubscription, options.onError);
     throw error;
   }
+}
+
+function writeTerminal(terminal: TerminalLike, data: string): Promise<void> {
+  if (!data) return Promise.resolve();
+  return new Promise((resolve) => terminal.write(data, resolve));
 }
 
 function refreshTerminal(
@@ -313,77 +220,24 @@ function refreshTerminal(
   onError: ((error: unknown) => void) | undefined,
 ): void {
   try {
-    const endRow = Math.max(0, (terminal.rows ?? 1) - 1);
-    terminal.refresh?.(0, endRow);
+    terminal.refresh?.(0, Math.max(0, (terminal.rows ?? 1) - 1));
   } catch (error: unknown) {
     onError?.(error);
   }
 }
 
-async function releaseFailedSession(api: RendererTerminalApi, error: unknown): Promise<void> {
-  const terminalError = extractTerminalError(error);
-  if (!terminalError?.sessionId || terminalError.type !== "pty_spawn_failed") {
-    return;
-  }
-
-  try {
-    await api.releaseSession({ sessionId: terminalError.sessionId });
-  } catch {
-    // Session creation can fail before a session record exists; cleanup is best-effort.
-  }
-}
-
-function extractTerminalError(error: unknown): TerminalError | null {
-  if (!isObject(error)) {
-    return null;
-  }
-
-  if (isTerminalError(error)) {
-    return error;
-  }
-
-  const maybeTerminalError = error.terminalError;
-  return isTerminalError(maybeTerminalError) ? maybeTerminalError : null;
-}
-
-function isTerminalError(value: unknown): value is TerminalError {
-  return (
-    isObject(value) &&
-    typeof value.type === "string" &&
-    typeof value.message === "string" &&
-    (!("sessionId" in value) || typeof value.sessionId === "string")
-  );
-}
-
-function disposeRendererResources({
-  dataSubscription,
-  titleSubscription,
-  bellSubscription,
-  eventSubscription,
-  terminal,
-  onError,
-}: {
-  dataSubscription: DataSubscription | null;
-  titleSubscription: DataSubscription | null;
-  bellSubscription: DataSubscription | null;
-  eventSubscription: Unsubscribe | null;
-  terminal: TerminalLike;
-  onError?: (error: unknown) => void;
-}): void {
-  try {
-    dataSubscription?.dispose();
-  } catch (error: unknown) {
-    onError?.(error);
-  }
-  try {
-    titleSubscription?.dispose();
-  } catch (error: unknown) {
-    onError?.(error);
-  }
-  try {
-    bellSubscription?.dispose();
-  } catch (error: unknown) {
-    onError?.(error);
+function disposeResources(
+  terminal: TerminalLike,
+  subscriptions: Array<{ dispose(): void }>,
+  eventSubscription: Unsubscribe | null,
+  onError: ((error: unknown) => void) | undefined,
+): void {
+  for (const subscription of subscriptions) {
+    try {
+      subscription.dispose();
+    } catch (error: unknown) {
+      onError?.(error);
+    }
   }
   try {
     eventSubscription?.();
@@ -399,25 +253,14 @@ function disposeRendererResources({
 
 function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId): boolean {
   switch (event.type) {
-    case "session.created":
-    case "session.attached":
-    case "session.detached":
-    case "session.title":
+    case "session.output":
+    case "session.viewport":
+    case "session.updated":
     case "session.bell":
       return event.payload.sessionId === sessionId;
-    case "session.output":
-      return event.payload.sessionId === sessionId;
-    case "session.exited":
-      return event.payload.sessionId === sessionId;
     case "session.error":
-      return event.payload.sessionId === sessionId;
-    case "session.snapshot.request":
       return event.payload.sessionId === sessionId;
     case "agent.activity":
       return false;
   }
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

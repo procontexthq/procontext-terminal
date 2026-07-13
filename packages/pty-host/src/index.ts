@@ -27,6 +27,10 @@ export type ShellResolutionRequest = {
   env?: Record<string, string>;
 };
 
+export type CommandShellResolutionRequest = ShellResolutionRequest & {
+  input: string;
+};
+
 type ExecutableAccessCheck = (executable: string, platform: NodeJS.Platform) => boolean;
 
 export type ResolvedShell = {
@@ -34,6 +38,7 @@ export type ResolvedShell = {
   args: string[];
   cwd: string;
   env: Record<string, string>;
+  windowsVerbatimArguments?: boolean;
 };
 
 export type PtySession = {
@@ -74,13 +79,31 @@ export function resolveShell(
   };
 }
 
+export function resolveCommandShell(
+  request: CommandShellResolutionRequest,
+  options: {
+    platform?: NodeJS.Platform;
+    processEnv?: NodeJS.ProcessEnv;
+    cwd?: string;
+    canExecute?: ExecutableAccessCheck;
+  } = {},
+): ResolvedShell {
+  const platform = options.platform ?? process.platform;
+  const shell = resolveShell(request, options);
+  return {
+    ...shell,
+    ...commandArguments(shell.executable, request.input, platform),
+  };
+}
+
 export class NodePtyHost implements PtyHost {
   spawn(request: PtySpawnRequest): Promise<PtySession> {
     const shell = request.shell;
     try {
       validateShellExecutable(shell.executable, process.platform);
       ensureNodePtySpawnHelperExecutable();
-      const processHandle = pty.spawn(shell.executable, shell.args, {
+      const args = shell.windowsVerbatimArguments ? shell.args.join(" ") : shell.args;
+      const processHandle = pty.spawn(shell.executable, args, {
         name: "xterm-256color",
         cwd: shell.cwd,
         env: shell.env,
@@ -146,6 +169,33 @@ function defaultShell(
   }
 
   return platform === "darwin" ? "/bin/zsh" : "/bin/sh";
+}
+
+function commandArguments(
+  executable: string,
+  input: string,
+  platform: NodeJS.Platform,
+): Pick<ResolvedShell, "args" | "windowsVerbatimArguments"> {
+  if (platform !== "win32") {
+    return { args: ["-c", input] };
+  }
+
+  const name = win32.basename(executable).toLowerCase();
+  if (name === "cmd.exe" || name === "cmd") {
+    return {
+      args: ["/d", "/s", "/c", `"${input}"`],
+      windowsVerbatimArguments: true,
+    };
+  }
+  if (
+    name === "pwsh.exe" ||
+    name === "pwsh" ||
+    name === "powershell.exe" ||
+    name === "powershell"
+  ) {
+    return { args: ["-Command", input] };
+  }
+  return { args: ["-c", input] };
 }
 
 function buildEnvironment(

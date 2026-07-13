@@ -79,13 +79,15 @@ The architecture specs describe components. The repository structure groups some
 | Preload bridge | `apps/desktop/src/preload` |
 | Renderer app shell | `apps/desktop/src/renderer` |
 | Terminal view | `apps/desktop/src/renderer` |
-| Input router | `packages/session-core/src/input-router.ts`, with shared key/input protocol types in `packages/protocol` |
+| Terminal input | Raw input types in `packages/protocol`; ordered PTY writes in `packages/session-core` |
 | Terminal session manager | `packages/session-core` |
+| Terminal operation manager | `packages/session-core` |
+| Captured process host | `packages/session-core` |
 | PTY host | `packages/pty-host` |
 | Shell resolver | `packages/pty-host` |
 | Agent gateway | `packages/agent-gateway` |
-| Policy engine | `packages/session-core` unless it grows into a dedicated package |
-| Screen observer | `apps/desktop/src/renderer/screen-observer.ts`; split into `packages/terminal-observer` only if it grows beyond renderer-owned xterm snapshot helpers |
+| Policy engine | `packages/policy-engine` |
+| Canonical observation | Headless xterm model in `packages/session-core`; renderer xterm is a projection |
 | Recorder and transcript store | `packages/recorder` |
 | Settings store | `packages/config` |
 | App logger | `apps/desktop/src/main` unless shared logging warrants a dedicated package |
@@ -184,6 +186,8 @@ Responsibilities:
 - Create and manage desktop windows.
 - Register IPC handlers.
 - Wire session manager, PTY host, settings, policy, recorder, logger, and agent gateway.
+- Adapt session and operation managers to the narrow agent service in a focused
+  main-process module.
 - Own app lifecycle and graceful shutdown.
 - Own native OS integration.
 - Persist structured app diagnostics through the main-process logger.
@@ -258,7 +262,8 @@ Responsibilities:
 - Render terminal views through xterm.js.
 - Manage tabs, panes, status UI, settings UI, and command palette.
 - Capture keyboard, paste, selection, focus, resize, and mouse interactions.
-- Request screen snapshots from xterm.js buffer state.
+- Bootstrap from canonical serialized terminal state and report human viewport
+  movement.
 
 Must not:
 
@@ -355,18 +360,25 @@ Core terminal session domain logic.
 Responsibilities:
 
 - Create, track, and dispose terminal sessions.
+- Create, track, observe, retain, and dispose one-shot operations.
 - Own canonical session lifecycle state.
-- Route input to PTY sessions.
-- Broadcast output, exit, title, resize, bell, and error events.
-- Coordinate policy checks.
-- Coordinate recorder events.
-- Provide query APIs for session state.
+- Own one headless xterm model and ordered output queue per PTY.
+- Route raw input, resize, and shared viewport operations.
+- Provide versioned observation and serialized renderer bootstrap.
+- Coordinate explicit recording lifecycle and close finalization.
+- Broadcast sequenced renderer projection events.
+- Host captured child processes behind a focused internal boundary.
+- Maintain separate bounded stdout/stderr journals for captured operations and
+  a combined bounded output journal for temporary PTY results.
+- Map temporary operation IDs to PTY session IDs without duplicating session
+  interaction logic.
 
 Must not:
 
 - Import renderer UI.
 - Import Electron windows directly.
 - Expose raw node-pty handles.
+- Enforce actor authorization or agent attachment.
 - Implement transport-specific agent gateway behavior.
 
 Good delegation tasks:
@@ -375,6 +387,7 @@ Good delegation tasks:
 - Add session lifecycle events.
 - Add session metadata handling.
 - Add session manager tests for one operation.
+- Add operation manager tests for captured or temporary-PTY execution.
 
 ## `packages/agent-gateway`
 
@@ -387,7 +400,8 @@ Responsibilities:
 - Validate agent commands.
 - Authorize operations through the policy engine.
 - Translate agent commands into session-core operations.
-- Stream terminal events and observations back to agents.
+- Enforce one controlling agent connection per session.
+- Return request/response results and cancellable long-poll observations.
 - Emit audit events.
 
 Must not:
@@ -431,28 +445,12 @@ Good delegation tasks:
 - Add recording export.
 - Add redaction tests.
 
-## `packages/terminal-observer`
+## Canonical Observation
 
-Helpers for converting terminal state into agent-observable snapshots and wait conditions.
-
-Responsibilities:
-
-- Define screen snapshot helpers.
-- Read visible viewport state from renderer-provided xterm.js data.
-- Track cursor, viewport size, title, and alternate-screen state.
-- Implement wait helpers such as wait for text, prompt, quiet, and screen change.
-
-Must not:
-
-- Pretend to semantically understand every TUI.
-- Spawn processes.
-- Own PTY lifecycle.
-
-Good delegation tasks:
-
-- Add snapshot normalization.
-- Add wait-for-text logic.
-- Add alternate-screen snapshot tests.
+Canonical observation remains inside `packages/session-core` because it is part
+of every session record and depends directly on ordered output and lifecycle
+processing. Do not add a separate observer package unless a later concrete
+reuse boundary requires one.
 
 ## `packages/config`
 
@@ -550,7 +548,8 @@ Use this structure to delegate small independent tasks:
 - Electron app wiring belongs in `apps/desktop/src/main`.
 - Preload API exposure belongs in `apps/desktop/src/preload`.
 - Recording and replay belongs in `packages/recorder`.
-- Screen snapshots and wait conditions belong in `packages/terminal-observer`.
+- Canonical viewport and versioned observation belong in
+  `packages/session-core`.
 - Settings and migrations belong in `packages/config`.
 - Cross-package tests and fixtures belong in `packages/test-fixtures`.
 

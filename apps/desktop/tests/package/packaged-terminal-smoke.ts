@@ -10,13 +10,14 @@ import { afterEach, describe, it } from "vitest";
 import { WebSocket as NodeWebSocket } from "ws";
 
 import {
+  TERMINAL_PROTOCOL_VERSION,
   createAgentCommand,
   parseAgentGatewayDescriptor,
   type AgentCommandResult,
   type AgentGatewayDescriptor,
+  type ObserveTerminalResult,
   type SessionId,
-  type TerminalScreenSnapshot,
-  type TerminalSessionSnapshot,
+  type TerminalSessionSummary,
 } from "@terminal/protocol";
 
 const desktopRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -56,37 +57,33 @@ describe("packaged desktop terminal smoke", () => {
     }
 
     await writeTerminalInput(page, sessionId, `${platformPrintCommand("PHASE5_PACKAGE_PTY")}\r`);
-    await waitForRecentOutput(page, sessionId, "PHASE5_PACKAGE_PTY");
-
-    const snapshot = await captureScreen(page, sessionId);
-    if (snapshot.sessionId !== sessionId || snapshot.viewport.length === 0) {
-      throw new Error("Expected packaged app captureScreen to return visible terminal state.");
-    }
+    await waitForVisibleOutput(page, "PHASE5_PACKAGE_PTY");
 
     const descriptor = await waitForAgentDescriptor(userDataDir);
     const agent = await E2EAgentClient.connect(descriptor.url);
     try {
       await expectAgentOk(
-        agent.request(createAgentCommand("agent.authenticate", { token: descriptor.token })),
+        agent.request(
+          createAgentCommand("agent.authenticate", {
+            token: descriptor.token,
+            protocolVersion: TERMINAL_PROTOCOL_VERSION,
+          }),
+        ),
       );
       await expectAgentOk(agent.request(createAgentCommand("terminal.attach", { sessionId })));
       await expectAgentOk(
         agent.request(
-          createAgentCommand("terminal.sendText", {
+          createAgentCommand("terminal.input", {
             sessionId,
-            text: `${platformPrintCommand("PHASE5_PACKAGE_AGENT")}\r`,
+            input: `${platformPrintCommand("PHASE5_PACKAGE_AGENT")}\r`,
           }),
         ),
       );
-      await waitForRecentOutput(page, sessionId, "PHASE5_PACKAGE_AGENT");
-      const recentOutput = await expectAgentOk(
-        agent.request(
-          createAgentCommand("terminal.readRecentOutput", { sessionId, maxBytes: 4000 }),
-        ),
-      );
-      if (!JSON.stringify(recentOutput).includes("PHASE5_PACKAGE_AGENT")) {
-        throw new Error("Expected packaged gateway recent output to include agent command output.");
+      const observation = await waitForAgentObservation(agent, sessionId, "PHASE5_PACKAGE_AGENT");
+      if (!JSON.stringify(observation.viewport.rows).includes("PHASE5_PACKAGE_AGENT")) {
+        throw new Error("Expected packaged canonical observation to include agent output.");
       }
+      await waitForVisibleOutput(page, "PHASE5_PACKAGE_AGENT");
     } finally {
       agent.close();
     }
@@ -238,49 +235,59 @@ async function activeSessionId(page: Page): Promise<SessionId> {
 async function writeTerminalInput(page: Page, sessionId: SessionId, data: string): Promise<void> {
   await page.evaluate(
     ({ activeSessionId, input }) =>
-      window.terminalApi.write({
+      window.terminalApi.input({
         sessionId: activeSessionId,
-        data: input,
-        origin: "agent",
+        input,
       }),
     { activeSessionId: sessionId, input: data },
   );
 }
 
-async function getSession(page: Page, sessionId: SessionId): Promise<TerminalSessionSnapshot> {
+async function getSession(page: Page, sessionId: SessionId): Promise<TerminalSessionSummary> {
   return page.evaluate(
     (activeSessionId) => window.terminalApi.getSession({ sessionId: activeSessionId }),
     sessionId,
   );
 }
 
-async function waitForRecentOutput(
-  page: Page,
-  sessionId: SessionId,
-  expectedText: string,
-): Promise<void> {
+async function waitForVisibleOutput(page: Page, expectedText: string): Promise<void> {
   await page.waitForFunction(
-    async ({ activeSessionId, expectedOutput }) => {
-      const recentOutput = await window.terminalApi.readRecentOutput({
-        sessionId: activeSessionId,
-        maxBytes: 4000,
-      });
-      return recentOutput.data.includes(expectedOutput);
-    },
-    { activeSessionId: sessionId, expectedOutput: expectedText },
+    (expected) =>
+      document
+        .querySelector("[data-testid='terminal-ready'] .xterm-rows")
+        ?.textContent?.includes(expected),
+    expectedText,
     { timeout: 10000 },
   );
 }
 
-async function captureScreen(page: Page, sessionId: SessionId): Promise<TerminalScreenSnapshot> {
-  return page.evaluate(
-    (activeSessionId) =>
-      window.terminalApi.captureScreen({
-        sessionId: activeSessionId,
-        timeoutMs: 5000,
-      }),
-    sessionId,
-  );
+async function waitForAgentObservation(
+  agent: E2EAgentClient,
+  sessionId: SessionId,
+  expectedText: string,
+): Promise<Extract<ObserveTerminalResult, { status: "changed" }>["observation"]> {
+  const deadline = Date.now() + 10000;
+  let afterVersion = 0;
+  while (Date.now() < deadline) {
+    const result = (await expectAgentOk(
+      agent.request(
+        createAgentCommand("terminal.observe", {
+          sessionId,
+          afterVersion,
+          timeoutMs: 1000,
+        }),
+      ),
+    )) as ObserveTerminalResult;
+    if (result.status === "changed") {
+      afterVersion = result.observation.version;
+      if (result.observation.viewport.rows.some((row) => row.text.includes(expectedText))) {
+        return result.observation;
+      }
+    } else {
+      afterVersion = result.version;
+    }
+  }
+  throw new Error(`Timed out waiting for packaged observation text ${expectedText}.`);
 }
 
 async function waitForAgentDescriptor(userDataDir: string): Promise<AgentGatewayDescriptor> {

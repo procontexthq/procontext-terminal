@@ -246,9 +246,7 @@ body {
 }
 
 .tab-status.is-exited,
-.terminal-state.is-exited,
-.tab-status.is-detached,
-.terminal-state.is-detached {
+.terminal-state.is-exited {
   color: var(--text-dim);
 }
 

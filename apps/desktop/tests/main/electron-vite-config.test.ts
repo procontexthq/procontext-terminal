@@ -8,4 +8,11 @@ describe("electron vite config", () => {
       expect.arrayContaining(["bufferutil", "utf-8-validate"]),
     );
   });
+
+  it("bundles workspace protocol code into the sandboxed preload", () => {
+    const externalizeDeps = config.preload?.build?.externalizeDeps;
+    const excluded =
+      externalizeDeps && typeof externalizeDeps === "object" ? externalizeDeps.exclude : [];
+    expect(excluded).toEqual(expect.arrayContaining(["@terminal/protocol"]));
+  });
 });

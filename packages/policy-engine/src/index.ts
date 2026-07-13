@@ -1,6 +1,7 @@
 import {
   createDecisionId,
   type AgentCommandType,
+  type OperationId,
   type PolicyDecision,
   type PolicyDenial,
   type PolicyDenialCode,
@@ -22,26 +23,20 @@ export type AgentPolicyActor = {
   kind: "agent";
   authenticated: boolean;
   local: boolean;
-  ownedSessionIds: ReadonlySet<SessionId | string>;
+  attachedSessionIds: ReadonlySet<SessionId | string>;
 };
 
 export type TerminalPolicyActor = HumanPolicyActor | SystemPolicyActor | AgentPolicyActor;
 
 export type TerminalPolicyOperation = {
   type: AgentCommandType | RendererCommandType;
+  operationId?: OperationId;
   sessionId?: SessionId;
   cwd?: string;
   shell?: string;
-  inputKind?: "text" | "key" | "paste" | "mouse" | "interrupt" | "resize" | "kill";
-  observationKind?:
-    | "list"
-    | "get"
-    | "recentOutput"
-    | "screen"
-    | "waitText"
-    | "waitScreenChange"
-    | "waitQuiet"
-    | "waitPrompt";
+  inputKind?: "input" | "resize" | "scroll" | "close";
+  runKind?: "captured" | "pty";
+  observationKind?: "list" | "get" | "observe";
   recordingKind?: "start" | "stop" | "export";
 };
 
@@ -92,7 +87,8 @@ export function createDefaultTerminalPolicy(
         if (
           operation.sessionId &&
           operation.type !== "terminal.attach" &&
-          !actor.ownedSessionIds.has(operation.sessionId)
+          operation.type !== "terminal.get" &&
+          !actor.attachedSessionIds.has(operation.sessionId)
         ) {
           return deny(decisionId, "session_not_owned", operation);
         }
@@ -134,6 +130,7 @@ function createPolicyDenial(
     code,
     message: denialMessage(code),
     operation: operation.type,
+    ...(operation.operationId ? { operationId: operation.operationId } : {}),
     ...(operation.sessionId ? { sessionId: operation.sessionId } : {}),
   };
 }
@@ -145,6 +142,8 @@ function denialMessage(code: PolicyDenialCode): string {
     case "remote_control_disabled":
       return "Remote agent control is disabled.";
     case "session_not_owned":
-      return "Agent connection does not own this terminal session.";
+      return "Agent connection is not attached to this terminal session.";
+    case "session_in_use":
+      return "Another agent connection controls this terminal session.";
   }
 }

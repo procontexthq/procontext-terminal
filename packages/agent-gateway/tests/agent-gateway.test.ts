@@ -1,1025 +1,445 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import WebSocket, { type RawData } from "ws";
 
-import { createDefaultAgentPolicy, type AgentPolicy } from "@terminal/policy-engine";
+import { createDefaultAgentPolicy } from "@terminal/policy-engine";
 import {
+  TERMINAL_PROTOCOL_VERSION,
   createAgentCommand,
+  createOperationId,
   createRequestId,
   createSessionId,
-  createTerminalError,
-  parseAgentGatewayDescriptor,
-  type AgentAuditEvent,
+  parseAgentCommandResult,
   type AgentCommandResult,
-  type AgentEvent,
-  type RendererSessionEvent,
-  type SessionId,
-  type TerminalSessionSnapshot,
-  type Unsubscribe,
+  type AgentGatewayDescriptor,
+  type TerminalSessionSummary,
 } from "@terminal/protocol";
 
 import {
   resolveAgentGatewayDescriptorPath,
   startAgentGateway,
   type AgentGateway,
-  type AgentGatewayTerminalServices,
+  type AgentTerminalService,
 } from "../src/index";
 
-const gateways: AgentGateway[] = [];
-const tempDirs: string[] = [];
+const cleanups: Array<() => Promise<void>> = [];
+
+afterEach(async () => {
+  await Promise.allSettled(cleanups.splice(0).map((cleanup) => cleanup()));
+});
 
 describe("agent gateway", () => {
-  afterEach(async () => {
-    for (const gateway of gateways.splice(0)) {
-      await gateway.stop();
-    }
-    for (const dir of tempDirs.splice(0)) {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+  it("publishes a versioned loopback descriptor and authenticates the fixed protocol", async () => {
+    const runtime = await createRuntime();
+    const descriptor = JSON.parse(
+      await readFile(runtime.descriptorPath, "utf8"),
+    ) as AgentGatewayDescriptor;
 
-  it("writes and removes a loopback descriptor and rejects unauthenticated commands", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const gateway = await startTestGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-    });
-    const descriptor = parseAgentGatewayDescriptor(
-      JSON.parse(await readFile(gateway.descriptorPath, "utf8")) as unknown,
-    );
-    expect(descriptor.url.startsWith("ws://127.0.0.1:")).toBe(true);
-    expect(descriptor.token).toBe("test-token");
-    expect(descriptor.pid).toBe(process.pid);
+    expect(descriptor.protocolVersion).toBe(TERMINAL_PROTOCOL_VERSION);
+    expect(descriptor.url).toMatch(/^ws:\/\/127\.0\.0\.1:/);
 
-    const client = await AgentTestClient.connect(descriptor.url);
-    const denied = await client.request(
-      createAgentCommand("terminal.sendText", {
-        sessionId: createSessionId("session-1"),
-        text: "SECRET_INPUT\r",
+    const client = await AgentClient.connect(descriptor.url);
+    const result = await client.request(
+      createAgentCommand("agent.authenticate", {
+        token: "test-token",
+        protocolVersion: TERMINAL_PROTOCOL_VERSION,
       }),
     );
-
-    expect(denied).toMatchObject({
-      ok: false,
-      error: { type: "auth_required", operation: "terminal.sendText" },
+    expect(result).toMatchObject({
+      ok: true,
+      value: { protocolVersion: TERMINAL_PROTOCOL_VERSION },
     });
-    expect(services.write).not.toHaveBeenCalled();
     client.close();
-
-    await gateway.stop();
-    await expect(readFile(gateway.descriptorPath, "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
   });
 
-  it("rewrites stale descriptors with owner-only permissions on POSIX", async () => {
-    if (process.platform === "win32") {
-      return;
-    }
+  it("rejects unauthenticated requests and removed command names", async () => {
+    const runtime = await createRuntime();
+    const client = await AgentClient.connect(runtime.gateway.descriptor.url);
 
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const descriptorPath = resolveAgentGatewayDescriptorPath(tempDir);
-    await writeFile(descriptorPath, "stale descriptor", { encoding: "utf8", mode: 0o644 });
-
-    const gateway = await startTestGateway({
-      descriptorPath,
-      services,
+    await expect(client.request(createAgentCommand("terminal.list", {}))).resolves.toMatchObject({
+      ok: false,
+      error: { type: "auth_required" },
     });
-
-    expect((await stat(gateway.descriptorPath)).mode & 0o777).toBe(0o600);
+    await expect(
+      client.requestRaw({
+        type: "terminal.sendText",
+        requestId: createRequestId(),
+        payload: { sessionId: createSessionId("old"), text: "echo old\r" },
+      }),
+    ).resolves.toMatchObject({ ok: false, error: { type: "invalid_request" } });
+    client.close();
   });
 
-  it("authenticates and maps terminal commands to services with agent origin", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const gateway = await startTestGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-    });
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
-
-    await expectAuthenticate(client);
-    const created = await client.request(
-      createAgentCommand("terminal.create", { cols: 80, rows: 24 }),
-    );
-    expect(created).toMatchObject({ ok: true, value: { createdBy: "agent" } });
-    const sessionId = (created as Extract<AgentCommandResult, { ok: true }>).value
-      .sessionId as SessionId;
+  it("dispatches the terminal API through one narrow service", async () => {
+    const services = createServices();
+    const runtime = await createRuntime(services);
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+    const created = await client.request(createAgentCommand("terminal.create", { cwd: "/tmp" }));
+    const sessionId = successValue<TerminalSessionSummary>(created).sessionId;
 
     await client.request(
-      createAgentCommand("terminal.sendText", {
-        sessionId,
-        text: "echo PHASE3\r",
+      createAgentCommand("terminal.run", {
+        input: "printf captured",
+        tty: false,
+        timeoutMs: 100,
       }),
     );
-    await client.request(createAgentCommand("terminal.sendKey", { sessionId, key: "Ctrl+C" }));
-    await client.request(
-      createAgentCommand("terminal.paste", {
-        sessionId,
-        text: "pasted input",
-        origin: "human",
-      }),
-    );
-    await client.request(
-      createAgentCommand("terminal.sendMouse", {
-        sessionId,
-        data: "\u001b[M   ",
-        origin: "system",
-      }),
-    );
-    await client.request(createAgentCommand("terminal.interrupt", { sessionId }));
+    await client.request(createAgentCommand("terminal.input", { sessionId, input: "\u0003" }));
     await client.request(createAgentCommand("terminal.resize", { sessionId, cols: 100, rows: 30 }));
     await client.request(
-      createAgentCommand("terminal.readRecentOutput", { sessionId, maxBytes: 50 }),
+      createAgentCommand("terminal.scroll", {
+        sessionId,
+        scroll: { type: "edge", edge: "bottom" },
+      }),
     );
-    await client.request(
-      createAgentCommand("terminal.waitForQuiet", { sessionId, quietMs: 1, timeoutMs: 50 }),
-    );
-    await client.request(createAgentCommand("terminal.startRecording", { sessionId }));
-    await client.request(createAgentCommand("terminal.stopRecording", { sessionId }));
-    const exportedRecording = await client.request(
-      createAgentCommand("terminal.exportRecording", { sessionId }),
-    );
-    await client.request(createAgentCommand("terminal.kill", { sessionId }));
-    await client.request(createAgentCommand("terminal.release", { sessionId }));
+    await client.request(createAgentCommand("terminal.observe", { sessionId, timeoutMs: 100 }));
+    await client.request(createAgentCommand("terminal.recording.start", { sessionId }));
+    await client.request(createAgentCommand("terminal.recording.stop", { sessionId }));
+    await client.request(createAgentCommand("terminal.recording.export", { sessionId }));
+    await client.request(createAgentCommand("terminal.close", { sessionId }));
 
-    expect(services.createSession).toHaveBeenCalledWith({
-      cols: 80,
-      rows: 24,
-      createdBy: "agent",
+    expect(services.input).toHaveBeenCalledWith({ sessionId, input: "\u0003" });
+    expect(services.run).toHaveBeenCalledWith({
+      input: "printf captured",
+      tty: false,
+      timeoutMs: 100,
     });
-    expect(services.displaySession).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId, createdBy: "agent" }),
+    expect(services.observe).toHaveBeenCalledWith(
+      { sessionId, timeoutMs: 100 },
+      expect.any(AbortSignal),
     );
-    expect(services.write).toHaveBeenCalledWith({
+    expect(services.close).toHaveBeenCalledWith({ sessionId });
+    client.close();
+  });
+
+  it("automatically attaches a running temporary PTY to its creating connection", async () => {
+    const services = createServices();
+    const sessionId = createSessionId("temporary-pty");
+    const operationId = createOperationId("temporary-operation");
+    services.run.mockResolvedValueOnce({
+      status: "running",
+      operationId,
       sessionId,
-      data: "echo PHASE3\r",
-      origin: "agent",
+      tty: true,
+      observationVersion: 1,
+      elapsedMs: 10,
     });
-    expect(services.sendKey).toHaveBeenCalledWith({ sessionId, key: "Ctrl+C", origin: "agent" });
-    expect(services.paste).toHaveBeenCalledWith({
-      sessionId,
-      text: "pasted input",
-      origin: "agent",
-    });
-    expect(services.sendMouse).toHaveBeenCalledWith({
-      sessionId,
-      data: "\u001b[M   ",
-      origin: "agent",
-    });
-    expect(services.interrupt).toHaveBeenCalledWith({ sessionId });
-    expect(services.resize).toHaveBeenCalledWith({ sessionId, cols: 100, rows: 30 });
-    expect(services.startRecording).toHaveBeenCalledWith({ sessionId });
-    expect(services.stopRecording).toHaveBeenCalledWith({ sessionId });
-    expect(services.exportRecording).toHaveBeenCalledWith({ sessionId });
-    expect(exportedRecording).toMatchObject({
-      ok: true,
-      value: {
-        schemaVersion: 1,
-        sessionId,
-        events: [{ type: "pty.output", data: "recorded output" }],
-      },
-    });
-    expect(services.kill).toHaveBeenCalledWith({ sessionId });
-    expect(services.release).toHaveBeenCalledWith({ sessionId });
-    client.close();
+    const runtime = await createRuntime(services);
+    const first = await authenticatedClient(runtime.gateway.descriptor);
+    const second = await authenticatedClient(runtime.gateway.descriptor);
+
+    await expect(
+      first.request(createAgentCommand("terminal.run", { input: "vim", tty: true })),
+    ).resolves.toMatchObject({ ok: true, value: { sessionId, tty: true, status: "running" } });
+    await expect(
+      second.request(createAgentCommand("terminal.attach", { sessionId })),
+    ).resolves.toMatchObject({ ok: false, error: { type: "session_in_use" } });
+
+    await expect(
+      first.request(createAgentCommand("terminal.close", { operationId })),
+    ).resolves.toMatchObject({ ok: true, value: { status: "closed" } });
+    await waitForAttach(second, sessionId);
+    first.close();
+    second.close();
   });
 
-  it("rejects wrong tokens without authenticating the connection or mutating sessions", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const gateway = await startTestGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
+  it("allows operation observation and close after reconnect", async () => {
+    const services = createServices();
+    const operationId = createOperationId("reconnect-operation");
+    services.observe.mockResolvedValueOnce({
+      status: "timeout",
+      operationId,
+      version: 3,
     });
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
+    const runtime = await createRuntime(services);
+    const first = await authenticatedClient(runtime.gateway.descriptor);
+    first.close();
+    const second = await authenticatedClient(runtime.gateway.descriptor);
 
     await expect(
-      client.request(createAgentCommand("agent.authenticate", { token: "wrong-token" })),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { type: "auth_failed", operation: "agent.authenticate" },
-    });
-    await expect(
-      client.request(createAgentCommand("terminal.create", { cols: 80, rows: 24 })),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { type: "auth_required", operation: "terminal.create" },
-    });
-
-    expect(services.createSession).not.toHaveBeenCalled();
-    client.close();
-  });
-
-  it("still requires authentication when policy allows an unauthenticated command", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const policy: AgentPolicy = {
-      authorize: vi.fn(() => ({ type: "allow", decisionId: "decision-allow" })),
-    };
-    const gateway = await startAgentGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-      policy,
-      token: "test-token",
-      tokenExpiresAt: "2026-05-11T00:05:00.000Z",
-      now: () => new Date("2026-05-11T00:00:00.000Z"),
-    });
-    gateways.push(gateway);
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
-
-    await expect(
-      client.request(createAgentCommand("terminal.create", { cols: 80, rows: 24 })),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { type: "auth_required", operation: "terminal.create" },
-    });
-
-    expect(
-      vi
-        .mocked(policy.authorize)
-        .mock.calls.some(([request]) => request.operation.type === "terminal.create"),
-    ).toBe(true);
-    expect(services.createSession).not.toHaveBeenCalled();
-    client.close();
-  });
-
-  it("rejects expired tokens without authenticating the connection or mutating sessions", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const gateway = await startTestGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-      tokenExpiresAt: "2026-05-11T00:00:00.000Z",
-      now: () => new Date("2026-05-11T00:00:01.000Z"),
-    });
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
-
-    await expect(
-      client.request(createAgentCommand("agent.authenticate", { token: "test-token" })),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { type: "auth_failed", operation: "agent.authenticate" },
-    });
-    await expect(
-      client.request(createAgentCommand("terminal.create", { cols: 80, rows: 24 })),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { type: "auth_required", operation: "terminal.create" },
-    });
-
-    expect(services.createSession).not.toHaveBeenCalled();
-    client.close();
-  });
-
-  it("routes authentication through policy before mutating connection auth state", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const policy: AgentPolicy = {
-      authorize: vi.fn(() => ({
-        type: "deny",
-        decisionId: "decision-auth-deny",
-        reason: {
-          decisionId: "decision-auth-deny",
-          code: "remote_control_disabled",
-          message: "Remote agent control is disabled.",
-          operation: "agent.authenticate",
-        },
-      })),
-    };
-    const gateway = await startAgentGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-      policy,
-      token: "test-token",
-      tokenExpiresAt: "2026-05-11T00:05:00.000Z",
-      now: () => new Date("2026-05-11T00:00:00.000Z"),
-    });
-    gateways.push(gateway);
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
-
-    await expect(
-      client.request(createAgentCommand("agent.authenticate", { token: "test-token" })),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { type: "policy_denied", operation: "agent.authenticate" },
-    });
-    await expect(
-      client.request(createAgentCommand("terminal.create", { cols: 80, rows: 24 })),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: { type: "policy_denied", operation: "terminal.create" },
-    });
-
-    expect(
-      vi
-        .mocked(policy.authorize)
-        .mock.calls.some(([request]) => request.operation.type === "agent.authenticate"),
-    ).toBe(true);
-    expect(services.createSession).not.toHaveBeenCalled();
-    client.close();
-  });
-
-  it("passes safe operation metadata to policy without raw terminal input", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const policy: AgentPolicy = {
-      authorize: vi.fn(() => ({ type: "allow", decisionId: "decision-safe-context" })),
-    };
-    const gateway = await startAgentGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-      policy,
-      token: "test-token",
-      tokenExpiresAt: "2026-05-11T00:05:00.000Z",
-      now: () => new Date("2026-05-11T00:00:00.000Z"),
-    });
-    gateways.push(gateway);
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
-
-    await expectAuthenticate(client);
-    const created = await client.request(
-      createAgentCommand("terminal.create", {
-        cols: 80,
-        rows: 24,
-        cwd: "/workspace",
-        shell: "/bin/sh",
-      }),
-    );
-    const sessionId = (created as Extract<AgentCommandResult, { ok: true }>).value
-      .sessionId as SessionId;
-    await client.request(
-      createAgentCommand("terminal.sendText", {
-        sessionId,
-        text: "SECRET_INPUT\r",
-      }),
-    );
-    await client.request(
-      createAgentCommand("terminal.paste", {
-        sessionId,
-        text: "SECRET_PASTE",
-      }),
-    );
-    await client.request(
-      createAgentCommand("terminal.sendMouse", {
-        sessionId,
-        data: "SECRET_MOUSE_BYTES",
-      }),
-    );
-    await client.request(createAgentCommand("terminal.interrupt", { sessionId }));
-    await client.request(createAgentCommand("terminal.startRecording", { sessionId }));
-    await client.request(createAgentCommand("terminal.stopRecording", { sessionId }));
-    await client.request(createAgentCommand("terminal.exportRecording", { sessionId }));
-
-    const operations = vi
-      .mocked(policy.authorize)
-      .mock.calls.map(([request]) => request.operation as Record<string, unknown>);
-    expect(operations).toContainEqual(expect.objectContaining({ type: "agent.authenticate" }));
-    expect(operations).toContainEqual(
-      expect.objectContaining({
-        type: "terminal.create",
-        cwd: "/workspace",
-        shell: "/bin/sh",
-      }),
-    );
-    const sendTextOperation = operations.find(
-      (operation) => operation.type === "terminal.sendText",
-    );
-    expect(sendTextOperation).toMatchObject({
-      sessionId,
-      inputKind: "text",
-    });
-    expect(JSON.stringify(sendTextOperation)).not.toContain("SECRET_INPUT");
-    expect(operations).toContainEqual(
-      expect.objectContaining({
-        type: "terminal.paste",
-        sessionId,
-        inputKind: "paste",
-      }),
-    );
-    expect(operations).toContainEqual(
-      expect.objectContaining({
-        type: "terminal.sendMouse",
-        sessionId,
-        inputKind: "mouse",
-      }),
-    );
-    expect(operations).toContainEqual(
-      expect.objectContaining({
-        type: "terminal.interrupt",
-        sessionId,
-        inputKind: "interrupt",
-      }),
-    );
-    expect(operations).toContainEqual(
-      expect.objectContaining({
-        type: "terminal.startRecording",
-        sessionId,
-        recordingKind: "start",
-      }),
-    );
-    expect(operations).toContainEqual(
-      expect.objectContaining({
-        type: "terminal.stopRecording",
-        sessionId,
-        recordingKind: "stop",
-      }),
-    );
-    expect(operations).toContainEqual(
-      expect.objectContaining({
-        type: "terminal.exportRecording",
-        sessionId,
-        recordingKind: "export",
-      }),
-    );
-    expect(JSON.stringify(operations)).not.toContain("SECRET_PASTE");
-    expect(JSON.stringify(operations)).not.toContain("SECRET_MOUSE_BYTES");
-    client.close();
-  });
-
-  it("rejects malformed raw messages without terminal side effects", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const gateway = await startTestGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-    });
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
-
-    await expect(client.requestRaw("not-json")).resolves.toMatchObject({
-      ok: false,
-      error: { type: "invalid_request", operation: "agent.command" },
-    });
-
-    expect(services.createSession).not.toHaveBeenCalled();
-    expect(services.write).not.toHaveBeenCalled();
-    client.close();
-  });
-
-  it("preserves request ids from malformed agent command envelopes", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const gateway = await startTestGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-    });
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
-
-    await expect(
-      client.requestRaw(
-        JSON.stringify({
-          type: "terminal.resize",
-          requestId: "malformed-request-1",
-          payload: { cols: 0, rows: 24 },
+      second.request(
+        createAgentCommand("terminal.observe", {
+          operationId,
+          afterVersion: 3,
+          timeoutMs: 5,
         }),
       ),
-    ).resolves.toMatchObject({
-      ok: false,
-      requestId: "malformed-request-1",
-      error: { type: "invalid_request", operation: "agent.command" },
-    });
-
-    expect(services.resize).not.toHaveBeenCalled();
-    client.close();
-  });
-
-  it("requires session ownership, streams only owned session events, and audits without payload leaks", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const auditEvents: AgentAuditEvent[] = [];
-    const gateway = await startTestGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-      audit: (event) => auditEvents.push(event),
-    });
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
-    const otherClient = await AgentTestClient.connect(gateway.descriptor.url);
-    await expectAuthenticate(client);
-    await expectAuthenticate(otherClient);
-
-    const firstSession = createSessionId("session-owned-1");
-    const secondSession = createSessionId("session-owned-2");
-    services.addSession(firstSession);
-    services.addSession(secondSession);
-    await client.request(createAgentCommand("terminal.attach", { sessionId: firstSession }));
-    await otherClient.request(createAgentCommand("terminal.attach", { sessionId: secondSession }));
-
-    const denied = await client.request(
-      createAgentCommand("terminal.kill", { sessionId: secondSession }),
-    );
-    expect(denied).toMatchObject({
-      ok: false,
-      error: { type: "policy_denied", sessionId: secondSession },
-    });
-    expect(services.kill).not.toHaveBeenCalled();
-    const releaseDenied = await client.request(
-      createAgentCommand("terminal.release", { sessionId: secondSession }),
-    );
-    expect(releaseDenied).toMatchObject({
-      ok: false,
-      error: { type: "policy_denied", sessionId: secondSession },
-    });
-    expect(services.release).not.toHaveBeenCalled();
-    const pasteDenied = await client.request(
-      createAgentCommand("terminal.paste", { sessionId: secondSession, text: "pasted" }),
-    );
-    expect(pasteDenied).toMatchObject({
-      ok: false,
-      error: { type: "policy_denied", sessionId: secondSession },
-    });
-    expect(services.paste).not.toHaveBeenCalled();
-    const mouseDenied = await client.request(
-      createAgentCommand("terminal.sendMouse", { sessionId: secondSession, data: "\u001b[M   " }),
-    );
-    expect(mouseDenied).toMatchObject({
-      ok: false,
-      error: { type: "policy_denied", sessionId: secondSession },
-    });
-    expect(services.sendMouse).not.toHaveBeenCalled();
-    const interruptDenied = await client.request(
-      createAgentCommand("terminal.interrupt", { sessionId: secondSession }),
-    );
-    expect(interruptDenied).toMatchObject({
-      ok: false,
-      error: { type: "policy_denied", sessionId: secondSession },
-    });
-    expect(services.interrupt).not.toHaveBeenCalled();
-    const recordingDenied = await client.request(
-      createAgentCommand("terminal.exportRecording", { sessionId: secondSession }),
-    );
-    expect(recordingDenied).toMatchObject({
-      ok: false,
-      error: { type: "policy_denied", sessionId: secondSession },
-    });
-    expect(services.exportRecording).not.toHaveBeenCalled();
-
-    services.emit({
-      type: "session.output",
-      payload: { sessionId: firstSession, data: "owned output" },
-    });
-    expect(await client.waitForEvent("terminal.output")).toMatchObject({
-      type: "terminal.output",
-      payload: { sessionId: firstSession, data: "owned output" },
-    });
-    await expect(otherClient.waitForEvent("terminal.output", 100)).rejects.toThrow();
-    services.emit({
-      type: "session.title",
-      payload: { sessionId: firstSession, title: "vim package.json" },
-    });
-    expect(await client.waitForEvent("terminal.title")).toMatchObject({
-      type: "terminal.title",
-      payload: { sessionId: firstSession, title: "vim package.json" },
-    });
-    services.emit({
-      type: "session.bell",
-      payload: { sessionId: firstSession },
-    });
-    expect(await client.waitForEvent("terminal.bell")).toMatchObject({
-      type: "terminal.bell",
-      payload: { sessionId: firstSession },
-    });
-    await client.request(
-      createAgentCommand("terminal.paste", { sessionId: firstSession, text: "SECRET_PASTE" }),
-    );
-    await client.request(
-      createAgentCommand("terminal.sendMouse", {
-        sessionId: firstSession,
-        data: "SECRET_MOUSE_BYTES",
-      }),
-    );
-    services.exportRecording.mockResolvedValueOnce({
-      schemaVersion: 1,
-      sessionId: firstSession,
-      exportedAt: "2026-05-11T00:00:00.000Z",
-      events: [
-        {
-          type: "pty.output",
-          sessionId: firstSession,
-          at: "2026-05-11T00:00:00.000Z",
-          data: "SECRET_RECORDING_OUTPUT",
-        },
-      ],
-    });
-    await client.request(
-      createAgentCommand("terminal.exportRecording", { sessionId: firstSession }),
-    );
-
-    const auditText = JSON.stringify(auditEvents);
-    expect(auditText).toContain("terminal.kill");
-    expect(auditText).toContain("terminal.paste");
-    expect(auditText).toContain("terminal.sendMouse");
-    expect(auditText).toContain("terminal.exportRecording");
-    expect(auditText).not.toContain("test-token");
-    expect(auditText).not.toContain("owned output");
-    expect(auditText).not.toContain("SECRET_PASTE");
-    expect(auditText).not.toContain("SECRET_MOUSE_BYTES");
-    expect(auditText).not.toContain("SECRET_RECORDING_OUTPUT");
-    client.close();
-    otherClient.close();
-  });
-
-  it("propagates renderer-dependent observation errors as structured terminal errors", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const gateway = await startTestGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-    });
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
-    await expectAuthenticate(client);
-    const sessionId = createSessionId("session-observation");
-    services.addSession(sessionId);
-    await client.request(createAgentCommand("terminal.attach", { sessionId }));
-    services.captureScreen.mockRejectedValueOnce(
-      createTerminalError("observation_unavailable", "No renderer window is available.", {
-        sessionId,
-        operation: "terminal.captureScreen",
-      }),
-    );
-
+    ).resolves.toMatchObject({ ok: true, value: { operationId, status: "timeout" } });
     await expect(
-      client.request(createAgentCommand("terminal.captureScreen", { sessionId, timeoutMs: 50 })),
-    ).resolves.toMatchObject({
-      ok: false,
-      error: {
-        type: "observation_unavailable",
-        sessionId,
-        operation: "terminal.captureScreen",
-      },
-    });
-    client.close();
+      second.request(createAgentCommand("terminal.close", { operationId })),
+    ).resolves.toMatchObject({ ok: true, value: { status: "closed" } });
+
+    expect(services.close).toHaveBeenCalledWith({ operationId });
+    second.close();
   });
 
-  it("keeps agent-created sessions usable when renderer display fails", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const gateway = await startTestGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(tempDir),
-      services,
-    });
-    const client = await AgentTestClient.connect(gateway.descriptor.url);
-    await expectAuthenticate(client);
-    services.displaySession.mockRejectedValueOnce(
-      createTerminalError("observation_unavailable", "Renderer window is unavailable.", {
-        operation: "terminal.display",
-        cause: "DISPLAY is not set",
-      }),
-    );
+  it("allows metadata queries without attachment", async () => {
+    const services = createServices();
+    const runtime = await createRuntime(services);
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+    const sessionId = createSessionId("existing");
 
-    await expect(
-      client.request(createAgentCommand("terminal.create", { cols: 80, rows: 24 })),
-    ).resolves.toMatchObject({
+    await expect(client.request(createAgentCommand("terminal.list", {}))).resolves.toMatchObject({
       ok: true,
-      value: { createdBy: "agent" },
     });
-    await expect(client.waitForEvent("terminal.error")).resolves.toMatchObject({
-      type: "terminal.error",
-      payload: {
-        type: "observation_unavailable",
-        operation: "terminal.display",
-        cause: "DISPLAY is not set",
-      },
-    });
-
-    const sessionId = createSessionId("session-created-1");
     await expect(
-      client.request(createAgentCommand("terminal.sendText", { sessionId, text: "echo ok\r" })),
+      client.request(createAgentCommand("terminal.get", { sessionId })),
     ).resolves.toMatchObject({ ok: true });
-    expect(services.write).toHaveBeenCalledWith({
-      sessionId,
-      data: "echo ok\r",
-      origin: "agent",
-    });
+    expect(services.list).toHaveBeenCalledOnce();
+    expect(services.get).toHaveBeenCalledWith({ sessionId });
     client.close();
   });
 
-  it("cleans up the listener and event subscription when descriptor writing fails", async () => {
-    const tempDir = await createTempDir();
-    const services = createFakeServices();
-    const blockedPath = join(tempDir, "not-a-directory");
-    const port = await getFreePort();
-    await writeFile(blockedPath, "blocks descriptor directory creation", "utf8");
+  it("enforces one controlling agent and releases attachment on disconnect", async () => {
+    const services = createServices();
+    const runtime = await createRuntime(services);
+    const first = await authenticatedClient(runtime.gateway.descriptor);
+    const second = await authenticatedClient(runtime.gateway.descriptor);
+    const sessionId = createSessionId("shared");
 
     await expect(
-      startAgentGateway({
-        descriptorPath: join(blockedPath, "agent-gateway.json"),
-        services,
-        policy: createDefaultAgentPolicy({ createDecisionId: () => "decision-test" }),
-        port,
-        token: "test-token",
-        tokenExpiresAt: "2026-05-11T00:05:00.000Z",
-        now: () => new Date("2026-05-11T00:00:00.000Z"),
-      }),
-    ).rejects.toThrow();
+      first.request(createAgentCommand("terminal.attach", { sessionId })),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      second.request(createAgentCommand("terminal.attach", { sessionId })),
+    ).resolves.toMatchObject({ ok: false, error: { type: "session_in_use" } });
 
-    expect(services.handlerCount()).toBe(0);
-    await expect(listenAndClose(port)).resolves.toBeUndefined();
+    first.close();
+    await waitForAttach(second, sessionId);
+    second.close();
+  });
+
+  it("aborts pending observations when a connection closes", async () => {
+    const services = createServices();
+    let observedSignal: AbortSignal | undefined;
+    services.observe.mockImplementation((_request, signal) => {
+      observedSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    });
+    const runtime = await createRuntime(services);
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+    const sessionId = createSessionId("observed");
+    await client.request(createAgentCommand("terminal.attach", { sessionId }));
+
+    void client.request(
+      createAgentCommand("terminal.observe", { sessionId, afterVersion: 1, timeoutMs: 10_000 }),
+    );
+    await waitFor(() => observedSignal !== undefined);
+    client.close();
+    await waitFor(() => observedSignal?.aborted === true);
+
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
+  it("audits safe metadata without terminal input", async () => {
+    const audit = vi.fn();
+    const runtime = await createRuntime(createServices(), audit);
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+    const sessionId = createSessionId("audit");
+    await client.request(createAgentCommand("terminal.attach", { sessionId }));
+    await client.request(
+      createAgentCommand("terminal.input", { sessionId, input: "SECRET_TERMINAL_INPUT" }),
+    );
+    await client.request(
+      createAgentCommand("terminal.run", {
+        input: "SECRET_RUN_INPUT",
+        env: { SECRET_ENVIRONMENT_VALUE: "SECRET_VALUE" },
+      }),
+    );
+
+    const serialized = JSON.stringify(audit.mock.calls);
+    expect(serialized).toContain("terminal.input");
+    expect(serialized).not.toContain("SECRET_TERMINAL_INPUT");
+    expect(serialized).not.toContain("SECRET_RUN_INPUT");
+    expect(serialized).not.toContain("SECRET_VALUE");
+    client.close();
   });
 });
 
-async function startTestGateway({
-  descriptorPath,
-  services,
-  audit,
-  now,
-  tokenExpiresAt,
-}: {
-  descriptorPath: string;
-  services: ReturnType<typeof createFakeServices>;
-  audit?: (event: AgentAuditEvent) => void;
-  now?: () => Date;
-  tokenExpiresAt?: string;
-}): Promise<AgentGateway> {
+async function createRuntime(
+  services = createServices(),
+  audit = vi.fn(),
+): Promise<{ gateway: AgentGateway; descriptorPath: string }> {
+  const directory = await mkdtemp(join(tmpdir(), "terminal-gateway-"));
+  const descriptorPath = resolveAgentGatewayDescriptorPath(directory);
   const gateway = await startAgentGateway({
     descriptorPath,
     services,
-    policy: createDefaultAgentPolicy({ createDecisionId: () => "decision-test" }),
+    policy: createDefaultAgentPolicy(),
     token: "test-token",
-    tokenExpiresAt: tokenExpiresAt ?? "2026-05-11T00:05:00.000Z",
-    now: now ?? (() => new Date("2026-05-11T00:00:00.000Z")),
+    tokenExpiresAt: "2099-01-01T00:00:00.000Z",
     audit,
   });
-  gateways.push(gateway);
-  return gateway;
-}
-
-async function createTempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "agent-gateway-test-"));
-  tempDirs.push(dir);
-  return dir;
-}
-
-async function expectAuthenticate(client: AgentTestClient): Promise<void> {
-  await expect(
-    client.request(
-      createAgentCommand("agent.authenticate", { token: "test-token" }, createRequestId()),
-    ),
-  ).resolves.toMatchObject({
-    ok: true,
-    value: { tokenExpiresAt: "2026-05-11T00:05:00.000Z" },
+  cleanups.push(async () => {
+    await gateway.stop();
+    await rm(directory, { recursive: true, force: true });
   });
+  return { gateway, descriptorPath };
 }
 
-function createFakeServices(): AgentGatewayTerminalServices & {
-  addSession(sessionId: SessionId): TerminalSessionSnapshot;
-  emit(event: RendererSessionEvent): void;
-  handlerCount(): number;
-  createSession: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["createSession"]>>;
-  write: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["write"]>>;
-  sendKey: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["sendKey"]>>;
-  paste: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["paste"]>>;
-  sendMouse: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["sendMouse"]>>;
-  interrupt: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["interrupt"]>>;
-  resize: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["resize"]>>;
-  kill: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["kill"]>>;
-  release: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["release"]>>;
-  startRecording: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["startRecording"]>>;
-  stopRecording: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["stopRecording"]>>;
-  exportRecording: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["exportRecording"]>>;
-  captureScreen: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["captureScreen"]>>;
-  displaySession: ReturnType<typeof vi.fn<AgentGatewayTerminalServices["displaySession"]>>;
-} {
-  const sessions = new Map<SessionId, TerminalSessionSnapshot>();
-  const handlers = new Set<(event: RendererSessionEvent) => void>();
-  const addSession = (sessionId: SessionId): TerminalSessionSnapshot => {
-    const snapshot = createSnapshot(sessionId);
-    sessions.set(sessionId, snapshot);
-    return snapshot;
-  };
-  const emit = (event: RendererSessionEvent): void => {
-    for (const handler of handlers) handler(event);
-  };
-
+function createServices() {
+  const summary = sessionSummary(createSessionId("existing"));
   return {
-    addSession,
-    emit,
-    handlerCount: () => handlers.size,
-    listSessions: () => [...sessions.values()],
-    createSession: vi.fn<AgentGatewayTerminalServices["createSession"]>((request) => {
-      const snapshot = {
-        ...createSnapshot(createSessionId(`session-created-${sessions.size + 1}`)),
-        state: request.createdBy === "agent" ? "detached" : "running",
-        cols: request.cols,
-        rows: request.rows,
-        createdBy: request.createdBy ?? "human",
-      };
-      sessions.set(snapshot.sessionId, snapshot);
-      emit({ type: "session.created", payload: snapshot });
-      return Promise.resolve(snapshot);
-    }),
-    displaySession: vi.fn<AgentGatewayTerminalServices["displaySession"]>(() => Promise.resolve()),
-    getSession: vi.fn<AgentGatewayTerminalServices["getSession"]>(({ sessionId }) => {
-      const snapshot = sessions.get(sessionId);
-      if (!snapshot) {
-        throw new Error(`Missing session ${sessionId}`);
-      }
-      return snapshot;
-    }),
-    write: vi.fn<AgentGatewayTerminalServices["write"]>(() => Promise.resolve()),
-    sendKey: vi.fn<AgentGatewayTerminalServices["sendKey"]>(() => Promise.resolve()),
-    paste: vi.fn<AgentGatewayTerminalServices["paste"]>(() => Promise.resolve()),
-    sendMouse: vi.fn<AgentGatewayTerminalServices["sendMouse"]>(() => Promise.resolve()),
-    interrupt: vi.fn<AgentGatewayTerminalServices["interrupt"]>(() => Promise.resolve()),
-    resize: vi.fn<AgentGatewayTerminalServices["resize"]>(() => Promise.resolve()),
-    readRecentOutput: vi.fn<AgentGatewayTerminalServices["readRecentOutput"]>(
-      ({ sessionId, maxBytes }) => ({
-        sessionId,
-        data: "recent output",
-        maxBytes,
-        capturedAt: "2026-05-11T00:00:00.000Z",
+    list: vi.fn<AgentTerminalService["list"]>(() => [summary]),
+    get: vi.fn<AgentTerminalService["get"]>(({ sessionId }) => ({
+      ...summary,
+      sessionId,
+    })),
+    create: vi.fn<AgentTerminalService["create"]>(() =>
+      Promise.resolve(sessionSummary(createSessionId("created"))),
+    ),
+    run: vi.fn<AgentTerminalService["run"]>(() =>
+      Promise.resolve({
+        status: "completed",
+        operationId: createOperationId("captured"),
+        tty: false,
+        exitCode: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        durationMs: 1,
       }),
     ),
-    captureScreen: vi.fn<AgentGatewayTerminalServices["captureScreen"]>(() =>
-      Promise.reject(new Error("not used")),
+    input: vi.fn<AgentTerminalService["input"]>(() =>
+      Promise.resolve({ accepted: true, observationVersion: 1 }),
     ),
-    waitForText: vi.fn<AgentGatewayTerminalServices["waitForText"]>(({ sessionId }) =>
-      Promise.resolve({ sessionId, matchedAt: "2026-05-11T00:00:00.000Z" }),
+    resize: vi.fn<AgentTerminalService["resize"]>(() => Promise.resolve({ observationVersion: 2 })),
+    scroll: vi.fn<AgentTerminalService["scroll"]>(() => ({
+      status: "unchanged",
+      observationVersion: 2,
+    })),
+    observe: vi.fn<AgentTerminalService["observe"]>((request) =>
+      Promise.resolve(
+        "sessionId" in request
+          ? { status: "timeout" as const, sessionId: request.sessionId, version: 2 }
+          : { status: "timeout" as const, operationId: request.operationId, version: 2 },
+      ),
     ),
-    waitForQuiet: vi.fn<AgentGatewayTerminalServices["waitForQuiet"]>(({ sessionId }) =>
-      Promise.resolve({ sessionId, matchedAt: "2026-05-11T00:00:00.000Z" }),
+    close: vi.fn<AgentTerminalService["close"]>(() =>
+      Promise.resolve({ status: "closed", exitCode: 0, signal: null }),
     ),
-    waitForScreenChange: vi.fn<AgentGatewayTerminalServices["waitForScreenChange"]>(
-      ({ sessionId }) => Promise.resolve({ sessionId, matchedAt: "2026-05-11T00:00:00.000Z" }),
-    ),
-    waitForPrompt: vi.fn<AgentGatewayTerminalServices["waitForPrompt"]>(({ sessionId }) =>
-      Promise.resolve({ sessionId, matchedAt: "2026-05-11T00:00:00.000Z" }),
-    ),
-    kill: vi.fn<AgentGatewayTerminalServices["kill"]>(() => Promise.resolve()),
-    release: vi.fn<AgentGatewayTerminalServices["release"]>(({ sessionId }) => {
-      sessions.delete(sessionId);
-      return Promise.resolve();
-    }),
-    startRecording: vi.fn<AgentGatewayTerminalServices["startRecording"]>(() => Promise.resolve()),
-    stopRecording: vi.fn<AgentGatewayTerminalServices["stopRecording"]>(() => Promise.resolve()),
-    exportRecording: vi.fn<AgentGatewayTerminalServices["exportRecording"]>(({ sessionId }) =>
+    startRecording: vi.fn<AgentTerminalService["startRecording"]>(() => Promise.resolve()),
+    stopRecording: vi.fn<AgentTerminalService["stopRecording"]>(() => Promise.resolve()),
+    exportRecording: vi.fn<AgentTerminalService["exportRecording"]>(({ sessionId }) =>
       Promise.resolve({
         schemaVersion: 1,
         sessionId,
-        exportedAt: "2026-05-11T00:00:00.000Z",
-        events: [
-          {
-            type: "pty.output",
-            sessionId,
-            at: "2026-05-11T00:00:00.000Z",
-            data: "recorded output",
-          },
-        ],
+        exportedAt: "2026-01-01T00:00:00.000Z",
+        events: [],
       }),
     ),
-    onSessionEvent(handler: (event: RendererSessionEvent) => void): Unsubscribe {
-      handlers.add(handler);
-      return () => handlers.delete(handler);
-    },
   };
 }
 
-async function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close(() => reject(new Error("Could not allocate a local test port.")));
-        return;
-      }
-      server.close((error) => (error ? reject(error) : resolve(address.port)));
-    });
-  });
-}
-
-async function listenAndClose(port: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", () => {
-      server.close((error) => (error ? reject(error) : resolve()));
-    });
-  });
-}
-
-function createSnapshot(sessionId: SessionId): TerminalSessionSnapshot {
+function sessionSummary(sessionId: ReturnType<typeof createSessionId>): TerminalSessionSummary {
   return {
     sessionId,
-    state: "running",
+    lifecycle: "running",
     shell: "/bin/sh",
     cwd: "/tmp",
-    cols: 80,
-    rows: 24,
+    dimensions: { cols: 80, rows: 24 },
     title: null,
     createdBy: "agent",
-    createdAt: "2026-05-11T00:00:00.000Z",
-    updatedAt: "2026-05-11T00:00:00.000Z",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    observationVersion: 1,
+    presentation: { state: "headless", windowVisible: false, windowFocused: false },
+    shellIntegration: {
+      status: "unavailable",
+      capabilities: {
+        prompt: false,
+        commandStart: false,
+        commandFinish: false,
+        commandLine: false,
+        exitCode: false,
+        cwd: false,
+      },
+    },
+    command: { state: "unknown" },
+    recording: { state: "inactive" },
   };
 }
 
-class AgentTestClient {
-  private readonly pendingMessages: unknown[] = [];
-  private readonly waiters = new Set<(message: unknown) => boolean>();
+async function authenticatedClient(descriptor: AgentGatewayDescriptor): Promise<AgentClient> {
+  const client = await AgentClient.connect(descriptor.url);
+  await client.request(
+    createAgentCommand("agent.authenticate", {
+      token: "test-token",
+      protocolVersion: TERMINAL_PROTOCOL_VERSION,
+    }),
+  );
+  return client;
+}
+
+function successValue<T>(result: AgentCommandResult): T {
+  if (!result.ok) throw new Error(result.error.message);
+  return result.value as T;
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Condition did not become true.");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+async function waitForAttach(
+  client: AgentClient,
+  sessionId: ReturnType<typeof createSessionId>,
+): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    const result = await client.request(createAgentCommand("terminal.attach", { sessionId }));
+    if (result.ok) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Agent attachment was not released.");
+}
+
+class AgentClient {
+  private readonly pending: Array<(result: AgentCommandResult) => void> = [];
 
   private constructor(private readonly socket: WebSocket) {
-    socket.addEventListener("message", (event) => {
-      void parseWebSocketMessage(event.data).then((message) => {
-        for (const waiter of [...this.waiters]) {
-          if (waiter(message)) {
-            return;
-          }
-        }
-        this.pendingMessages.push(message);
-      });
+    socket.on("message", (data) => {
+      const resolve = this.pending.shift();
+      resolve?.(parseAgentCommandResult(JSON.parse(rawDataToString(data)) as unknown));
     });
   }
 
-  static async connect(url: string): Promise<AgentTestClient> {
+  static async connect(url: string): Promise<AgentClient> {
     const socket = new WebSocket(url);
     await new Promise<void>((resolve, reject) => {
-      socket.addEventListener("open", () => resolve(), { once: true });
-      socket.addEventListener("error", () => reject(new Error("WebSocket connection failed.")), {
-        once: true,
-      });
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
     });
-    return new AgentTestClient(socket);
+    return new AgentClient(socket);
   }
 
-  async request(command: unknown): Promise<AgentCommandResult> {
-    return this.requestRaw(JSON.stringify(command));
+  request(command: unknown): Promise<AgentCommandResult> {
+    return this.requestRaw(command);
   }
 
-  async requestRaw(message: string): Promise<AgentCommandResult> {
-    const response = this.waitForResult();
-    this.socket.send(message);
-    return response;
-  }
-
-  waitForEvent(type: AgentEvent["type"], timeoutMs = 1000): Promise<AgentEvent> {
-    return this.waitForMessage((message): message is AgentEvent => {
-      return (
-        typeof message === "object" &&
-        message !== null &&
-        "type" in message &&
-        message.type === type
-      );
-    }, timeoutMs);
+  requestRaw(command: unknown): Promise<AgentCommandResult> {
+    return new Promise((resolve) => {
+      this.pending.push(resolve);
+      this.socket.send(JSON.stringify(command));
+    });
   }
 
   close(): void {
     this.socket.close();
   }
-
-  private waitForResult(timeoutMs = 1000): Promise<AgentCommandResult> {
-    return this.waitForMessage((message): message is AgentCommandResult => {
-      return typeof message === "object" && message !== null && "ok" in message;
-    }, timeoutMs);
-  }
-
-  private waitForMessage<T>(
-    predicate: (message: unknown) => message is T,
-    timeoutMs: number,
-  ): Promise<T> {
-    const queuedIndex = this.pendingMessages.findIndex((message) => predicate(message));
-    if (queuedIndex !== -1) {
-      const [message] = this.pendingMessages.splice(queuedIndex, 1);
-      return Promise.resolve(message as T);
-    }
-
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.waiters.delete(waiter);
-        reject(new Error("Timed out waiting for WebSocket message."));
-      }, timeoutMs);
-      const waiter = (message: unknown): boolean => {
-        if (!predicate(message)) {
-          return false;
-        }
-        clearTimeout(timeout);
-        this.waiters.delete(waiter);
-        resolve(message);
-        return true;
-      };
-      this.waiters.add(waiter);
-    });
-  }
 }
 
-async function parseWebSocketMessage(data: unknown): Promise<unknown> {
-  if (typeof data === "string") {
-    return JSON.parse(data) as unknown;
-  }
-  if (data instanceof Blob) {
-    return JSON.parse(await data.text()) as unknown;
-  }
-  if (data instanceof ArrayBuffer) {
-    return JSON.parse(Buffer.from(data).toString("utf8")) as unknown;
-  }
-  if (ArrayBuffer.isView(data)) {
-    return JSON.parse(
-      Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8"),
-    ) as unknown;
-  }
-  return JSON.parse(String(data)) as unknown;
+function rawDataToString(data: RawData): string {
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  return Buffer.from(data).toString("utf8");
 }

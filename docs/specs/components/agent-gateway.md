@@ -6,167 +6,83 @@ Accepted component architecture.
 
 ## Purpose
 
-The agent gateway exposes terminal control to autonomous agents through a local, authenticated, validated, and audited API. It maps agent requests to session manager operations.
-
-This component is part of the [Terminal Architecture Spec](../terminal-architecture.md).
-
-## Responsibilities
-
-- Accept local-only agent connections.
-- Authenticate callers.
-- Validate every request at runtime.
-- Map agent requests to session manager commands.
-- Enforce session ownership and policy.
-- Emit audit events for agent actions.
-- Stream observations and lifecycle events back to the agent.
+The agent gateway exposes the terminal domain through a local authenticated,
+validated, policy-controlled request/response API. Long-poll observation is the
+only agent synchronization primitive; raw PTY output is not streamed as a
+second competing state channel.
 
 ## Transport
 
-Primary transport:
+- Bind a WebSocket server to loopback only.
+- Publish an ephemeral descriptor under Electron `userData`.
+- The descriptor contains `url`, token metadata, process ID, and the single
+  supported protocol version.
+- Authentication supplies the same fixed protocol version. Unsupported
+  versions fail before terminal operations are accepted.
+- Remove the descriptor during orderly shutdown.
 
-- Local WebSocket over loopback with a short-lived auth token.
-- The gateway writes an ephemeral JSON descriptor under the Electron `userData`
-  directory. The descriptor contains only `{ url, token, tokenExpiresAt, pid }`
-  and is removed during app shutdown.
+## API Through Phase 2
 
-Not allowed by default:
+```ts
+terminal.list()
+terminal.get({ sessionId })
+terminal.run({ input, cwd?, env?, shell?, tty?, timeoutMs?, maxOutputBytesPerStream? })
+terminal.create({ cwd?, env?, shell?, cols?, rows? })
+terminal.attach({ sessionId })
+terminal.input({ sessionId, input })
+terminal.resize({ sessionId, cols, rows })
+terminal.scroll({ sessionId, scroll })
+terminal.observe({ sessionId, afterVersion?, timeoutMs })
+terminal.observe({ operationId, afterVersion?, timeoutMs })
+terminal.close({ sessionId })
+terminal.close({ operationId })
 
-- Unauthenticated network binding.
-- Remote network control without explicit configuration and policy support.
+terminal.recording.start({ sessionId })
+terminal.recording.stop({ sessionId })
+terminal.recording.export({ sessionId })
+```
 
-## API Categories
+The gateway returns one validated result for each request. Observation may hold
+the request until state changes or the timeout expires. It does not emit PTY
+bytes, title updates, screen snapshots, or lifecycle events independently of
+`terminal.observe`.
 
-- Session: create, attach, list, get, kill.
-- Input: send text, send key, send paste, send mouse, interrupt.
-- Layout: resize, focus, open window, split pane.
-- Observation: recent output, viewport, screen snapshot, cursor, title, bell, lifecycle.
-- Synchronization: wait for text, wait for prompt, wait for quiet, wait for screen change.
-- Recording: start, stop, export, replay metadata.
+## Attachment And Ownership
 
-Phase 3 exposes the first external command set:
+- Authenticated local agents may list sessions and read session summaries.
+- Creating a session grants the connection its exclusive agent attachment.
+- Attaching succeeds only when no other agent connection controls the session.
+- Input, resize, scroll, observation, close, and recording require attachment.
+- `terminal.run({ tty: true })` automatically attaches its temporary session to
+  the creating connection when the operation remains running.
+- An authenticated local connection that possesses an unguessable operation ID
+  may observe or close that operation without owning the originating
+  connection. PTY session interaction still requires attachment.
+- Human control is independent and may coexist with one attached agent.
+- Connection loss releases agent attachment without closing the PTY.
 
-- `agent.authenticate`
-- `terminal.list`
-- `terminal.create`
-- `terminal.attach`
-- `terminal.sendText`
-- `terminal.sendKey`
-- `terminal.paste`
-- `terminal.sendMouse`
-- `terminal.interrupt`
-- `terminal.resize`
-- `terminal.readRecentOutput`
-- `terminal.captureScreen`
-- `terminal.waitForText`
-- `terminal.waitForQuiet`
-- `terminal.waitForScreenChange`
-- `terminal.waitForPrompt`
-- `terminal.kill`
-- `terminal.release`
-- `terminal.startRecording`
-- `terminal.stopRecording`
-- `terminal.exportRecording`
+## Policy And Audit
 
-`terminal.paste` is a semantic convenience over PTY text input in this phase:
-it writes the supplied text exactly as provided and does not add bracketed paste
-markers. `terminal.interrupt` maps to Ctrl+C. `terminal.sendMouse` accepts raw
-terminal mouse bytes so agents can exercise mouse-aware TUIs before a structured
-coordinate/button encoder exists.
-
-`terminal.release` removes an exited or failed session record from the
-agent-visible session list. It is distinct from `terminal.kill`: killing asks
-the PTY to terminate, while releasing removes only an already-finished record.
-Releasing a running, detached, creating, or exiting session fails with a typed
-session release error from the session manager.
-
-`terminal.startRecording`, `terminal.stopRecording`, and
-`terminal.exportRecording` expose the existing recorder through the agent
-gateway for owned sessions. Recording exports use the recorder schema and
-configured redaction. Recording payloads remain transcript data and must not be
-written to diagnostic logs.
-
-Owned session title and bell events are streamed as `terminal.title` and
-`terminal.bell` observations. Title text is observation data, not app
-diagnostics, and must not be written to diagnostic logs by default.
-
-`terminal.attach` attaches an agent connection to an existing session for
-ownership, event filtering, and subsequent control. It does not change the
-renderer lifecycle state of that terminal.
-
-The gateway authorizes every parsed command through the policy engine before
-performing command-specific side effects. This includes `agent.authenticate`;
-a policy denial for authentication prevents the connection from becoming
-authenticated even if the token is valid. Non-authentication terminal commands
-still require an authenticated connection even when a permissive policy returns
-`allow`.
-
-Policy requests include safe operation metadata such as `cwd`, `shell`,
-`sessionId`, coarse input kind, coarse observation kind, or recording kind.
-They intentionally exclude raw terminal input text, PTY output, tokens,
-clipboard contents, and transcript payloads unless a future policy explicitly
-opts into that sensitive data.
-
-## Startup Readiness
-
-The desktop app must not publish the agent gateway descriptor while the normal
-startup terminal is still pending creation. During ordinary window startup, the
-first renderer-owned human terminal must settle into a non-`creating` lifecycle
-state before the descriptor appears. This prevents agents from observing a
-false empty `terminal.list` result while the startup tab is still being
-created.
-
-If the startup window cannot create or settle the initial terminal within the
-bounded startup wait, the app may publish the descriptor in degraded mode after
-logging a structured warning. In that case, an empty list means no startup
-session reached the session manager within the wait window, not that a known
-session was hidden from the agent.
+Every request, including authentication, is authorized before side effects.
+Policy and audit metadata may include operation kind, operation ID, session ID,
+cwd, shell, dimensions, and coarse recording or observation categories. It
+must not include tokens, terminal input, PTY output, run input, command lines,
+clipboard data, environment values, or recording payloads.
 
 ## Boundaries
 
-The agent gateway must not:
-
-- Spawn PTYs directly.
-- Bypass the terminal session manager.
-- Trust external messages without validation.
-- Bind unauthenticated network control by default.
-- Treat agent observations as application logs.
-- Log descriptor tokens, terminal input, PTY output, or transcript data.
-
-## Renderer-Dependent Observation
-
-The gateway can always read recent output from session-core for existing
-sessions. Screen snapshots and screen-based waits depend on a renderer window
-responding with xterm.js buffer state. If no renderer can provide that state,
-the gateway returns a structured `observation_unavailable` terminal error.
-This includes both "no renderer window exists" and "a renderer exists but does
-not own the requested session". Snapshot responses are correlated by request ID
-and session ID; a mismatched renderer response is rejected as
-`session_snapshot_failed` rather than being used as observation data.
-
-When an agent creates a session, the gateway asks the desktop app to make a
-renderer window available for the human-visible terminal surface. Renderer
-display is best effort: if a window cannot be created, `terminal.create` still
-returns the created PTY session, the session remains usable through headless
-operations such as input and recent-output reads, and the agent receives a
-non-fatal `terminal.error` with `operation: "terminal.display"`.
-An existing desktop window is considered usable only when the window and its
-renderer web contents are alive. Destroyed or crashed renderer contents do not
-satisfy display availability; the desktop app must create another window or
-report the same non-fatal display error.
+The gateway must not spawn processes, own canonical terminal state, call
+Electron windows, interpret terminal content, or bypass the terminal service.
 
 ## Testing Expectations
 
-- Unauthenticated requests are rejected.
-- Invalid payloads fail closed with typed errors.
-- Allowed requests map to the expected session manager operation.
-- Denied requests produce policy denial events without side effects.
-- Authentication denial by policy leaves the connection unauthenticated.
-- Input authorization includes only safe metadata by default.
-- Agent paste, mouse, interrupt, and recording commands are policy-checked and
-  audited without logging raw input, mouse bytes, PTY output, or exported
-  recording events.
-- Event streams preserve session identity and lifecycle ordering.
-- Descriptor publication does not race ahead of the initial startup terminal in
-  the normal desktop startup path.
-- Releasing finished sessions is policy-checked, audited, and distinct from
-  killing running PTYs.
+- Authentication and protocol-version failures fail closed.
+- Invalid requests never reach services.
+- Attachment is exclusive between agent connections.
+- Disconnect releases attachment without closing sessions.
+- Policy denial prevents side effects and produces a typed result.
+- Pending observations are cancelled when their connection closes.
+- Audit records contain safe metadata only.
+- Temporary PTY runs grant session attachment only to the creating connection.
+- Operation-ID observation and close work after reconnect.
+- Run input is absent from policy and audit records.

@@ -13,6 +13,7 @@ This directory contains the detailed component specs for the terminal architectu
 - [Terminal View](./terminal-view.md)
 - [Input Router](./input-router.md)
 - [Terminal Session Manager](./terminal-session-manager.md)
+- [Terminal Operation Manager](./terminal-operation-manager.md)
 - [PTY Host](./pty-host.md)
 - [Shell Resolver](./shell-resolver.md)
 - [Agent Gateway](./agent-gateway.md)
