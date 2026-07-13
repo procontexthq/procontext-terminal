@@ -81,6 +81,8 @@ The architecture specs describe components. The repository structure groups some
 | Terminal view | `apps/desktop/src/renderer` |
 | Terminal input | Raw input types in `packages/protocol`; ordered PTY writes in `packages/session-core` |
 | Terminal session manager | `packages/session-core` |
+| Terminal operation manager | `packages/session-core` |
+| Captured process host | `packages/session-core` |
 | PTY host | `packages/pty-host` |
 | Shell resolver | `packages/pty-host` |
 | Agent gateway | `packages/agent-gateway` |
@@ -184,6 +186,8 @@ Responsibilities:
 - Create and manage desktop windows.
 - Register IPC handlers.
 - Wire session manager, PTY host, settings, policy, recorder, logger, and agent gateway.
+- Adapt session and operation managers to the narrow agent service in a focused
+  main-process module.
 - Own app lifecycle and graceful shutdown.
 - Own native OS integration.
 - Persist structured app diagnostics through the main-process logger.
@@ -356,12 +360,18 @@ Core terminal session domain logic.
 Responsibilities:
 
 - Create, track, and dispose terminal sessions.
+- Create, track, observe, retain, and dispose one-shot operations.
 - Own canonical session lifecycle state.
 - Own one headless xterm model and ordered output queue per PTY.
 - Route raw input, resize, and shared viewport operations.
 - Provide versioned observation and serialized renderer bootstrap.
 - Coordinate explicit recording lifecycle and close finalization.
 - Broadcast sequenced renderer projection events.
+- Host captured child processes behind a focused internal boundary.
+- Maintain separate bounded stdout/stderr journals for captured operations and
+  a combined bounded output journal for temporary PTY results.
+- Map temporary operation IDs to PTY session IDs without duplicating session
+  interaction logic.
 
 Must not:
 
@@ -377,6 +387,7 @@ Good delegation tasks:
 - Add session lifecycle events.
 - Add session metadata handling.
 - Add session manager tests for one operation.
+- Add operation manager tests for captured or temporary-PTY execution.
 
 ## `packages/agent-gateway`
 

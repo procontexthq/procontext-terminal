@@ -14,6 +14,8 @@ import { defaultTerminalConfig } from "@terminal/config";
 import {
   TERMINAL_PROTOCOL_VERSION,
   createAgentCommand,
+  createOperationId,
+  createSessionId,
   parseAgentGatewayDescriptor,
   type AgentCommandResult,
   type AgentGatewayDescriptor,
@@ -23,6 +25,7 @@ import {
   type TerminalSessionSummary,
 } from "@terminal/protocol";
 
+import { alternateScreenCommand, interruptFixtureCommand, nodeEvalCommand } from "./e2e-commands";
 import { terminalUiTimeoutMs } from "./e2e-timeouts";
 
 const require = createRequire(import.meta.url);
@@ -57,8 +60,16 @@ describe("desktop terminal smoke", () => {
     await waitForTerminalText(page, "HUMAN_READY");
     await page.setViewportSize({ width: 960, height: 640 });
 
-    await writeRendererInput(page, sessionId, `${platformLongRunningCommand()}\r`);
+    const interruptReady = "HUMAN_INTERRUPT_READY";
+    const interruptHandled = "HUMAN_INTERRUPT_HANDLED";
+    await writeRendererInput(
+      page,
+      sessionId,
+      `${interruptFixtureCommand(interruptReady, interruptHandled)}\r`,
+    );
+    await waitForTerminalText(page, interruptReady);
     await writeRendererInput(page, sessionId, "\u0003");
+    await waitForTerminalText(page, interruptHandled);
     await writeRendererInput(page, sessionId, `${platformPrintCommand("AFTER_INTERRUPT")}\r`);
     await waitForTerminalText(page, "AFTER_INTERRUPT");
 
@@ -153,6 +164,94 @@ describe("desktop terminal smoke", () => {
     } finally {
       first.close();
       second.close();
+    }
+  });
+
+  it("runs captured and interactive temporary one-shot operations headlessly", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    const descriptor = await waitForAgentDescriptor(userDataDir);
+    const agent = await authenticatedAgent(descriptor);
+
+    try {
+      const captured = await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.run", {
+            input: nodeEvalCommand(
+              'process.stdout.write("CAPTURED_OUT"); process.stderr.write("CAPTURED_ERR");',
+            ),
+            tty: false,
+            timeoutMs: e2eUiTimeoutMs,
+          }),
+        ),
+      );
+      if (
+        !isRecord(captured) ||
+        captured.status !== "completed" ||
+        captured.tty !== false ||
+        captured.stdout !== "CAPTURED_OUT" ||
+        captured.stderr !== "CAPTURED_ERR"
+      ) {
+        throw new Error(`Unexpected captured run result: ${JSON.stringify(captured)}`);
+      }
+
+      const temporary = await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.run", {
+            input: nodeEvalCommand(
+              [
+                'process.stdin.setEncoding("utf8");',
+                'process.stdin.on("data", (data) => {',
+                '  if (data.includes("continue")) {',
+                '    process.stdout.write("TEMPORARY_DONE\\n");',
+                "    process.exit(0);",
+                "  }",
+                "});",
+                'process.stdout.write("TEMPORARY_READY\\n");',
+              ].join("\n"),
+            ),
+            tty: true,
+            timeoutMs: 50,
+          }),
+        ),
+      );
+      if (
+        !isRecord(temporary) ||
+        temporary.status !== "running" ||
+        temporary.tty !== true ||
+        typeof temporary.sessionId !== "string" ||
+        typeof temporary.operationId !== "string"
+      ) {
+        throw new Error(`Unexpected temporary run result: ${JSON.stringify(temporary)}`);
+      }
+
+      const sessionId = createSessionId(temporary.sessionId);
+      await waitForObservation(agent, sessionId, (observation) =>
+        observation.viewport.rows.some((row) => row.text.includes("TEMPORARY_READY")),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.input", {
+            sessionId,
+            input: "continue\r",
+          }),
+        ),
+      );
+      await waitForObservation(agent, sessionId, (observation) =>
+        observation.viewport.rows.some((row) => row.text.includes("TEMPORARY_DONE")),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.close", {
+            operationId: createOperationId(temporary.operationId),
+          }),
+        ),
+      );
+      await expectTabCount(page, 1);
+    } finally {
+      agent.close();
     }
   });
 
@@ -262,6 +361,10 @@ async function authenticatedAgent(descriptor: AgentGatewayDescriptor): Promise<E
     ),
   );
   return agent;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 async function waitForObservation(
@@ -517,15 +620,6 @@ async function stopElectronProcess(): Promise<void> {
   if (child.exitCode !== null) return;
   terminateProcessTree(child, "SIGKILL");
   await Promise.race([exited, delay(5_000)]);
-}
-
-function alternateScreenCommand(marker: string): string {
-  const script = `process.stdout.write('\\u001b[?1049h${marker}'); setTimeout(() => {}, 30000)`;
-  return `node -e ${JSON.stringify(script)}`;
-}
-
-function platformLongRunningCommand(): string {
-  return process.platform === "win32" ? "ping -n 30 127.0.0.1" : "sleep 30";
 }
 
 function platformPrintCommand(text: string): string {

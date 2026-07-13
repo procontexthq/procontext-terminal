@@ -27,6 +27,10 @@ export type ShellResolutionRequest = {
   env?: Record<string, string>;
 };
 
+export type CommandShellResolutionRequest = ShellResolutionRequest & {
+  input: string;
+};
+
 type ExecutableAccessCheck = (executable: string, platform: NodeJS.Platform) => boolean;
 
 export type ResolvedShell = {
@@ -71,6 +75,23 @@ export function resolveShell(
     args: [],
     cwd: request.cwd ?? options.cwd ?? process.cwd(),
     env,
+  };
+}
+
+export function resolveCommandShell(
+  request: CommandShellResolutionRequest,
+  options: {
+    platform?: NodeJS.Platform;
+    processEnv?: NodeJS.ProcessEnv;
+    cwd?: string;
+    canExecute?: ExecutableAccessCheck;
+  } = {},
+): ResolvedShell {
+  const platform = options.platform ?? process.platform;
+  const shell = resolveShell(request, options);
+  return {
+    ...shell,
+    args: commandArguments(shell.executable, request.input, platform),
   };
 }
 
@@ -146,6 +167,26 @@ function defaultShell(
   }
 
   return platform === "darwin" ? "/bin/zsh" : "/bin/sh";
+}
+
+function commandArguments(executable: string, input: string, platform: NodeJS.Platform): string[] {
+  if (platform !== "win32") {
+    return ["-c", input];
+  }
+
+  const name = win32.basename(executable).toLowerCase();
+  if (name === "cmd.exe" || name === "cmd") {
+    return ["/d", "/s", "/c", input];
+  }
+  if (
+    name === "pwsh.exe" ||
+    name === "pwsh" ||
+    name === "powershell.exe" ||
+    name === "powershell"
+  ) {
+    return ["-Command", input];
+  }
+  return ["-c", input];
 }
 
 function buildEnvironment(

@@ -39,6 +39,9 @@ flowchart LR
   Preload --> Main["Electron main"]
   Service --> Main
   Main --> Sessions["Terminal session manager"]
+  Main --> Operations["Terminal operation manager"]
+  Operations --> Sessions
+  Operations --> Captured["Captured process host"]
   Sessions --> PTY["PTY host / node-pty"]
   Sessions --> Model["Headless xterm model"]
   Sessions --> Recorder["Recorder"]
@@ -65,7 +68,8 @@ resize, termination, output, and exit without leaking node-pty types.
 
 Owns session records, lifecycle, canonical terminal models, ordered processing,
 observation versions and waiters, recording coordination, close, and shutdown.
-It imports neither Electron nor WebSocket.
+It also owns one-shot operation records, bounded output journals, completion,
+close, and retention. It imports neither Electron nor WebSocket.
 
 ### Electron main
 
@@ -84,19 +88,26 @@ Owns loopback transport, authentication, fixed protocol-version validation,
 exclusive agent attachment, policy checks, audit metadata, request dispatch,
 and disconnect cleanup. It calls one narrow terminal service.
 
-## Foundation Agent Contract
+## Agent Contract Through Phase 2
 
 ```ts
 type AgentTerminalCommand =
   | { type: "terminal.list"; payload: {} }
   | { type: "terminal.get"; payload: { sessionId: SessionId } }
+  | { type: "terminal.run"; payload: RunTerminalRequest }
   | { type: "terminal.create"; payload: CreateTerminalRequest }
   | { type: "terminal.attach"; payload: { sessionId: SessionId } }
   | { type: "terminal.input"; payload: TerminalInputRequest }
   | { type: "terminal.resize"; payload: ResizeTerminalRequest }
   | { type: "terminal.scroll"; payload: ScrollTerminalRequest }
-  | { type: "terminal.observe"; payload: ObserveTerminalRequest }
-  | { type: "terminal.close"; payload: { sessionId: SessionId } }
+  | {
+      type: "terminal.observe";
+      payload: ObserveTerminalRequest | ObserveCapturedOperationRequest;
+    }
+  | {
+      type: "terminal.close";
+      payload: { sessionId: SessionId } | { operationId: OperationId };
+    }
   | { type: "terminal.recording.start"; payload: { sessionId: SessionId } }
   | { type: "terminal.recording.stop"; payload: { sessionId: SessionId } }
   | { type: "terminal.recording.export"; payload: { sessionId: SessionId } };
@@ -105,6 +116,11 @@ type AgentTerminalCommand =
 Transport is request/response. `terminal.observe` may remain pending until a
 new observation version, lifecycle completion, cancellation, or timeout. There
 is no independent agent PTY-output event stream.
+
+`terminal.run({ tty: false })` owns a captured child process with separate
+bounded stdout and stderr journals. `terminal.run({ tty: true })` owns a
+temporary command PTY that reuses the canonical session model. Phase 2 supports
+headless one-shot PTYs; renderer presentation automation remains deferred.
 
 ## Session Lifecycle
 
@@ -186,10 +202,14 @@ is unchanged; keys intended for the application remain terminal input.
 - Session and operation runtime state is not restored after app restart in the
   foundation release.
 - Default PTY scrollback is 5,000 rows.
+- Captured operation streams default to 1 MiB each and may request up to
+  16 MiB each.
+- Temporary PTY result journals retain a fixed 1 MiB combined output tail.
+- Completed captured and headless temporary PTY operations expire after
+  10 minutes. Active operations never expire.
 
 ## Subsequent Phases
 
-- Captured and temporary-PTY one-shot execution.
 - Automated headless/background/foreground presentation.
 - Automatic shell integration and semantic top-level command state.
 - Panes, search, links, settings UI, and release packaging improvements.

@@ -3,6 +3,7 @@ import { z } from "zod";
 type Brand<TValue, TBrand extends string> = TValue & { readonly __brand: TBrand };
 
 export type SessionId = Brand<string, "SessionId">;
+export type OperationId = Brand<string, "OperationId">;
 export type RequestId = Brand<string, "RequestId">;
 export type DecisionId = Brand<string, "DecisionId">;
 
@@ -10,6 +11,11 @@ export const sessionIdSchema = z
   .string()
   .min(1)
   .transform((value) => value as SessionId);
+
+export const operationIdSchema = z
+  .string()
+  .min(1)
+  .transform((value) => value as OperationId);
 
 export const requestIdSchema = z
   .string()
@@ -23,6 +29,10 @@ export const decisionIdSchema = z
 
 export function createSessionId(value = randomId("session")): SessionId {
   return sessionIdSchema.parse(value);
+}
+
+export function createOperationId(value = randomId("operation")): OperationId {
+  return operationIdSchema.parse(value);
 }
 
 export function createRequestId(value = randomId("request")): RequestId {

@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 import { createSessionId } from "@terminal/protocol";
 
-import { NodePtyHost, resolveShell } from "../src/index";
+import { NodePtyHost, resolveCommandShell, resolveShell } from "../src/index";
 
 function waitForOutput(chunks: string[], expected: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -45,6 +45,37 @@ describe("NodePtyHost", () => {
     const resolved = resolveShell({ shell: shellName, env });
 
     expect(resolved.executable.toLowerCase()).toContain(shellName.toLowerCase());
+  });
+
+  it("builds platform-specific temporary command-shell arguments", () => {
+    const posixShell = resolveCommandShell(
+      { input: "printf ok", shell: "/bin/sh" },
+      {
+        platform: "linux",
+        processEnv: { PATH: "/bin:/usr/bin" },
+        canExecute: (candidate) => candidate === "/bin/sh",
+      },
+    );
+    const powershell = resolveCommandShell(
+      { input: "Write-Output ok", shell: "pwsh.exe" },
+      {
+        platform: "win32",
+        processEnv: { Path: "C:\\Tools", PATHEXT: ".EXE" },
+        canExecute: (candidate) => candidate.toLowerCase() === "c:\\tools\\pwsh.exe",
+      },
+    );
+    const commandPrompt = resolveCommandShell(
+      { input: "echo ok", shell: "cmd.exe" },
+      {
+        platform: "win32",
+        processEnv: { Path: "C:\\Windows\\System32", PATHEXT: ".EXE" },
+        canExecute: (candidate) => candidate.toLowerCase() === "c:\\windows\\system32\\cmd.exe",
+      },
+    );
+
+    expect(posixShell.args).toEqual(["-c", "printf ok"]);
+    expect(powershell.args).toEqual(["-Command", "Write-Output ok"]);
+    expect(commandPrompt.args).toEqual(["/d", "/s", "/c", "echo ok"]);
   });
 
   it("applies Windows environment overrides case-insensitively", () => {

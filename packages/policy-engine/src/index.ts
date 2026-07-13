@@ -1,6 +1,7 @@
 import {
   createDecisionId,
   type AgentCommandType,
+  type OperationId,
   type PolicyDecision,
   type PolicyDenial,
   type PolicyDenialCode,
@@ -29,10 +30,12 @@ export type TerminalPolicyActor = HumanPolicyActor | SystemPolicyActor | AgentPo
 
 export type TerminalPolicyOperation = {
   type: AgentCommandType | RendererCommandType;
+  operationId?: OperationId;
   sessionId?: SessionId;
   cwd?: string;
   shell?: string;
   inputKind?: "input" | "resize" | "scroll" | "close";
+  runKind?: "captured" | "pty";
   observationKind?: "list" | "get" | "observe";
   recordingKind?: "start" | "stop" | "export";
 };
@@ -127,6 +130,7 @@ function createPolicyDenial(
     code,
     message: denialMessage(code),
     operation: operation.type,
+    ...(operation.operationId ? { operationId: operation.operationId } : {}),
     ...(operation.sessionId ? { sessionId: operation.sessionId } : {}),
   };
 }

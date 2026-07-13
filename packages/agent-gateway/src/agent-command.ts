@@ -2,6 +2,7 @@ import type { AgentPolicyOperation } from "@terminal/policy-engine";
 import {
   createTerminalError,
   type AgentCommand,
+  type OperationId,
   type PolicyDenial,
   type SessionId,
   type TerminalError,
@@ -23,6 +24,13 @@ export function policyOperation(command: AgentCommand): AgentPolicyOperation {
         ...(command.payload.cwd ? { cwd: command.payload.cwd } : {}),
         ...(command.payload.shell ? { shell: command.payload.shell } : {}),
       };
+    case "terminal.run":
+      return {
+        type: command.type,
+        runKind: command.payload.tty === true ? "pty" : "captured",
+        ...(command.payload.cwd ? { cwd: command.payload.cwd } : {}),
+        ...(command.payload.shell ? { shell: command.payload.shell } : {}),
+      };
     case "terminal.input":
       return { type: command.type, sessionId, inputKind: "input" };
     case "terminal.resize":
@@ -30,9 +38,19 @@ export function policyOperation(command: AgentCommand): AgentPolicyOperation {
     case "terminal.scroll":
       return { type: command.type, sessionId, inputKind: "scroll" };
     case "terminal.observe":
-      return { type: command.type, sessionId, observationKind: "observe" };
+      return {
+        type: command.type,
+        sessionId,
+        operationId: commandOperationId(command),
+        observationKind: "observe",
+      };
     case "terminal.close":
-      return { type: command.type, sessionId, inputKind: "close" };
+      return {
+        type: command.type,
+        sessionId,
+        operationId: commandOperationId(command),
+        inputKind: "close",
+      };
     case "terminal.recording.start":
       return { type: command.type, sessionId, recordingKind: "start" };
     case "terminal.recording.stop":
@@ -47,10 +65,24 @@ export function commandSessionId(command: AgentCommand): SessionId | undefined {
     case "agent.authenticate":
     case "terminal.list":
     case "terminal.create":
+    case "terminal.run":
       return undefined;
+    case "terminal.observe":
+    case "terminal.close":
+      return "sessionId" in command.payload ? command.payload.sessionId : undefined;
     default:
       return command.payload.sessionId;
   }
+}
+
+export function commandOperationId(command: AgentCommand): OperationId | undefined {
+  if (
+    (command.type === "terminal.observe" || command.type === "terminal.close") &&
+    "operationId" in command.payload
+  ) {
+    return command.payload.operationId;
+  }
+  return undefined;
 }
 
 export function denialError(command: AgentCommand, denial: PolicyDenial): TerminalError {
@@ -60,6 +92,7 @@ export function denialError(command: AgentCommand, denial: PolicyDenial): Termin
     {
       operation: command.type,
       ...(commandSessionId(command) ? { sessionId: commandSessionId(command) } : {}),
+      ...(commandOperationId(command) ? { operationId: commandOperationId(command) } : {}),
       cause: denial.code,
     },
   );
@@ -73,6 +106,7 @@ export function normalizeCommandError(error: unknown, command: AgentCommand): Te
     {
       operation: command.type,
       ...(commandSessionId(command) ? { sessionId: commandSessionId(command) } : {}),
+      ...(commandOperationId(command) ? { operationId: commandOperationId(command) } : {}),
       cause: error instanceof Error ? error.message : String(error),
     },
   );

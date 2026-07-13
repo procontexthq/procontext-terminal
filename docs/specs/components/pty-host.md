@@ -14,6 +14,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 
 - Import `node-pty`.
 - Spawn shells with correct executable, args, cwd, env, rows, and columns.
+- Resolve persistent interactive launches separately from temporary
+  command-shell launches.
 - Write bytes to PTY sessions.
 - Resize PTY sessions.
 - Receive output bytes.
@@ -50,6 +52,8 @@ a direct app-code import.
 The package boundary should expose terminal-domain operations, not node-pty implementation details:
 
 - Spawn a PTY from a validated shell launch request.
+- Spawn a temporary PTY command through the platform shell's command flag
+  (`-c`, `-Command`, or `/d /s /c`) without leaving an interactive prompt.
 - Write bytes to a PTY handle owned by the host.
 - Resize a PTY by rows and columns.
 - Kill a PTY with a controlled signal or platform equivalent.
@@ -61,4 +65,6 @@ The package boundary should expose terminal-domain operations, not node-pty impl
 - Writes reach the child process.
 - Resize events update the PTY dimensions.
 - Exit events include exit code and signal when available.
+- Temporary command launches use the resolved platform-specific invocation and
+  exit when the supplied shell input finishes.
 - Spawn failures are mapped to typed terminal-domain errors.

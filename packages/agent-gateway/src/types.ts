@@ -3,15 +3,20 @@ import type {
   AgentActivityState,
   AgentAuditEvent,
   AgentGatewayDescriptor,
+  CloseOperationRequest,
   CloseTerminalRequest,
   CloseTerminalResult,
   CreateTerminalRequest,
   GetTerminalRequest,
+  ObserveCapturedOperationRequest,
+  ObserveCapturedOperationResult,
   ObserveTerminalRequest,
   ObserveTerminalResult,
   RecordingControlRequest,
   ResizeTerminalRequest,
   ResizeTerminalResult,
+  RunTerminalRequest,
+  RunTerminalResult,
   ScrollTerminalRequest,
   ScrollTerminalResult,
   SessionId,
@@ -25,11 +30,15 @@ export type AgentTerminalService = {
   list(): TerminalSessionSummary[];
   get(request: GetTerminalRequest): TerminalSessionSummary;
   create(request: CreateTerminalRequest): Promise<TerminalSessionSummary>;
+  run(request: RunTerminalRequest): Promise<RunTerminalResult>;
   input(request: TerminalInputRequest): Promise<TerminalInputResult>;
   resize(request: ResizeTerminalRequest): Promise<ResizeTerminalResult>;
   scroll(request: ScrollTerminalRequest): ScrollTerminalResult;
-  observe(request: ObserveTerminalRequest, signal: AbortSignal): Promise<ObserveTerminalResult>;
-  close(request: CloseTerminalRequest): Promise<CloseTerminalResult>;
+  observe(
+    request: ObserveTerminalRequest | ObserveCapturedOperationRequest,
+    signal: AbortSignal,
+  ): Promise<ObserveTerminalResult | ObserveCapturedOperationResult>;
+  close(request: CloseTerminalRequest | CloseOperationRequest): Promise<CloseTerminalResult>;
   startRecording(request: RecordingControlRequest): Promise<void>;
   stopRecording(request: RecordingControlRequest): Promise<void>;
   exportRecording(request: RecordingControlRequest): Promise<TerminalRecordingExport>;
@@ -58,5 +67,6 @@ export type AgentGateway = {
 export type AttachmentRegistry = {
   attach(sessionId: SessionId, connectionId: string): boolean;
   detach(sessionId: SessionId, connectionId: string): void;
+  release(sessionId: SessionId): void;
   detachConnection(connectionId: string): void;
 };

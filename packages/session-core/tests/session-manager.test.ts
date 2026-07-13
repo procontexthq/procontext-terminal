@@ -90,6 +90,32 @@ describe("TerminalSessionManager", () => {
     });
   });
 
+  it("creates temporary command sessions and retains their bounded output tail", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+
+    const summary = await manager.createCommandSession({
+      input: platformPrintCommand("abcdef"),
+      shell: testShell,
+      outputLimitBytes: 4,
+      createdBy: "agent",
+    });
+
+    expect(host.spawnRequests[0]?.shell.args.length).toBeGreaterThan(0);
+    host.pty.emitData("abcdef");
+    host.pty.emitExit({ exitCode: 3, signal: null });
+    await expect(manager.waitForExit(summary.sessionId, 100)).resolves.toBe(true);
+
+    expect(manager.getRunOutput(summary.sessionId)).toEqual({
+      output: "cdef",
+      truncated: true,
+    });
+    expect(manager.getSession({ sessionId: summary.sessionId })).toMatchObject({
+      lifecycle: "exited",
+      exitCode: 3,
+    });
+  });
+
   it("commits parsed output before emitting its sequence and observation version", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);
@@ -416,4 +442,11 @@ function platformShell(): string {
     return process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe";
   }
   return "/bin/sh";
+}
+
+function platformPrintCommand(text: string): string {
+  if (process.platform === "win32") {
+    return `echo ${text}`;
+  }
+  return `printf '${text}'`;
 }

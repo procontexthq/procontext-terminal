@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-import { requestIdSchema, sessionIdSchema, type RequestId, type SessionId } from "./ids.js";
+import {
+  operationIdSchema,
+  requestIdSchema,
+  sessionIdSchema,
+  type OperationId,
+  type RequestId,
+  type SessionId,
+} from "./ids.js";
 
 export const terminalErrorTypes = [
   "invalid_request",
@@ -9,7 +16,10 @@ export const terminalErrorTypes = [
   "protocol_version_unsupported",
   "policy_denied",
   "gateway_failed",
+  "process_spawn_failed",
   "pty_spawn_failed",
+  "operation_not_found",
+  "operation_close_failed",
   "session_not_found",
   "session_not_running",
   "session_in_use",
@@ -29,6 +39,7 @@ export type TerminalError = {
   type: TerminalErrorType;
   message: string;
   sessionId?: SessionId;
+  operationId?: OperationId;
   operation?: string;
   cause?: string;
 };
@@ -37,6 +48,7 @@ export const terminalErrorSchema = z.object({
   type: z.enum(terminalErrorTypes),
   message: z.string().min(1),
   sessionId: sessionIdSchema.optional(),
+  operationId: operationIdSchema.optional(),
   operation: z.string().min(1).optional(),
   cause: z.string().optional(),
 });

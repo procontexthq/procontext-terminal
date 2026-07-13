@@ -15,6 +15,8 @@ Accepted implementation sequence.
 
 ## Phase 1: Core Foundation Rewrite
 
+Status: implemented.
+
 ### Protocol
 
 - Split protocol types and schemas by domain while preserving one package entry.
@@ -66,12 +68,52 @@ Accepted implementation sequence.
 
 ## Phase 2: One-Shot Execution
 
-- Add captured process operations for `tty: false`.
-- Add temporary command PTYs for `tty: true`.
+Status: implemented.
+
+### Protocol
+
+- Add branded operation IDs and validated `terminal.run` requests.
+- Extend `terminal.observe` and `terminal.close` with operation targets.
+- Default initial waits to 10 seconds with a validated 120-second maximum.
+- Add captured output limits of 1 MiB per stream by default and 16 MiB maximum.
+- Reject PTY output-limit overrides and Phase 3 background or foreground
+  presentation requests. Captured runs may omit presentation or explicitly use
+  `headless`.
+
+### Process and session core
+
+- Add a captured-process host using ordinary child-process pipes.
+- Add a terminal operation manager for one-shot lifecycle, output journals,
+  incremental observation, close, and retention.
+- Add temporary command PTYs for `tty: true` while reusing canonical session
+  state and interaction.
 - Retain stdout and stderr separately for captured operations.
-- Default to 1 MiB per stream with a per-request maximum of 16 MiB.
+- Retain the newest bytes when a bounded journal overflows.
+- Complete temporary PTY runs only after process exit and canonical output
+  settlement.
 - Expire completed captured and headless temporary operations after 10 minutes.
-- Keep completed presented terminal views until explicitly closed.
+- Never expire active operations.
+
+### Gateway and desktop
+
+- Add `terminal.run` dispatch and safe policy metadata without command text.
+- Automatically attach the creating agent connection to a running temporary PTY
+  session.
+- Permit authenticated operation-ID observation and close after reconnect while
+  preserving exclusive attachment for PTY session interaction.
+- Compose the operation manager in Electron main without adding renderer APIs.
+
+### Required tests
+
+- Captured completion, non-zero exit, spawn failure, timeout, and close.
+- Separate stdout and stderr journals, tail truncation, and incremental output.
+- Temporary PTY completion settlement, raw TUI input, resize, and close.
+- Exclusive attachment for temporary PTY sessions.
+- Operation reconnect, expiration, and active-operation retention.
+- Protocol, policy, gateway, integration, and cross-platform shell invocation.
+
+Phase 2 supports only headless temporary PTY runs. Completed presented terminal
+views remain a Phase 3 responsibility.
 
 ## Phase 3: Presentation Automation
 

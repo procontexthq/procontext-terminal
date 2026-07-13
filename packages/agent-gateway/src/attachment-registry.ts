@@ -16,6 +16,9 @@ export function createAttachmentRegistry(): AttachmentRegistry {
         attachedConnections.delete(sessionId);
       }
     },
+    release(sessionId) {
+      attachedConnections.delete(sessionId);
+    },
     detachConnection(connectionId) {
       for (const [sessionId, current] of attachedConnections) {
         if (current === connectionId) attachedConnections.delete(sessionId);

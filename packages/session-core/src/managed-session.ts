@@ -16,6 +16,7 @@ import {
 } from "@terminal/protocol";
 import type { PtyExitEvent, PtySession } from "@terminal/pty-host";
 
+import { BoundedOutputJournal } from "./bounded-output-journal.js";
 import { ObservationWaiters } from "./observation-waiters.js";
 import { SessionRecording, type TerminalRecorder } from "./session-recording.js";
 import { TerminalModel } from "./terminal-model.js";
@@ -34,6 +35,7 @@ export type ManagedSessionOptions = {
   recorder?: TerminalRecorder;
   emit: (event: RendererSessionEvent) => void;
   closeTimeoutMs: number;
+  outputLimitBytes?: number;
   now?: () => Date;
 };
 
@@ -44,6 +46,7 @@ export class ManagedTerminalSession {
   private readonly exitWaiters = new Set<() => void>();
   private readonly now: () => Date;
   private readonly recording: SessionRecording;
+  private readonly runOutput: BoundedOutputJournal | undefined;
   private outputQueue = Promise.resolve();
   private sequence = 0;
   private createdAt: string;
@@ -67,6 +70,10 @@ export class ManagedTerminalSession {
     this.waiters = new ObservationWaiters(options.sessionId, () =>
       this.model.observe(options.sessionId),
     );
+    this.runOutput =
+      options.outputLimitBytes === undefined
+        ? undefined
+        : new BoundedOutputJournal(options.outputLimitBytes);
     this.recording = new SessionRecording({
       sessionId: options.sessionId,
       recorder: options.recorder,
@@ -206,6 +213,38 @@ export class ManagedTerminalSession {
     };
   }
 
+  getRunOutput(): { output: string; truncated: boolean } {
+    if (!this.runOutput) {
+      throw createTerminalError(
+        "invalid_request",
+        `Session ${this.options.sessionId} is not a temporary command session.`,
+        { sessionId: this.options.sessionId, operation: "terminal.run" },
+      );
+    }
+    const output = this.runOutput.read();
+    return { output: output.data, truncated: output.truncated };
+  }
+
+  waitForExit(timeoutMs?: number): Promise<boolean> {
+    if (this.model.currentLifecycle === "exited") return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const finish = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        this.exitWaiters.delete(onExit);
+        resolve(value);
+      };
+      const onExit = () => finish(true);
+      if (timeoutMs !== undefined) {
+        timeout = setTimeout(() => finish(false), timeoutMs);
+      }
+      this.exitWaiters.add(onExit);
+    });
+  }
+
   async close(timeoutMs = this.options.closeTimeoutMs): Promise<CloseTerminalResult> {
     if (this.model.currentLifecycle === "running") {
       this.model.setLifecycle("exiting");
@@ -258,6 +297,7 @@ export class ManagedTerminalSession {
     this.outputQueue = this.outputQueue.then(async () => {
       const { titleChanged } = await this.model.write(data);
       this.sequence += 1;
+      this.runOutput?.append(this.sequence, data);
       this.touch();
       await this.recording.append({
         type: "pty.output",
@@ -292,23 +332,6 @@ export class ManagedTerminalSession {
       this.notifyState();
       for (const resolve of this.exitWaiters) resolve();
       this.exitWaiters.clear();
-    });
-  }
-
-  private waitForExit(timeoutMs: number): Promise<boolean> {
-    if (this.model.currentLifecycle === "exited") return Promise.resolve(true);
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = (value: boolean) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        this.exitWaiters.delete(onExit);
-        resolve(value);
-      };
-      const onExit = () => finish(true);
-      const timeout = setTimeout(() => finish(false), timeoutMs);
-      this.exitWaiters.add(onExit);
     });
   }
 

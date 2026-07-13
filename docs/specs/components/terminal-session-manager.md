@@ -12,6 +12,8 @@ terminal state. Presentation and agent attachment are separate concerns.
 ## Responsibilities
 
 - Create and identify PTY-backed sessions.
+- Create both persistent interactive-shell sessions and temporary command
+  sessions from explicit launch requests.
 - Resolve shell, working directory, environment, and dimensions.
 - Own the PTY handle and one canonical terminal model per session.
 - Serialize output, input, resize, scroll, lifecycle, and recording changes.
@@ -19,6 +21,8 @@ terminal state. Presentation and agent attachment are separate concerns.
 - Finalize output before exit.
 - Close sessions with bounded termination and recording finalization.
 - Shut down active sessions without discarding handles that fail to terminate.
+- Optionally retain a bounded combined raw-output tail for temporary command
+  result construction.
 
 ## Lifecycle
 
@@ -36,6 +40,10 @@ stateDiagram-v2
 
 Lifecycle states are `creating`, `running`, `exiting`, `exited`, and `failed`.
 The existence of a renderer view never changes lifecycle.
+
+Temporary command sessions use the same lifecycle and canonical model as
+persistent sessions. Their process launch exits after the supplied shell input,
+and their final exit is observable only after queued output has settled.
 
 ## Close
 
@@ -55,6 +63,8 @@ transport, or agent connection ownership. It exposes no node-pty handles.
 - Lifecycle follows the state machine.
 - Headless sessions support input, resize, scroll, observe, and close.
 - Output order and final exit state are deterministic.
+- Temporary command output is settled before the operation manager observes
+  completion.
 - Failing subscribers do not corrupt session state.
 - Recording failures are surfaced without silently discarding records.
 - Shutdown does not orphan or forget active PTYs.

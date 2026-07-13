@@ -9,6 +9,7 @@ import { createDefaultAgentPolicy } from "@terminal/policy-engine";
 import {
   TERMINAL_PROTOCOL_VERSION,
   createAgentCommand,
+  createOperationId,
   createRequestId,
   createSessionId,
   parseAgentCommandResult,
@@ -72,13 +73,20 @@ describe("agent gateway", () => {
     client.close();
   });
 
-  it("dispatches only the foundation API through one narrow service", async () => {
+  it("dispatches the terminal API through one narrow service", async () => {
     const services = createServices();
     const runtime = await createRuntime(services);
     const client = await authenticatedClient(runtime.gateway.descriptor);
     const created = await client.request(createAgentCommand("terminal.create", { cwd: "/tmp" }));
     const sessionId = successValue<TerminalSessionSummary>(created).sessionId;
 
+    await client.request(
+      createAgentCommand("terminal.run", {
+        input: "printf captured",
+        tty: false,
+        timeoutMs: 100,
+      }),
+    );
     await client.request(createAgentCommand("terminal.input", { sessionId, input: "\u0003" }));
     await client.request(createAgentCommand("terminal.resize", { sessionId, cols: 100, rows: 30 }));
     await client.request(
@@ -94,12 +102,78 @@ describe("agent gateway", () => {
     await client.request(createAgentCommand("terminal.close", { sessionId }));
 
     expect(services.input).toHaveBeenCalledWith({ sessionId, input: "\u0003" });
+    expect(services.run).toHaveBeenCalledWith({
+      input: "printf captured",
+      tty: false,
+      timeoutMs: 100,
+    });
     expect(services.observe).toHaveBeenCalledWith(
       { sessionId, timeoutMs: 100 },
       expect.any(AbortSignal),
     );
     expect(services.close).toHaveBeenCalledWith({ sessionId });
     client.close();
+  });
+
+  it("automatically attaches a running temporary PTY to its creating connection", async () => {
+    const services = createServices();
+    const sessionId = createSessionId("temporary-pty");
+    const operationId = createOperationId("temporary-operation");
+    services.run.mockResolvedValueOnce({
+      status: "running",
+      operationId,
+      sessionId,
+      tty: true,
+      observationVersion: 1,
+      elapsedMs: 10,
+    });
+    const runtime = await createRuntime(services);
+    const first = await authenticatedClient(runtime.gateway.descriptor);
+    const second = await authenticatedClient(runtime.gateway.descriptor);
+
+    await expect(
+      first.request(createAgentCommand("terminal.run", { input: "vim", tty: true })),
+    ).resolves.toMatchObject({ ok: true, value: { sessionId, tty: true, status: "running" } });
+    await expect(
+      second.request(createAgentCommand("terminal.attach", { sessionId })),
+    ).resolves.toMatchObject({ ok: false, error: { type: "session_in_use" } });
+
+    await expect(
+      first.request(createAgentCommand("terminal.close", { operationId })),
+    ).resolves.toMatchObject({ ok: true, value: { status: "closed" } });
+    await waitForAttach(second, sessionId);
+    first.close();
+    second.close();
+  });
+
+  it("allows operation observation and close after reconnect", async () => {
+    const services = createServices();
+    const operationId = createOperationId("reconnect-operation");
+    services.observe.mockResolvedValueOnce({
+      status: "timeout",
+      operationId,
+      version: 3,
+    });
+    const runtime = await createRuntime(services);
+    const first = await authenticatedClient(runtime.gateway.descriptor);
+    first.close();
+    const second = await authenticatedClient(runtime.gateway.descriptor);
+
+    await expect(
+      second.request(
+        createAgentCommand("terminal.observe", {
+          operationId,
+          afterVersion: 3,
+          timeoutMs: 5,
+        }),
+      ),
+    ).resolves.toMatchObject({ ok: true, value: { operationId, status: "timeout" } });
+    await expect(
+      second.request(createAgentCommand("terminal.close", { operationId })),
+    ).resolves.toMatchObject({ ok: true, value: { status: "closed" } });
+
+    expect(services.close).toHaveBeenCalledWith({ operationId });
+    second.close();
   });
 
   it("allows metadata queries without attachment", async () => {
@@ -171,10 +245,18 @@ describe("agent gateway", () => {
     await client.request(
       createAgentCommand("terminal.input", { sessionId, input: "SECRET_TERMINAL_INPUT" }),
     );
+    await client.request(
+      createAgentCommand("terminal.run", {
+        input: "SECRET_RUN_INPUT",
+        env: { SECRET_ENVIRONMENT_VALUE: "SECRET_VALUE" },
+      }),
+    );
 
     const serialized = JSON.stringify(audit.mock.calls);
     expect(serialized).toContain("terminal.input");
     expect(serialized).not.toContain("SECRET_TERMINAL_INPUT");
+    expect(serialized).not.toContain("SECRET_RUN_INPUT");
+    expect(serialized).not.toContain("SECRET_VALUE");
     client.close();
   });
 });
@@ -211,6 +293,19 @@ function createServices() {
     create: vi.fn<AgentTerminalService["create"]>(() =>
       Promise.resolve(sessionSummary(createSessionId("created"))),
     ),
+    run: vi.fn<AgentTerminalService["run"]>(() =>
+      Promise.resolve({
+        status: "completed",
+        operationId: createOperationId("captured"),
+        tty: false,
+        exitCode: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        durationMs: 1,
+      }),
+    ),
     input: vi.fn<AgentTerminalService["input"]>(() =>
       Promise.resolve({ accepted: true, observationVersion: 1 }),
     ),
@@ -219,12 +314,12 @@ function createServices() {
       status: "unchanged",
       observationVersion: 2,
     })),
-    observe: vi.fn<AgentTerminalService["observe"]>(({ sessionId }) =>
-      Promise.resolve({
-        status: "timeout",
-        sessionId,
-        version: 2,
-      }),
+    observe: vi.fn<AgentTerminalService["observe"]>((request) =>
+      Promise.resolve(
+        "sessionId" in request
+          ? { status: "timeout" as const, sessionId: request.sessionId, version: 2 }
+          : { status: "timeout" as const, operationId: request.operationId, version: 2 },
+      ),
     ),
     close: vi.fn<AgentTerminalService["close"]>(() =>
       Promise.resolve({ status: "closed", exitCode: 0, signal: null }),

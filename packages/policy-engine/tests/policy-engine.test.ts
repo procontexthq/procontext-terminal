@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createSessionId } from "@terminal/protocol";
+import { createOperationId, createSessionId } from "@terminal/protocol";
 
 import { createDefaultAgentPolicy, createDefaultTerminalPolicy } from "../src/index";
 
@@ -134,6 +134,34 @@ describe("default agent policy", () => {
           attachedSessionIds: new Set([sessionId]),
         },
         operation: { type: "terminal.close", sessionId },
+      }),
+    ).toMatchObject({ type: "allow" });
+  });
+
+  it("allows authenticated operation capability access without session attachment", () => {
+    const policy = createDefaultAgentPolicy({ createDecisionId: () => "decision-operation" });
+    const actor = {
+      kind: "agent" as const,
+      authenticated: true,
+      local: true,
+      attachedSessionIds: new Set<string>(),
+    };
+    const operationId = createOperationId("operation-policy");
+
+    expect(
+      policy.authorize({
+        actor,
+        operation: {
+          type: "terminal.observe",
+          operationId,
+          observationKind: "observe",
+        },
+      }),
+    ).toMatchObject({ type: "allow" });
+    expect(
+      policy.authorize({
+        actor,
+        operation: { type: "terminal.close", operationId, inputKind: "close" },
       }),
     ).toMatchObject({ type: "allow" });
   });

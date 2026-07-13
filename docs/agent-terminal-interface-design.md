@@ -8,10 +8,10 @@ This document is the authoritative product contract for the agent-facing
 terminal interface. Component ownership and implementation sequencing remain
 defined by the documents under `docs/specs/`.
 
-The foundation release implements persistent-session lifecycle, raw input,
-canonical observation, shared viewport control, close, and recording. One-shot
-execution, presentation automation, and shell integration follow in later
-implementation phases without changing the model defined here.
+The current release implements persistent-session lifecycle, raw input,
+canonical observation, shared viewport control, close, recording, and headless
+one-shot execution. Presentation automation and shell integration follow in
+later implementation phases without changing the model defined here.
 
 ## Purpose
 
@@ -191,12 +191,26 @@ type RunTerminalRequest = {
   shell?: string;
   tty?: boolean;
   timeoutMs?: number;
+  maxOutputBytesPerStream?: number;
   presentation?: TerminalPresentationMode;
 };
 ```
 
 `presentation` applies only when `tty: true`. Captured operations have no
 terminal view and must reject non-headless presentation requests.
+
+`tty` defaults to `false`. `timeoutMs` controls how long the initial request
+waits for completion and defaults to 10 seconds. It may be set from 1
+millisecond through 120 seconds. Reaching this timeout does not terminate the
+operation.
+
+`maxOutputBytesPerStream` applies only to `tty: false`. It defaults to 1 MiB
+and may be set up to 16 MiB. Supplying it for `tty: true` is invalid because
+temporary PTY output uses the fixed terminal-run journal described below.
+
+During Phase 2, one-shot PTY runs support only omitted or `headless`
+presentation. `background` and `foreground` are accepted only after Phase 3
+presentation automation is implemented.
 
 The input is a single shell string. Agents can use normal shell syntax:
 
@@ -229,6 +243,7 @@ The operation:
 - Has no terminal screen or viewport.
 - Knows completion from the owned process exiting.
 - Returns bounded final output once when completed.
+- Retains the newest bytes when a stream exceeds its configured limit.
 
 ```ts
 type CompletedCapturedRun = {
@@ -262,7 +277,10 @@ type RunningCapturedRun = {
 
 The initial running result contains output produced up to that point once.
 Later operation observations return only output added after the caller's known
-version.
+version. Observation versions advance for stdout, stderr, and process
+completion. A non-zero process exit is a completed operation, not a protocol
+failure. Failure to start the process is a typed request error and does not
+create a durable operation.
 
 ### `tty: true`
 
@@ -282,6 +300,7 @@ The operation:
 - Knows completion from the owned temporary shell/PTY process exiting.
 - Does not require shell-integration markers for completion.
 - Does not leave an interactive shell prompt after the one-shot input finishes.
+- Retains the newest 1 MiB of combined PTY output for the final result.
 
 ```ts
 type RunningTerminalRun = {
@@ -318,6 +337,11 @@ A successful completion result must be produced only after:
 
 One-shot completion means the owned foreground execution exited. It does not
 promise that intentionally daemonized or backgrounded descendants have stopped.
+
+When the initial request returns a running `tty: true` result, the creating
+agent connection automatically controls its `sessionId`. The normal PTY
+session operations can then provide input, resize, scrolling, and canonical
+screen observation while the command remains alive.
 
 ## Persistent Sessions: `terminal.create`
 
@@ -514,11 +538,13 @@ An unchanged timeout does not repeat the viewport.
 type ObserveCapturedOperationRequest = {
   operationId: OperationId;
   afterVersion?: TerminalObservationVersion;
-  timeoutMs: number;
+  timeoutMs?: number;
 };
 ```
 
 It waits for new stdout, stderr, lifecycle state, or process completion.
+`timeoutMs` defaults to 10 seconds and has the same 1 millisecond through
+120 second range as `terminal.run`.
 
 Changed output is incremental relative to `afterVersion`:
 
@@ -535,6 +561,16 @@ type CapturedOperationObservation = {
 };
 ```
 
+Unchanged timeout result:
+
+```ts
+type TimedOutCapturedOperationObservationResult = {
+  status: "timeout";
+  operationId: OperationId;
+  version: TerminalObservationVersion;
+};
+```
+
 If `terminal.run` completes during its initial asynchronous call, that result
 contains the complete bounded output once.
 
@@ -542,6 +578,13 @@ If the initial call times out, its running result contains output produced up
 to that version. Every later observation, including the final completed
 observation, contains only output added after the caller's `afterVersion`.
 Output already returned by an earlier call is never repeated automatically.
+If retained bytes needed to satisfy `afterVersion` have already been evicted,
+the observation returns the retained tail and sets `truncated: true`.
+
+An operation ID is an unguessable capability. Any authenticated local agent
+connection that possesses it may observe or close that operation after a
+reconnect. PTY session input and screen observation still require the normal
+exclusive session attachment.
 
 ## Canonical Terminal Observation
 
@@ -924,6 +967,10 @@ type CloseOperationRequest = {
 };
 ```
 
+Closing a temporary PTY by either its `operationId` or `sessionId` closes both
+records. Closing a captured operation terminates the child if active and
+removes the retained operation record after termination succeeds.
+
 Internally, close:
 
 1. Reads the current lifecycle state.
@@ -972,11 +1019,13 @@ different failure modes.
 
 ## Implementation Direction
 
-When implementation begins:
+Implementation follows these ownership boundaries:
 
 - Update the accepted architecture and component specs first.
 - Keep `TerminalSessionManager` as the owner of PTY/process lifecycle.
-- Add a captured-operation service for `tty: false` one-shot runs.
+- Add a focused terminal operation manager in `session-core` for one-shot
+  lifecycle, output journals, observation, close, and retention.
+- Add a captured-process host boundary for `tty: false` one-shot runs.
 - Extend the PTY host to launch temporary command shells as well as persistent
   interactive shells.
 - Add a canonical terminal emulator outside the visible renderer for every
@@ -1013,12 +1062,17 @@ When implementation begins:
 - PTY-backed sessions retain 5,000 rows of normal-buffer scrollback by default.
 - Captured runs retain 1 MiB per stdout and stderr stream by default.
 - `terminal.run` may request `maxOutputBytesPerStream` up to 16 MiB.
+- Captured journals and temporary PTY run journals retain their newest bytes
+  when bounded output is exceeded.
+- Temporary PTY final results retain the newest 1 MiB of combined PTY output.
 - Completed captured operations and completed headless temporary PTY operations
   expire after 10 minutes unless explicitly closed sooner.
 - Completed background or foreground temporary PTY views remain as exited
   terminals until the human or agent closes them.
 - Active operations and persistent sessions are never evicted by completed
   operation retention.
+- Operation IDs are random unguessable capabilities that remain usable by an
+  authenticated local agent after its originating connection disconnects.
 
 ### Shell integration implementation
 

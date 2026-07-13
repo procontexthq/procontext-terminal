@@ -6,6 +6,7 @@ import {
   createAgentCommand,
   createAgentCommandFailure,
   createAgentCommandSuccess,
+  createOperationId,
   createRendererCommand,
   createRendererCommandFailure,
   createRendererCommandSuccess,
@@ -18,9 +19,11 @@ import {
   parseAgentGatewayDescriptor,
   parseCreateTerminalRequest,
   parseObserveTerminalRequest,
+  parseObserveCapturedOperationRequest,
   parseRendererCommand,
   parseRendererCommandResult,
   parseScrollTerminalRequest,
+  parseRunTerminalRequest,
   parseTerminalConfig,
   parseTerminalInputRequest,
   parseTerminalObservation,
@@ -152,6 +155,79 @@ describe("terminal protocol", () => {
         type: "terminal.sendText",
         requestId,
         payload: { sessionId, text: "echo old\r" },
+      }),
+    ).toThrow();
+  });
+
+  it("validates one-shot run and operation-target requests", () => {
+    const requestId = createRequestId("request-operation");
+    const operationId = createOperationId("operation-1");
+
+    expect(
+      parseRunTerminalRequest({
+        input: "pnpm test",
+        tty: false,
+        timeoutMs: 10_000,
+        maxOutputBytesPerStream: 2 * 1024 * 1024,
+      }),
+    ).toEqual({
+      input: "pnpm test",
+      tty: false,
+      timeoutMs: 10_000,
+      maxOutputBytesPerStream: 2 * 1024 * 1024,
+    });
+    expect(
+      createAgentCommand(
+        "terminal.run",
+        { input: "vim", tty: true, presentation: "headless" },
+        requestId,
+      ),
+    ).toMatchObject({ type: "terminal.run", payload: { tty: true } });
+    expect(
+      createAgentCommand(
+        "terminal.observe",
+        { operationId, afterVersion: 4, timeoutMs: 500 },
+        requestId,
+      ),
+    ).toMatchObject({ type: "terminal.observe", payload: { operationId } });
+    expect(createAgentCommand("terminal.close", { operationId }, requestId)).toMatchObject({
+      type: "terminal.close",
+      payload: { operationId },
+    });
+    expect(parseObserveCapturedOperationRequest({ operationId })).toEqual({ operationId });
+
+    expect(() => parseRunTerminalRequest({ input: "", tty: false })).toThrow();
+    expect(() => parseRunTerminalRequest({ input: "x", timeoutMs: 0 })).toThrow();
+    expect(() => parseRunTerminalRequest({ input: "x", timeoutMs: 120_001 })).toThrow();
+    expect(() =>
+      parseRunTerminalRequest({
+        input: "x",
+        maxOutputBytesPerStream: 16 * 1024 * 1024 + 1,
+      }),
+    ).toThrow();
+    expect(() =>
+      parseRunTerminalRequest({
+        input: "x",
+        tty: true,
+        maxOutputBytesPerStream: 1024,
+      }),
+    ).toThrow();
+    expect(() =>
+      parseRunTerminalRequest({
+        input: "x",
+        tty: true,
+        presentation: "foreground",
+      }),
+    ).toThrow();
+    expect(() =>
+      parseAgentCommand({
+        type: "terminal.observe",
+        requestId,
+        payload: {
+          sessionId: createSessionId("ambiguous-session"),
+          operationId,
+          timeoutMs: 10,
+        },
       }),
     ).toThrow();
   });

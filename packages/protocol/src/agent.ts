@@ -10,12 +10,22 @@ import {
 import {
   createRequestId,
   decisionIdSchema,
+  operationIdSchema,
   requestIdSchema,
   sessionIdSchema,
+  type OperationId,
   type RequestId,
   type SessionId,
 } from "./ids.js";
 import { observeTerminalRequestSchema, type ObserveTerminalRequest } from "./observation.js";
+import {
+  closeOperationRequestSchema,
+  observeCapturedOperationRequestSchema,
+  runTerminalRequestSchema,
+  type CloseOperationRequest,
+  type ObserveCapturedOperationRequest,
+  type RunTerminalRequest,
+} from "./operations.js";
 import { recordingControlRequestSchema, type RecordingControlRequest } from "./recording.js";
 import {
   attachTerminalRequestSchema,
@@ -63,6 +73,7 @@ export type PolicyDenial = {
   message: string;
   operation: string;
   sessionId?: SessionId;
+  operationId?: OperationId;
 };
 
 export type PolicyDecision =
@@ -77,13 +88,22 @@ export type AgentCommand =
     }
   | { type: "terminal.list"; requestId: RequestId; payload: Record<string, never> }
   | { type: "terminal.get"; requestId: RequestId; payload: GetTerminalRequest }
+  | { type: "terminal.run"; requestId: RequestId; payload: RunTerminalRequest }
   | { type: "terminal.create"; requestId: RequestId; payload: CreateTerminalRequest }
   | { type: "terminal.attach"; requestId: RequestId; payload: AttachTerminalRequest }
   | { type: "terminal.input"; requestId: RequestId; payload: TerminalInputRequest }
   | { type: "terminal.resize"; requestId: RequestId; payload: ResizeTerminalRequest }
   | { type: "terminal.scroll"; requestId: RequestId; payload: ScrollTerminalRequest }
-  | { type: "terminal.observe"; requestId: RequestId; payload: ObserveTerminalRequest }
-  | { type: "terminal.close"; requestId: RequestId; payload: CloseTerminalRequest }
+  | {
+      type: "terminal.observe";
+      requestId: RequestId;
+      payload: ObserveTerminalRequest | ObserveCapturedOperationRequest;
+    }
+  | {
+      type: "terminal.close";
+      requestId: RequestId;
+      payload: CloseTerminalRequest | CloseOperationRequest;
+    }
   | {
       type: "terminal.recording.start";
       requestId: RequestId;
@@ -116,6 +136,7 @@ export type AgentAuditEvent = {
   outcome: "allow" | "deny" | "failure";
   requestId?: RequestId;
   sessionId?: SessionId;
+  operationId?: OperationId;
   errorType?: TerminalErrorType;
   denialCode?: PolicyDenialCode;
 };
@@ -138,6 +159,7 @@ export const policyDenialSchema = z.object({
   message: z.string().min(1),
   operation: z.string().min(1),
   sessionId: sessionIdSchema.optional(),
+  operationId: operationIdSchema.optional(),
 });
 
 export const policyDecisionSchema = z.discriminatedUnion("type", [
@@ -163,6 +185,11 @@ export const agentCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("terminal.get"),
     requestId: requestIdSchema,
     payload: getTerminalRequestSchema,
+  }),
+  z.object({
+    type: z.literal("terminal.run"),
+    requestId: requestIdSchema,
+    payload: runTerminalRequestSchema,
   }),
   z.object({
     type: z.literal("terminal.create"),
@@ -192,12 +219,15 @@ export const agentCommandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("terminal.observe"),
     requestId: requestIdSchema,
-    payload: observeTerminalRequestSchema,
+    payload: z.union([
+      observeTerminalRequestSchema.strict(),
+      observeCapturedOperationRequestSchema,
+    ]),
   }),
   z.object({
     type: z.literal("terminal.close"),
     requestId: requestIdSchema,
-    payload: closeTerminalRequestSchema,
+    payload: z.union([closeTerminalRequestSchema.strict(), closeOperationRequestSchema]),
   }),
   z.object({
     type: z.literal("terminal.recording.start"),

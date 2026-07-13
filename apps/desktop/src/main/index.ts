@@ -7,7 +7,6 @@ import {
   resolveAgentGatewayDescriptorPath,
   startAgentGateway,
   type AgentGateway,
-  type AgentTerminalService,
 } from "@terminal/agent-gateway";
 import {
   defaultTerminalConfig,
@@ -18,11 +17,16 @@ import {
 import { createDefaultAgentPolicy, createDefaultTerminalPolicy } from "@terminal/policy-engine";
 import { NodePtyHost } from "@terminal/pty-host";
 import { FileTerminalRecorder, createPatternRedactor } from "@terminal/recorder";
-import { TerminalSessionManager } from "@terminal/session-core";
+import {
+  NodeCapturedProcessHost,
+  TerminalOperationManager,
+  TerminalSessionManager,
+} from "@terminal/session-core";
 import type { TerminalConfig, TerminalSessionSummary } from "@terminal/protocol";
 
 import { broadcastRendererEvent, IPC_CHANNELS, registerTerminalIpc } from "./ipc";
 import { resolveAppShortcut, type AppShortcutPlatform } from "../shared/app-shortcuts";
+import { createAgentTerminalService } from "./agent-terminal-service";
 import { PRODUCT_NAME, shouldSetDevelopmentDockIcon } from "./app-branding";
 import { resolveDefaultTerminalCwd } from "./default-terminal-cwd";
 import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
@@ -58,6 +62,18 @@ const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
     });
   },
 });
+const operationManager = new TerminalOperationManager(
+  new NodeCapturedProcessHost(),
+  sessionManager,
+  {
+    defaultCwd: defaultTerminalCwd,
+    onBackgroundError: (error) => {
+      logger.error("operation", "background_failure", {
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    },
+  },
+);
 const presentationRegistry = createTerminalPresentationRegistry();
 const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
@@ -262,7 +278,7 @@ void app
     }
     agentGateway = await startAgentGateway({
       descriptorPath: resolveAgentGatewayDescriptorPath(app.getPath("userData")),
-      services: createAgentGatewayServices(sessionManager),
+      services: createAgentTerminalService(sessionManager, operationManager),
       policy: createDefaultAgentPolicy(),
       audit: (event) => {
         logger.info("agent", "audit", {
@@ -271,6 +287,7 @@ void app
           outcome: event.outcome,
           requestId: event.requestId,
           sessionId: event.sessionId,
+          operationId: event.operationId,
           errorType: event.errorType,
           denialCode: event.denialCode,
         });
@@ -397,24 +414,20 @@ async function shutdownApp() {
   }
   unregisterIpc?.();
   unregisterIpc = null;
+  let operationShutdownError: unknown;
+  try {
+    const operationResult = await operationManager.shutdown();
+    logger.info("operation", "shutdown_completed", operationResult);
+  } catch (error: unknown) {
+    operationShutdownError = error;
+    logger.error("operation", "shutdown_failed", {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
   logger.info("session", "shutdown_started", { timeoutMs: 1500 });
-  return sessionManager.shutdown({ timeoutMs: 1500 });
-}
-
-function createAgentGatewayServices(manager: TerminalSessionManager): AgentTerminalService {
-  return {
-    list: () => manager.listSessions(),
-    get: (request) => manager.getSession(request),
-    create: (request) => manager.createSession({ ...request, createdBy: "agent" }),
-    input: (request) => manager.input({ ...request, origin: "agent" }),
-    resize: (request) => manager.resize(request),
-    scroll: (request) => manager.scroll(request),
-    observe: (request, signal) => manager.observe(request, signal),
-    close: (request) => manager.close(request),
-    startRecording: (request) => manager.startRecording(request),
-    stopRecording: (request) => manager.stopRecording(request),
-    exportRecording: (request) => manager.exportRecording(request),
-  };
+  const sessionResult = await sessionManager.shutdown({ timeoutMs: 1500 });
+  if (operationShutdownError) throw operationShutdownError;
+  return sessionResult;
 }
 
 type InitialHumanSessionWaitResult =

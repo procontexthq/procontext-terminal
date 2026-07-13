@@ -14,17 +14,20 @@ import {
   type AgentCommand,
   type AgentCommandResult,
   type AgentGatewayDescriptor,
+  type OperationId,
   type SessionId,
   type TerminalError,
 } from "@terminal/protocol";
 
 import {
+  commandOperationId,
   commandSessionId,
   denialError,
   normalizeCommandError,
   policyOperation,
 } from "./agent-command.js";
 import { createAttachmentRegistry } from "./attachment-registry.js";
+import { dispatchAgentCommand } from "./command-dispatch.js";
 import {
   closeHttpServer,
   closeWebSocketServer,
@@ -61,6 +64,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
   const wss = await createWebSocketServer(server);
   const connections = new Map<string, ConnectionContext>();
   const attachments = createAttachmentRegistry();
+  const operationSessions = new Map<OperationId, SessionId>();
   let stopped = false;
   let lastActiveAt: string | null = null;
 
@@ -153,7 +157,20 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     }
 
     try {
-      const value = await execute(command, connection);
+      const value = await dispatchAgentCommand(
+        command,
+        options.services,
+        connection.abortController.signal,
+        {
+          attach: (sessionId) => attachOrThrow(sessionId, connection),
+          detach: (sessionId) => detach(sessionId, connection),
+          rememberOperation: (operationId, sessionId) => {
+            operationSessions.set(operationId, sessionId);
+          },
+          releaseOperation,
+          releaseSessionOperations,
+        },
+      );
       audit(connection, command, "allow");
       sendResult(connection, createAgentCommandSuccess(command.requestId, value));
     } catch (error: unknown) {
@@ -194,48 +211,6 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     emitActivity();
   }
 
-  async function execute(command: AgentCommand, connection: ConnectionContext): Promise<unknown> {
-    switch (command.type) {
-      case "agent.authenticate":
-        throw new Error("Authentication is handled before dispatch.");
-      case "terminal.list":
-        return options.services.list();
-      case "terminal.get":
-        return options.services.get(command.payload);
-      case "terminal.create": {
-        const session = await options.services.create(command.payload);
-        attachOrThrow(session.sessionId, connection);
-        return session;
-      }
-      case "terminal.attach": {
-        const session = options.services.get(command.payload);
-        attachOrThrow(session.sessionId, connection);
-        return session;
-      }
-      case "terminal.input":
-        return options.services.input(command.payload);
-      case "terminal.resize":
-        return options.services.resize(command.payload);
-      case "terminal.scroll":
-        return options.services.scroll(command.payload);
-      case "terminal.observe":
-        return options.services.observe(command.payload, connection.abortController.signal);
-      case "terminal.close": {
-        const result = await options.services.close(command.payload);
-        if (result.status === "closed") detach(command.payload.sessionId, connection);
-        return result;
-      }
-      case "terminal.recording.start":
-        await options.services.startRecording(command.payload);
-        return null;
-      case "terminal.recording.stop":
-        await options.services.stopRecording(command.payload);
-        return null;
-      case "terminal.recording.export":
-        return options.services.exportRecording(command.payload);
-    }
-  }
-
   function attachOrThrow(sessionId: SessionId, connection: ConnectionContext): void {
     if (!attachments.attach(sessionId, connection.id)) {
       throw createTerminalError(
@@ -250,6 +225,26 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
   function detach(sessionId: SessionId, connection: ConnectionContext): void {
     attachments.detach(sessionId, connection.id);
     connection.attachedSessionIds.delete(sessionId);
+  }
+
+  function releaseSession(sessionId: SessionId): void {
+    attachments.release(sessionId);
+    for (const connection of connections.values()) {
+      connection.attachedSessionIds.delete(sessionId);
+    }
+  }
+
+  function releaseOperation(operationId: OperationId): void {
+    const sessionId = operationSessions.get(operationId);
+    if (!sessionId) return;
+    releaseSession(sessionId);
+    operationSessions.delete(operationId);
+  }
+
+  function releaseSessionOperations(sessionId: SessionId): void {
+    for (const [operationId, candidateSessionId] of operationSessions) {
+      if (candidateSessionId === sessionId) operationSessions.delete(operationId);
+    }
   }
 
   function removeConnection(connection: ConnectionContext): void {
@@ -276,6 +271,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       outcome,
       requestId: command.requestId,
       ...(commandSessionId(command) ? { sessionId: commandSessionId(command) } : {}),
+      ...(commandOperationId(command) ? { operationId: commandOperationId(command) } : {}),
       ...(error ? { errorType: error.type } : {}),
       ...(denialCode ? { denialCode } : {}),
     });

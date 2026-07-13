@@ -22,7 +22,12 @@ import {
   type TerminalViewBootstrap,
   type Unsubscribe,
 } from "@terminal/protocol";
-import { resolveShell, type PtyHost } from "@terminal/pty-host";
+import {
+  resolveCommandShell,
+  resolveShell,
+  type PtyHost,
+  type ResolvedShell,
+} from "@terminal/pty-host";
 
 import { ManagedTerminalSession, type TerminalRecorder } from "./managed-session.js";
 
@@ -37,6 +42,17 @@ export type TerminalSessionManagerOptions = {
   recorder?: TerminalRecorder;
   scrollback?: number;
   closeTimeoutMs?: number;
+};
+
+export type CreateCommandSessionRequest = {
+  input: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  shell?: string;
+  cols?: number;
+  rows?: number;
+  createdBy: "agent" | "system";
+  outputLimitBytes: number;
 };
 
 export class TerminalSessionManager {
@@ -58,28 +74,34 @@ export class TerminalSessionManager {
     const cwd = request.cwd ?? this.options.defaultCwd?.() ?? process.cwd();
     try {
       const shell = resolveShell({ shell: request.shell, cwd, env: request.env });
-      const pty = await this.ptyHost.spawn({
-        sessionId,
-        shell,
+      return await this.spawnSession(sessionId, shell, {
         cols: request.cols ?? 80,
         rows: request.rows ?? 24,
-      });
-      const session = new ManagedTerminalSession({
-        sessionId,
-        shell: shell.executable,
-        cwd: shell.cwd,
-        cols: request.cols ?? 80,
-        rows: request.rows ?? 24,
-        scrollback: this.options.scrollback ?? 5_000,
         createdBy: request.createdBy ?? "human",
-        pty,
-        recorder: this.options.recorder,
-        emit: (event) => this.emit(event),
-        closeTimeoutMs: this.options.closeTimeoutMs ?? 5_000,
       });
-      this.sessions.set(sessionId, session);
-      this.emit({ type: "session.updated", payload: session.summary });
-      return session.summary;
+    } catch (error: unknown) {
+      throw normalizeSpawnError(error, sessionId);
+    }
+  }
+
+  async createCommandSession(
+    request: CreateCommandSessionRequest,
+  ): Promise<TerminalSessionSummary> {
+    const sessionId = createSessionId();
+    const cwd = request.cwd ?? this.options.defaultCwd?.() ?? process.cwd();
+    try {
+      const shell = resolveCommandShell({
+        input: request.input,
+        shell: request.shell,
+        cwd,
+        env: request.env,
+      });
+      return await this.spawnSession(sessionId, shell, {
+        cols: request.cols ?? 80,
+        rows: request.rows ?? 24,
+        createdBy: request.createdBy,
+        outputLimitBytes: request.outputLimitBytes,
+      });
     } catch (error: unknown) {
       throw normalizeSpawnError(error, sessionId);
     }
@@ -115,6 +137,14 @@ export class TerminalSessionManager {
 
   getViewBootstrap(request: { sessionId: SessionId }): TerminalViewBootstrap {
     return this.get(request.sessionId).getViewBootstrap();
+  }
+
+  getRunOutput(sessionId: SessionId): { output: string; truncated: boolean } {
+    return this.get(sessionId).getRunOutput();
+  }
+
+  waitForExit(sessionId: SessionId, timeoutMs?: number): Promise<boolean> {
+    return this.get(sessionId).waitForExit(timeoutMs);
   }
 
   setPresentation(sessionId: SessionId, presentation: TerminalPresentation): void {
@@ -184,6 +214,43 @@ export class TerminalSessionManager {
       });
     }
     return session;
+  }
+
+  private async spawnSession(
+    sessionId: SessionId,
+    shell: ResolvedShell,
+    options: {
+      cols: number;
+      rows: number;
+      createdBy: "human" | "agent" | "system";
+      outputLimitBytes?: number;
+    },
+  ): Promise<TerminalSessionSummary> {
+    const pty = await this.ptyHost.spawn({
+      sessionId,
+      shell,
+      cols: options.cols,
+      rows: options.rows,
+    });
+    const session = new ManagedTerminalSession({
+      sessionId,
+      shell: shell.executable,
+      cwd: shell.cwd,
+      cols: options.cols,
+      rows: options.rows,
+      scrollback: this.options.scrollback ?? 5_000,
+      createdBy: options.createdBy,
+      pty,
+      recorder: this.options.recorder,
+      emit: (event) => this.emit(event),
+      closeTimeoutMs: this.options.closeTimeoutMs ?? 5_000,
+      ...(options.outputLimitBytes === undefined
+        ? {}
+        : { outputLimitBytes: options.outputLimitBytes }),
+    });
+    this.sessions.set(sessionId, session);
+    this.emit({ type: "session.updated", payload: session.summary });
+    return session.summary;
   }
 
   private emit(event: RendererSessionEvent): void {
