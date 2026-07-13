@@ -176,7 +176,7 @@ function commandArguments(executable: string, input: string, platform: NodeJS.Pl
 
   const name = win32.basename(executable).toLowerCase();
   if (name === "cmd.exe" || name === "cmd") {
-    return ["/d", "/s", "/c", input];
+    return ["/d", "/s", "/c", `"${input}"`];
   }
   if (
     name === "pwsh.exe" ||

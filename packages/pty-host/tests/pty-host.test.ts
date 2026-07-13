@@ -64,8 +64,10 @@ describe("NodePtyHost", () => {
         canExecute: (candidate) => candidate.toLowerCase() === "c:\\tools\\pwsh.exe",
       },
     );
+    const commandPromptInput =
+      "node -e \"eval(Buffer.from('payload', 'base64').toString('utf8'))\"";
     const commandPrompt = resolveCommandShell(
-      { input: "echo ok", shell: "cmd.exe" },
+      { input: commandPromptInput, shell: "cmd.exe" },
       {
         platform: "win32",
         processEnv: { Path: "C:\\Windows\\System32", PATHEXT: ".EXE" },
@@ -75,7 +77,7 @@ describe("NodePtyHost", () => {
 
     expect(posixShell.args).toEqual(["-c", "printf ok"]);
     expect(powershell.args).toEqual(["-Command", "Write-Output ok"]);
-    expect(commandPrompt.args).toEqual(["/d", "/s", "/c", "echo ok"]);
+    expect(commandPrompt.args).toEqual(["/d", "/s", "/c", `"${commandPromptInput}"`]);
   });
 
   it("applies Windows environment overrides case-insensitively", () => {
