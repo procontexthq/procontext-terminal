@@ -180,6 +180,31 @@ describe("TerminalSessionManager", () => {
     );
   });
 
+  it("preserves accepted mixed-origin input order", async () => {
+    const host = new FakePtyHost();
+    const recorder = createRecorder();
+    const manager = new TerminalSessionManager(host, { recorder });
+    const summary = await manager.createSession(request);
+
+    await Promise.all([
+      manager.input({ sessionId: summary.sessionId, input: "human", origin: "human" }),
+      manager.input({ sessionId: summary.sessionId, input: "agent", origin: "agent" }),
+      manager.input({ sessionId: summary.sessionId, input: "system", origin: "system" }),
+    ]);
+
+    expect(host.pty.write.mock.calls).toEqual([["human"], ["agent"], ["system"]]);
+    expect(
+      recorder.record.mock.calls
+        .map(([event]) => event)
+        .filter((event) => event.type === "terminal.input")
+        .map((event) => ({ origin: event.origin, data: event.data })),
+    ).toEqual([
+      { origin: "human", data: "human" },
+      { origin: "agent", data: "agent" },
+      { origin: "system", data: "system" },
+    ]);
+  });
+
   it("resizes the PTY and canonical emulator before publishing the version", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);
@@ -238,6 +263,45 @@ describe("TerminalSessionManager", () => {
       status: "timeout",
       sessionId: summary.sessionId,
       version: summary.observationVersion,
+    });
+  });
+
+  it("cancels observation waiters without affecting later observations", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const summary = await manager.createSession(request);
+    const abortController = new AbortController();
+
+    const pending = manager.observe(
+      {
+        sessionId: summary.sessionId,
+        afterVersion: summary.observationVersion,
+        timeoutMs: 1_000,
+      },
+      abortController.signal,
+    );
+    abortController.abort();
+
+    await expect(pending).rejects.toMatchObject({
+      type: "observation_failed",
+      sessionId: summary.sessionId,
+    });
+
+    host.pty.emitData("after-cancel");
+    const nextObservation = await manager.observe({
+      sessionId: summary.sessionId,
+      afterVersion: summary.observationVersion,
+      timeoutMs: 100,
+    });
+    expect(nextObservation).toMatchObject({
+      status: "changed",
+      observation: { version: summary.observationVersion + 1 },
+    });
+    if (nextObservation.status !== "changed") {
+      throw new Error("Expected a changed observation after cancellation.");
+    }
+    expect(nextObservation.observation.viewport.rows[0]).toMatchObject({
+      text: "after-cancel",
     });
   });
 

@@ -241,6 +241,29 @@ describe("TerminalOperationManager captured runs", () => {
     );
   });
 
+  it("resizes running temporary PTYs through the shared session boundary", async () => {
+    const ptyHost = new FakePtyHost();
+    const sessions = new TerminalSessionManager(ptyHost);
+    const manager = createManager(new FakeCapturedProcessHost(), {}, sessions);
+    const result = await manager.run(runRequest({ input: "watch", tty: true, timeoutMs: 2 }));
+    if (result.status !== "running" || !result.tty) {
+      throw new Error("Expected a running terminal operation.");
+    }
+
+    await expect(
+      sessions.resize({ sessionId: result.sessionId, cols: 120, rows: 40 }),
+    ).resolves.toEqual({ observationVersion: 2 });
+    expect(ptyHost.pty.resize).toHaveBeenCalledWith(120, 40);
+    expect(sessions.getSession({ sessionId: result.sessionId }).dimensions).toEqual({
+      cols: 120,
+      rows: 40,
+    });
+
+    await expect(manager.close({ operationId: result.operationId })).resolves.toMatchObject({
+      status: "closed",
+    });
+  });
+
   it("expires completed headless temporary PTY sessions", async () => {
     vi.useFakeTimers();
     try {
