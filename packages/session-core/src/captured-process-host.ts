@@ -42,6 +42,7 @@ export class NodeCapturedProcessHost implements CapturedProcessHost {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      windowsVerbatimArguments: request.shell.windowsVerbatimArguments,
     });
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");

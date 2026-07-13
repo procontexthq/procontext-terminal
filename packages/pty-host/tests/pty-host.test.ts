@@ -78,6 +78,7 @@ describe("NodePtyHost", () => {
     expect(posixShell.args).toEqual(["-c", "printf ok"]);
     expect(powershell.args).toEqual(["-Command", "Write-Output ok"]);
     expect(commandPrompt.args).toEqual(["/d", "/s", "/c", `"${commandPromptInput}"`]);
+    expect(commandPrompt.windowsVerbatimArguments).toBe(true);
   });
 
   it("applies Windows environment overrides case-insensitively", () => {

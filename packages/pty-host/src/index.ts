@@ -38,6 +38,7 @@ export type ResolvedShell = {
   args: string[];
   cwd: string;
   env: Record<string, string>;
+  windowsVerbatimArguments?: boolean;
 };
 
 export type PtySession = {
@@ -91,7 +92,7 @@ export function resolveCommandShell(
   const shell = resolveShell(request, options);
   return {
     ...shell,
-    args: commandArguments(shell.executable, request.input, platform),
+    ...commandArguments(shell.executable, request.input, platform),
   };
 }
 
@@ -101,7 +102,8 @@ export class NodePtyHost implements PtyHost {
     try {
       validateShellExecutable(shell.executable, process.platform);
       ensureNodePtySpawnHelperExecutable();
-      const processHandle = pty.spawn(shell.executable, shell.args, {
+      const args = shell.windowsVerbatimArguments ? shell.args.join(" ") : shell.args;
+      const processHandle = pty.spawn(shell.executable, args, {
         name: "xterm-256color",
         cwd: shell.cwd,
         env: shell.env,
@@ -169,14 +171,21 @@ function defaultShell(
   return platform === "darwin" ? "/bin/zsh" : "/bin/sh";
 }
 
-function commandArguments(executable: string, input: string, platform: NodeJS.Platform): string[] {
+function commandArguments(
+  executable: string,
+  input: string,
+  platform: NodeJS.Platform,
+): Pick<ResolvedShell, "args" | "windowsVerbatimArguments"> {
   if (platform !== "win32") {
-    return ["-c", input];
+    return { args: ["-c", input] };
   }
 
   const name = win32.basename(executable).toLowerCase();
   if (name === "cmd.exe" || name === "cmd") {
-    return ["/d", "/s", "/c", `"${input}"`];
+    return {
+      args: ["/d", "/s", "/c", `"${input}"`],
+      windowsVerbatimArguments: true,
+    };
   }
   if (
     name === "pwsh.exe" ||
@@ -184,9 +193,9 @@ function commandArguments(executable: string, input: string, platform: NodeJS.Pl
     name === "powershell.exe" ||
     name === "powershell"
   ) {
-    return ["-Command", input];
+    return { args: ["-Command", input] };
   }
-  return ["-c", input];
+  return { args: ["-c", input] };
 }
 
 function buildEnvironment(
