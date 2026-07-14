@@ -39,7 +39,9 @@ import { nextTerminalStatus, type TerminalUiStatus } from "./terminal-status";
 import { NotificationCenter } from "./notification-center";
 import { AgentPolicySettings } from "./agent-policy-settings";
 import { PermissionCenter } from "./permission-center";
+import { SessionSidebarToggle } from "./session-sidebar-toggle";
 import { SessionSidebar } from "./session-sidebar";
+import { TerminalTabStrip } from "./terminal-tab-strip";
 import { themeFontLoadDescriptors, themeFontSet } from "./theme-fonts";
 import { useSessionCollaboration } from "./use-session-collaboration";
 import { useAgentPermissions } from "./use-agent-permissions";
@@ -297,53 +299,17 @@ export function App(): ReactElement {
   return (
     <main className="app-shell" data-theme={uiTheme} style={appStyle}>
       <header className="titlebar">
-        <button
-          type="button"
-          className={`session-sidebar-toggle${collaboration.sidebarOpen ? " is-active" : ""}`}
-          aria-label={`${collaboration.sidebarOpen ? "Hide" : "Show"} terminal sessions`}
-          aria-expanded={collaboration.sidebarOpen}
-          data-testid="session-sidebar-toggle"
-          onClick={collaboration.toggleSidebar}
-        >
-          Sessions
-        </button>
-        <div className="tab-strip" role="tablist" aria-label="Terminal tabs">
-          {tabs.map((tab, index) => (
-            <div className={`tab-item${tab.id === activeTabId ? " is-active" : ""}`} key={tab.id}>
-              <button
-                type="button"
-                role="tab"
-                className={`tab-button${tab.id === activeTabId ? " is-active" : ""}`}
-                data-terminal-tab="true"
-                data-testid={`terminal-tab-${index}`}
-                aria-selected={tab.id === activeTabId}
-                onClick={() => selectTab(tab.id)}
-              >
-                {tab.hasUnreadBell ? <span className="tab-bell" aria-hidden="true" /> : null}
-                <span className="tab-label">{terminalTabLabel(tab, index)}</span>
-                <span className={`tab-status is-${tab.status}`}>{tab.status}</span>
-              </button>
-              <button
-                type="button"
-                className="tab-close"
-                data-testid={`close-tab-${index}`}
-                aria-label={`Close ${terminalTabLabel(tab, index)}`}
-                onClick={() => closeTab(tab, index)}
-              >
-                x
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            className="new-tab-button"
-            data-testid="new-tab-button"
-            aria-label="New terminal tab"
-            onClick={addTab}
-          >
-            +
-          </button>
-        </div>
+        <SessionSidebarToggle
+          open={collaboration.sidebarOpen}
+          onToggle={collaboration.toggleSidebar}
+        />
+        <TerminalTabStrip
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onSelect={selectTab}
+          onClose={closeTab}
+          onAdd={addTab}
+        />
         <div className="titlebar-status">
           <label className="theme-picker">
             <span>Theme</span>
@@ -381,12 +347,6 @@ export function App(): ReactElement {
             data-testid="agent-activity"
           >
             {agentActive ? "Agent active" : "Agent idle"}
-          </span>
-          <span
-            className={`terminal-state is-${activeTab?.status ?? "starting"}`}
-            data-testid="terminal-status"
-          >
-            {activeTab?.status ?? "starting"}
           </span>
         </div>
       </header>

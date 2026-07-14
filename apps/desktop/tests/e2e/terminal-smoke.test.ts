@@ -92,6 +92,71 @@ describe("desktop terminal smoke", () => {
     await Promise.all([page.waitForEvent("close"), page.getByTestId("close-tab-0").click()]);
   });
 
+  it("keeps tab and session navigation reachable in a narrow window", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    await page.setViewportSize({ width: 720, height: 560 });
+
+    for (let index = 0; index < 7; index += 1) {
+      await page.getByTestId("new-tab-button").click();
+    }
+    await expectTabCount(page, 8);
+    await page.getByTestId("terminal-status").waitFor({ state: "visible" });
+    if ((await page.locator(".titlebar-status .terminal-state").count()) !== 0) {
+      throw new Error("Expected terminal lifecycle to appear only in the active tab.");
+    }
+
+    const sidebarToggle = page.getByTestId("session-sidebar-toggle");
+    const toggleText = (await sidebarToggle.textContent())?.trim() ?? "";
+    if (toggleText !== "") {
+      throw new Error(`Expected an icon-only session toggle, got ${JSON.stringify(toggleText)}.`);
+    }
+    await sidebarToggle.click();
+    await page.getByTestId("session-sidebar").waitFor({ state: "hidden" });
+    await sidebarToggle.click();
+    await page.getByTestId("session-sidebar").waitFor({ state: "visible" });
+
+    const tabStrip = page.getByTestId("terminal-tab-strip");
+    const before = await tabStrip.evaluate((element) => element.scrollLeft);
+    await page.getByTestId("tab-scroll-previous").click();
+    const after = await tabStrip.evaluate((element) => element.scrollLeft);
+    if (after >= before) {
+      throw new Error(
+        `Expected previous tab overflow control to scroll left: ${before} -> ${after}`,
+      );
+    }
+    await page.getByTestId("new-tab-button").waitFor({ state: "visible" });
+  });
+
+  it("keeps agent policy controls within the popover in wide-font themes", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    await page.setViewportSize({ width: 720, height: 640 });
+
+    for (const theme of ["classic", "gamer"]) {
+      await page.getByTestId("theme-select").selectOption(theme);
+      await page.waitForFunction(
+        (expectedTheme) =>
+          document.querySelector(".app-shell")?.getAttribute("data-theme") === expectedTheme,
+        theme,
+      );
+      await page.getByTestId("agent-policy-toggle").click();
+      const popover = page.getByRole("region", { name: "Agent policy settings" });
+      await popover.waitFor({ state: "visible" });
+      const overflows = await popover.evaluate(
+        (element) => element.scrollWidth > element.clientWidth + 1,
+      );
+      if (overflows) {
+        throw new Error(`Agent policy controls overflow in the ${theme} theme.`);
+      }
+      await page.getByTestId("agent-policy-toggle").click();
+    }
+  });
+
   it("reattaches a renderer view from canonical serialized state", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
