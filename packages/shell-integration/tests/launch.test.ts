@@ -99,7 +99,14 @@ describe("shell integration launch preparation", () => {
     expect(script).toContain("CommandValidationHandler");
     expect(script).toContain("function global:__PctEnsureValidation");
     expect(script).toContain("Import-Module PSReadLine -ErrorAction Stop");
-    expect(script).toContain("$script:__PctPreviousValidationCaptured");
+    expect(script).toContain(
+      "$script:__PctOriginalPrompt = (Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue).ScriptBlock",
+    );
+    expect(script).toContain("$script:__PctInstalledValidation");
+    expect(script).toContain("$script:__PctPreviousValidation.Invoke($CommandAst)");
+    expect(script).toContain("Get-PSReadLineKeyHandler -Bound");
+    expect(script).toContain("Set-PSReadLineKeyHandler -Chord $binding.Key");
+    expect(script).toContain("ValidateAndAcceptLine");
     expect(script.match(/Set-PSReadLineOption -CommandValidationHandler/g)).toHaveLength(1);
     expect(script).toContain("function global:prompt");
     expect(script).toContain("$validationInstalled = __PctEnsureValidation");

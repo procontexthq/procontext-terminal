@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
@@ -376,9 +377,10 @@ describe("desktop terminal smoke", () => {
       const changedDirectory = await waitForObservation(
         agent,
         created.sessionId,
-        (observation) => observation.command.state === "idle" && observation.cwd === userDataDir,
+        (observation) =>
+          observation.command.state === "idle" && sameCanonicalPath(observation.cwd, userDataDir),
       );
-      if (changedDirectory.cwd !== userDataDir) {
+      if (!sameCanonicalPath(changedDirectory.cwd, userDataDir)) {
         throw new Error(`Expected integrated cwd ${userDataDir}, got ${changedDirectory.cwd}.`);
       }
       await expectAgentOk(
@@ -591,7 +593,7 @@ describe("desktop terminal smoke", () => {
     }
   });
 
-  it("observes alternate-screen TUI state from the canonical headless model", async () => {
+  it("observes alternate-screen TUI contents from the canonical headless model", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
     const descriptor = await waitForAgentDescriptor(userDataDir);
@@ -614,9 +616,13 @@ describe("desktop terminal smoke", () => {
         agent,
         created.sessionId,
         (current) =>
-          current.alternateScreen &&
+          (process.platform === "win32" || current.alternateScreen) &&
           current.viewport.rows.some((row) => row.text.includes("CANONICAL_ALT_SCREEN")),
       );
+      // OS ConPTY consumes the buffer switch and emits its rendered screen update.
+      if (process.platform !== "win32" && !observation.alternateScreen) {
+        throw new Error("Expected the alternate-screen buffer to remain observable.");
+      }
       if (!observation.cursor.visible) {
         throw new Error("Expected alternate-screen cursor visibility to remain observable.");
       }
@@ -763,6 +769,14 @@ async function authenticatedAgent(descriptor: AgentGatewayDescriptor): Promise<E
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function sameCanonicalPath(left: string, right: string): boolean {
+  const canonicalLeft = realpathSync.native(left);
+  const canonicalRight = realpathSync.native(right);
+  return process.platform === "win32"
+    ? canonicalLeft.toLowerCase() === canonicalRight.toLowerCase()
+    : canonicalLeft === canonicalRight;
 }
 
 async function waitForObservation(

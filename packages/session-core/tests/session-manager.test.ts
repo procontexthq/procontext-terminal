@@ -732,6 +732,10 @@ function shellIntegrationNonce(request: PtySpawnRequest | undefined): string {
   const sources = [...request.shell.args];
   for (const argument of request.shell.args) {
     if (existsSync(argument)) sources.push(readFileSync(argument, "utf8"));
+    const dotSourcedPath = argument.match(/^\. '((?:[^']|'')+)'$/)?.[1]?.replaceAll("''", "'");
+    if (dotSourcedPath && existsSync(dotSourcedPath)) {
+      sources.push(readFileSync(dotSourcedPath, "utf8"));
+    }
   }
   const match = sources
     .join("\n")

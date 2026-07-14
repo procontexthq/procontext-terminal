@@ -271,6 +271,14 @@ Status: implemented.
 
 - Expand PTY, shell-integration, TUI, reconnect, renderer-loss, and shutdown
   coverage across macOS, Linux, Windows, ConPTY, and supported shells.
+- Preserve canonical alternate-buffer identity on Windows when the selected
+  ConPTY transport can pass buffer-switch sequences through. The operating-
+  system ConPTY backend currently consumes those sequences and emits a rendered
+  screen update, so Windows smoke coverage verifies the visible TUI state while
+  this transport limitation remains.
+- Prepare `node-pty` for the target platform during dependency installation.
+  Electron Builder must preserve that Node-API-compatible platform artifact
+  instead of rebuilding the dependency a second time during packaging.
 - Verify packaged native PTY behavior, installers, artifact generation,
   signing or notarization inputs, and release provenance.
 

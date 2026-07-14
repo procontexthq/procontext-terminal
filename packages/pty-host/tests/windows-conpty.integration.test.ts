@@ -7,15 +7,20 @@ import { NodePtyHost, resolveShell } from "../src/index";
 describe.skipIf(process.platform !== "win32")("Windows ConPTY transport", () => {
   it("preserves OSC control sequences from a real PowerShell PTY", async () => {
     const marker = "\u001b]633;PCT_TRANSPORT\u001b\\";
+    const shell = resolveShell({ shell: "powershell.exe", cwd: process.cwd() });
+    shell.args = [
+      "-NoProfile",
+      "-Command",
+      "$e=[char]27; [Console]::Write($e + ']633;PCT_TRANSPORT' + $e + '\\')",
+    ];
     const session = await new NodePtyHost().spawn({
       sessionId: createSessionId("windows-osc"),
-      shell: resolveShell({ shell: "powershell.exe", cwd: process.cwd() }),
+      shell,
       cols: 80,
       rows: 24,
     });
 
     const output = outputUntilExit(session);
-    session.write("$e=[char]27; [Console]::Write($e + ']633;PCT_TRANSPORT' + $e + '\\'); exit\r");
 
     await expect(output).resolves.toContain(marker);
   });
