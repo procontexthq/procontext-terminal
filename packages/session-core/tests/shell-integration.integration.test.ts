@@ -61,6 +61,16 @@ describe("real shell integration", () => {
           state: "idle",
           lastCommand: { exitCode: 0 },
         });
+        await waitForCondition(async () => {
+          const current = await manager.observe({
+            sessionId: session.sessionId,
+            timeoutMs: 100,
+          });
+          return (
+            current.status === "changed" &&
+            current.observation.viewport.rows.some((row) => row.text === "PCT_REAL_OK")
+          );
+        }, 2_000);
         const observation = await manager.observe({
           sessionId: session.sessionId,
           timeoutMs: 1_000,
@@ -191,9 +201,12 @@ async function waitForSummary(
   return current;
 }
 
-async function waitForCondition(predicate: () => boolean, timeoutMs: number): Promise<void> {
+async function waitForCondition(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() >= deadline) {
       throw new Error("Timed out waiting for shell prompt output.");
     }

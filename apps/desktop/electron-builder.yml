@@ -17,7 +17,7 @@ extraResources:
 
 asar: false
 
-npmRebuild: true
+npmRebuild: false
 nodeGypRebuild: false
 buildDependenciesFromSource: false
 

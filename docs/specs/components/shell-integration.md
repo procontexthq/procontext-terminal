@@ -26,8 +26,13 @@ Normal user startup configuration runs before ProContext installs its hooks:
 - Fish installs event handlers through its post-configuration initialization
   command.
 - PowerShell dot-sources a generated private bootstrap script after profiles
-  load, then installs prompt hooks. The prompt hook installs or re-chains
+  load, then installs prompt hooks. The existing prompt script block is
+  captured before replacement and invoked once per prompt; chaining must not
+  resolve the replacement recursively. The prompt hook installs or re-chains
   PSReadLine command validation after the interactive shell has initialized it.
+  Standard PSReadLine `AcceptLine` bindings are upgraded to
+  `ValidateAndAcceptLine` so validation runs before the command is accepted.
+  Custom key handlers are not overwritten.
 
 Hook failure must not prevent the shell from starting or accepting input.
 Generated Bash and Zsh references to user startup files retain POSIX path
@@ -64,12 +69,14 @@ marker changes the state to `available`. Partial activation or a ten-second
 initialization timeout changes it to `degraded`; a later valid marker may
 recover the session. Unsupported shells report `unavailable`.
 
-PowerShell attempts to import PSReadLine and install the ProContext validation
-handler during bootstrap and again at each prompt before emitting its
-capability marker. Full capabilities are advertised only after installation
-succeeds. This allows delayed PSReadLine initialization, interactive startup
-reconfiguration, and a lost startup marker to recover without a protocol
-acknowledgement.
+PowerShell attempts to import PSReadLine, install the ProContext validation
+handler, and establish a validation-aware accept binding during bootstrap and
+again at each prompt before emitting its capability marker. Full capabilities
+are advertised only after the handler and accepting binding are both active.
+When a custom binding prevents safe activation, prompt and cwd capabilities
+remain available without trusted command lifecycle. This allows delayed
+PSReadLine initialization, interactive startup reconfiguration, and a lost
+startup marker to recover without a protocol acknowledgement.
 
 While integration is `degraded` or `unavailable`, command state is `unknown`.
 For available integration:
@@ -105,6 +112,8 @@ maps cmdlet success or failure to `0` or `1`.
 - Real PTY tests cover each installed supported shell, with deterministic
   bootstrap tests for shells unavailable on the current platform.
 - PowerShell launch tests verify generated bootstrap cleanup and repeated
-  capability advertisement.
+  capability advertisement. They also verify that the previous prompt cannot
+  recurse through the replacement and that command validation has an active
+  accept binding before full capabilities are advertised.
 - Real-shell cwd assertions compare canonical filesystem identity so Windows
   short and long path spellings are treated as the same directory.

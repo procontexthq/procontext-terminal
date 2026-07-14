@@ -197,13 +197,15 @@ function global:__PctEncode([string]$Value) {
 function global:__PctEmit([string]$EventName, [string]$CommandId, [string]$Payload) {
   [Console]::Write(([char]27) + ']633;PCT;1;' + $script:__PctNonce + ';' + $EventName + ';' + $CommandId + ';' + $Payload + ([char]27) + '\\')
 }
-$script:__PctOriginalPrompt = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue
+$script:__PctOriginalPrompt = (Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue).ScriptBlock
 $script:__PctPreviousValidation = $null
-$script:__PctPreviousValidationCaptured = $false
+$script:__PctInstalledValidation = $null
 $script:__PctNativeCommand = $false
 $script:__PctValidationHandler = {
   param($CommandAst)
-  if ($script:__PctPreviousValidation) { & $script:__PctPreviousValidation $CommandAst }
+  if ($script:__PctPreviousValidation) {
+    $script:__PctPreviousValidation.Invoke($CommandAst)
+  }
   $firstCommand = $CommandAst.Find({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $false)
   $commandInfo = if ($firstCommand) { Get-Command $firstCommand.GetCommandName() -ErrorAction SilentlyContinue } else { $null }
   $script:__PctNativeCommand = $commandInfo -and $commandInfo.CommandType -eq [System.Management.Automation.CommandTypes]::Application
@@ -216,12 +218,20 @@ function global:__PctEnsureValidation {
     if (-not (Get-Module PSReadLine)) {
       Import-Module PSReadLine -ErrorAction Stop
     }
-    if (-not $script:__PctPreviousValidationCaptured) {
-      $script:__PctPreviousValidation = (Get-PSReadLineOption).CommandValidationHandler
-      $script:__PctPreviousValidationCaptured = $true
+    $currentValidation = (Get-PSReadLineOption).CommandValidationHandler
+    if (-not [object]::ReferenceEquals($currentValidation, $script:__PctInstalledValidation)) {
+      $script:__PctPreviousValidation = $currentValidation
     }
     Set-PSReadLineOption -CommandValidationHandler $script:__PctValidationHandler
-    return $true
+    $script:__PctInstalledValidation = (Get-PSReadLineOption).CommandValidationHandler
+    $acceptLineBindings = @(Get-PSReadLineKeyHandler -Bound | Where-Object Function -eq 'AcceptLine')
+    foreach ($binding in $acceptLineBindings) {
+      Set-PSReadLineKeyHandler -Chord $binding.Key -Function ValidateAndAcceptLine
+    }
+    $validatedBindings = @(
+      Get-PSReadLineKeyHandler -Bound | Where-Object Function -eq 'ValidateAndAcceptLine'
+    )
+    return $validatedBindings.Count -gt 0
   } catch {
     return $false
   }
