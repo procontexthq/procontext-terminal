@@ -44,7 +44,12 @@ a direct app-code import.
 
 - macOS and Linux use Unix PTY behavior through node-pty.
 - Windows uses ConPTY through node-pty.
+- Windows selects node-pty's bundled ConPTY DLL backend so teardown does not
+  depend on the separate console-process-list helper that can race with shell
+  exit.
 - Shell paths, arguments, environment handling, and newline behavior must be platform-aware.
+- PTY termination is idempotent and becomes a no-op after an observed process
+  exit.
 - PTY spawn failures must preserve enough context for a domain error without leaking dependency-specific error types.
 
 ## Public Contract
@@ -68,3 +73,5 @@ The package boundary should expose terminal-domain operations, not node-pty impl
 - Temporary command launches use the resolved platform-specific invocation and
   exit when the supplied shell input finishes.
 - Spawn failures are mapped to typed terminal-domain errors.
+- Windows spawn options select the hardened ConPTY backend, and repeated or
+  post-exit termination does not call the native PTY kill path again.
