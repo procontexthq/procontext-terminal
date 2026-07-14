@@ -8,8 +8,8 @@ Accepted component architecture.
 
 Every PTY-backed session owns a headless xterm.js emulator outside the renderer.
 It is the canonical source for agent observation, renderer bootstrap, terminal
-dimensions, scrollback, cursor state, title, alternate-screen state, and shared
-viewport position.
+dimensions, scrollback, cursor state, title, alternate-screen state, integrated
+working directory, and shared viewport position.
 
 ## Observation Contract
 
@@ -24,7 +24,7 @@ Versions advance after an observable operation settles:
 - Resize has reached both PTY and emulator.
 - Shared viewport position changes.
 - Cursor visibility, title, buffer, presentation, recording, shell integration,
-  command state, or lifecycle changes.
+  command state, current cwd, or lifecycle changes.
 
 Several fields changed by one parsed output chunk commit as one new version.
 

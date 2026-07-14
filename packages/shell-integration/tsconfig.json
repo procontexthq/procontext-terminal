@@ -5,11 +5,7 @@
     "outDir": "dist",
     "composite": true
   },
-  "references": [
-    { "path": "../protocol" },
-    { "path": "../pty-host" },
-    { "path": "../shell-integration" }
-  ],
+  "references": [{ "path": "../protocol" }],
   "include": ["src/**/*.ts"],
   "exclude": ["dist", "tests"]
 }

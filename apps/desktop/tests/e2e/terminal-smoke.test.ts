@@ -171,6 +171,78 @@ describe("desktop terminal smoke", () => {
     }
   });
 
+  it("exposes trusted shell lifecycle and cwd for a headless agent session", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const descriptor = await waitForAgentDescriptor(userDataDir);
+    const agent = await authenticatedAgent(descriptor);
+
+    try {
+      const created = (await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.create", {
+            shell: supportedE2eShell(),
+            cwd: homedir(),
+            env: { HOME: userDataDir },
+          }),
+        ),
+      )) as TerminalSessionSummary;
+      await waitForObservation(
+        agent,
+        created.sessionId,
+        (observation) =>
+          observation.shellIntegration.status === "available" &&
+          observation.command.state === "idle",
+      );
+
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.input", {
+            sessionId: created.sessionId,
+            input: `${nodeEvalCommand(
+              'process.stdout.write("SHELL_INTEGRATION_OK\\\\n"); setTimeout(() => {}, 300);',
+            )}\r`,
+          }),
+        ),
+      );
+      await waitForObservation(
+        agent,
+        created.sessionId,
+        (observation) => observation.command.state === "running",
+      );
+      await waitForObservation(
+        agent,
+        created.sessionId,
+        (observation) =>
+          observation.command.state === "idle" &&
+          observation.command.lastCommand?.exitCode === 0 &&
+          observation.viewport.rows.some((row) => row.text.includes("SHELL_INTEGRATION_OK")),
+      );
+
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.input", {
+            sessionId: created.sessionId,
+            input: `${changeDirectoryCommand(userDataDir)}\r`,
+          }),
+        ),
+      );
+      const changedDirectory = await waitForObservation(
+        agent,
+        created.sessionId,
+        (observation) => observation.command.state === "idle" && observation.cwd === userDataDir,
+      );
+      if (changedDirectory.cwd !== userDataDir) {
+        throw new Error(`Expected integrated cwd ${userDataDir}, got ${changedDirectory.cwd}.`);
+      }
+      await expectAgentOk(
+        agent.request(createAgentCommand("terminal.close", { sessionId: created.sessionId })),
+      );
+    } finally {
+      agent.close();
+    }
+  });
+
   it("automates background, foreground, and headless presentation for agent sessions", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
@@ -790,6 +862,18 @@ async function stopElectronProcess(): Promise<void> {
 
 function platformPrintCommand(text: string): string {
   return process.platform === "win32" ? `echo ${text}` : `printf '${text}\\n'`;
+}
+
+function supportedE2eShell(): string {
+  if (process.platform === "win32") return "powershell.exe";
+  return process.platform === "darwin" ? "/bin/zsh" : "/bin/bash";
+}
+
+function changeDirectoryCommand(cwd: string): string {
+  if (process.platform === "win32") {
+    return `Set-Location -LiteralPath '${cwd.replaceAll("'", "''")}'`;
+  }
+  return `cd '${cwd.replaceAll("'", `'\\''`)}'`;
 }
 
 function e2eEnvironment(): NodeJS.ProcessEnv {

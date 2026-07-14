@@ -163,11 +163,27 @@ Status: implemented.
 
 ## Phase 4: Shell Integration
 
+Status: implemented.
+
+- Add a focused shell-integration package for supported-shell detection,
+  bootstrap generation, trusted marker parsing, and temporary resource cleanup.
 - Inject supported shell hooks after normal startup configuration.
-- Parse private versioned OSC markers with per-session nonce validation.
-- Expose capability, prompt, command lifecycle, cwd, command line, and exit code.
+- Parse private versioned OSC 633 markers with per-session 128-bit nonce
+  validation and bounded base64url payloads.
+- Expose capability, prompt, command lifecycle, current cwd, command line, and
+  exit code through canonical session summaries and observations.
 - Report degraded or unavailable integration without affecting shell execution.
 - Ignore untrusted nested and remote markers.
+
+### Required tests
+
+- Protocol validation for observed cwd and shell-integration state.
+- Supported-shell detection, launch rewriting, startup chaining, and cleanup.
+- Marker prefix, version, nonce, encoding, field limits, and malformed input.
+- Capability negotiation, timeout, recovery, prompt, cwd, command start,
+  command finish, exit code, and unfinished-command shell exit.
+- Unsupported, temporary, nested, and remote shell behavior.
+- Real PTY and Electron smoke coverage for available supported shells.
 
 ## Phase 5: Human UX And Release Hardening
 

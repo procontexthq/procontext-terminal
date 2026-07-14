@@ -25,6 +25,7 @@ export type TerminalObservation = {
   sessionId: SessionId;
   version: number;
   lifecycle: TerminalLifecycleState;
+  cwd: string;
   dimensions: { cols: number; rows: number };
   viewport: {
     rows: TerminalScreenRow[];
@@ -63,6 +64,7 @@ export const terminalObservationSchema = z.object({
   sessionId: sessionIdSchema,
   version: z.number().int().nonnegative(),
   lifecycle: terminalLifecycleStateSchema,
+  cwd: z.string().min(1),
   dimensions: terminalDimensionsSchema,
   viewport: z.object({
     rows: z.array(terminalScreenRowSchema),

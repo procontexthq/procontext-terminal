@@ -2,28 +2,15 @@ import headlessModule from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 
 import type {
-  ShellCommandState,
-  ShellIntegrationState,
   TerminalLifecycleState,
   TerminalObservation,
   TerminalPresentation,
   TerminalRecordingStatus,
   TerminalScrollAction,
 } from "@terminal/protocol";
+import { SHELL_INTEGRATION_OSC, ShellIntegrationTracker } from "@terminal/shell-integration";
 
 const { Terminal } = headlessModule;
-
-const unavailableShellIntegration: ShellIntegrationState = {
-  status: "unavailable",
-  capabilities: {
-    prompt: false,
-    commandStart: false,
-    commandFinish: false,
-    commandLine: false,
-    exitCode: false,
-    cwd: false,
-  },
-};
 
 const headlessPresentation: TerminalPresentation = {
   state: "headless",
@@ -35,6 +22,9 @@ export type TerminalModelOptions = {
   cols: number;
   rows: number;
   scrollback: number;
+  cwd?: string;
+  shellIntegrationNonce?: string;
+  now?: () => Date;
   onBell?: () => void;
 };
 
@@ -47,8 +37,8 @@ export class TerminalModel {
   private unseenRows = 0;
   private lifecycle: TerminalLifecycleState = "creating";
   private presentation: TerminalPresentation = headlessPresentation;
-  private shellIntegration: ShellIntegrationState = unavailableShellIntegration;
-  private command: ShellCommandState = { state: "unknown" };
+  private readonly shellIntegration: ShellIntegrationTracker;
+  private shellIntegrationChangedDuringWrite = false;
   private recording: TerminalRecordingStatus = { state: "inactive" };
   private observationVersion = 0;
 
@@ -61,6 +51,11 @@ export class TerminalModel {
       allowProposedApi: true,
     });
     this.serializer = new SerializeAddon();
+    this.shellIntegration = new ShellIntegrationTracker({
+      cwd: options.cwd ?? process.cwd(),
+      ...(options.shellIntegrationNonce ? { nonce: options.shellIntegrationNonce } : {}),
+      ...(options.now ? { now: options.now } : {}),
+    });
     this.terminal.loadAddon(this.serializer);
     this.terminal.onTitleChange((title) => {
       this.title = title;
@@ -73,6 +68,11 @@ export class TerminalModel {
     this.terminal.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
       if (params.includes(25)) this.cursorVisible = false;
       return false;
+    });
+    this.terminal.parser.registerOscHandler(SHELL_INTEGRATION_OSC, (data) => {
+      const result = this.shellIntegration.acceptOsc(data);
+      if (result.changed) this.shellIntegrationChangedDuringWrite = true;
+      return result.handled;
     });
   }
 
@@ -92,16 +92,20 @@ export class TerminalModel {
     return this.title;
   }
 
+  get currentCwd(): string {
+    return this.shellIntegration.snapshot.cwd;
+  }
+
   get currentPresentation(): TerminalPresentation {
     return this.presentation;
   }
 
-  get currentShellIntegration(): ShellIntegrationState {
-    return this.shellIntegration;
+  get currentShellIntegration() {
+    return this.shellIntegration.snapshot.integration;
   }
 
-  get currentCommand(): ShellCommandState {
-    return this.command;
+  get currentCommand() {
+    return this.shellIntegration.snapshot.command;
   }
 
   get currentRecording(): TerminalRecordingStatus {
@@ -112,11 +116,15 @@ export class TerminalModel {
     return { cols: this.terminal.cols, rows: this.terminal.rows };
   }
 
-  async write(data: string): Promise<{ titleChanged: boolean }> {
+  async write(data: string): Promise<{
+    titleChanged: boolean;
+    shellIntegrationChanged: boolean;
+  }> {
     const buffer = this.terminal.buffer.active;
     const wasAtBottom = buffer.viewportY === buffer.baseY;
     const previousBaseY = buffer.baseY;
     const previousTitle = this.title;
+    this.shellIntegrationChangedDuringWrite = false;
     await new Promise<void>((resolve) => {
       this.terminal.write(data, resolve);
     });
@@ -128,7 +136,10 @@ export class TerminalModel {
       this.unseenRows = 0;
     }
     this.commit();
-    return { titleChanged: previousTitle !== this.title };
+    return {
+      titleChanged: previousTitle !== this.title,
+      shellIntegrationChanged: this.shellIntegrationChangedDuringWrite,
+    };
   }
 
   resize(cols: number, rows: number): void {
@@ -169,9 +180,19 @@ export class TerminalModel {
   }
 
   setLifecycle(lifecycle: TerminalLifecycleState): void {
-    if (lifecycle === this.lifecycle) return;
+    const commandChanged =
+      lifecycle === "exited" || lifecycle === "failed"
+        ? this.shellIntegration.markShellExited()
+        : false;
+    if (lifecycle === this.lifecycle && !commandChanged) return;
     this.lifecycle = lifecycle;
     this.commit();
+  }
+
+  markShellIntegrationTimedOut(): boolean {
+    const changed = this.shellIntegration.markInitializationTimedOut();
+    if (changed) this.commit();
+    return changed;
   }
 
   setPresentation(presentation: TerminalPresentation): void {
@@ -203,6 +224,7 @@ export class TerminalModel {
       sessionId,
       version: this.observationVersion,
       lifecycle: this.lifecycle,
+      cwd: this.currentCwd,
       dimensions: this.dimensions,
       viewport: {
         rows,
@@ -219,8 +241,8 @@ export class TerminalModel {
       },
       alternateScreen: buffer.type === "alternate",
       title: this.title,
-      shellIntegration: this.shellIntegration,
-      command: this.command,
+      shellIntegration: this.currentShellIntegration,
+      command: this.currentCommand,
       presentation: this.presentation,
       recording: this.recording,
     };

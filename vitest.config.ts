@@ -21,6 +21,9 @@ export default defineConfig({
       "@terminal/recorder": fileURLToPath(
         new URL("./packages/recorder/src/index.ts", import.meta.url),
       ),
+      "@terminal/shell-integration": fileURLToPath(
+        new URL("./packages/shell-integration/src/index.ts", import.meta.url),
+      ),
       "@terminal/session-core": fileURLToPath(
         new URL("./packages/session-core/src/index.ts", import.meta.url),
       ),
