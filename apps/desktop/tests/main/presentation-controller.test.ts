@@ -188,6 +188,7 @@ function createFixture(
     }),
     setPresentation: vi.fn((_sessionId, presentation: TerminalPresentation) => {
       sessions.presentation = presentation;
+      return Promise.resolve();
     }),
     close: vi.fn(),
   };

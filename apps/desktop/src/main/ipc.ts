@@ -1,7 +1,13 @@
 import { BrowserWindow, ipcMain, type WebContents } from "electron";
 
 import type { TerminalPolicy } from "@terminal/policy-engine";
-import type { RendererSessionEvent, SessionId, TerminalConfig } from "@terminal/protocol";
+import type {
+  CloseTerminalRequest,
+  CloseTerminalResult,
+  RendererSessionEvent,
+  SessionId,
+  TerminalConfig,
+} from "@terminal/protocol";
 import type { TerminalSessionManager } from "@terminal/session-core";
 
 import type { AppLogger } from "./logger";
@@ -21,6 +27,7 @@ export function registerTerminalIpc({
   presentationController,
   policy,
   logger,
+  closeSession,
   getConfig,
   saveConfig,
 }: {
@@ -29,6 +36,7 @@ export function registerTerminalIpc({
   presentationController: TerminalPresentationController;
   policy: TerminalPolicy;
   logger: AppLogger;
+  closeSession: (request: CloseTerminalRequest) => Promise<CloseTerminalResult>;
   getConfig: () => TerminalConfig;
   saveConfig: (config: TerminalConfig) => Promise<TerminalConfig>;
 }): () => void {
@@ -47,6 +55,7 @@ export function registerTerminalIpc({
       presentationRegistry,
       presentationController,
       rendererId: event.sender.id,
+      closeSession,
       getConfig,
       saveConfig,
       policy,
@@ -98,20 +107,20 @@ function trackRendererCleanup({
     trackedRendererIds.delete(rendererId);
     presentationController.rendererUnavailable(rendererId);
     for (const sessionId of presentationRegistry.removeRenderer(rendererId)) {
-      setHeadlessIfPresent(sessionManager, sessionId, logger);
+      void setHeadlessIfPresent(sessionManager, sessionId, logger);
     }
   };
   sender.once("destroyed", cleanup);
   sender.once("render-process-gone", cleanup);
 }
 
-function setHeadlessIfPresent(
+async function setHeadlessIfPresent(
   manager: TerminalSessionManager,
   sessionId: SessionId,
   logger: Pick<AppLogger, "warn">,
-): void {
+): Promise<void> {
   try {
-    manager.setPresentation(sessionId, {
+    await manager.setPresentation(sessionId, {
       state: "headless",
       windowVisible: false,
       windowFocused: false,

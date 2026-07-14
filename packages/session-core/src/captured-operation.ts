@@ -82,7 +82,7 @@ export class CapturedOperation {
   async close(timeoutMs: number): Promise<CloseTerminalResult> {
     if (this.status === "running") {
       try {
-        this.process?.kill();
+        await this.process?.kill();
       } catch (error: unknown) {
         throw createTerminalError(
           "operation_close_failed",

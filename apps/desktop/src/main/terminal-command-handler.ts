@@ -5,6 +5,8 @@ import {
   createTerminalError,
   parseRendererCommand,
   terminalErrorSchema,
+  type CloseTerminalRequest,
+  type CloseTerminalResult,
   type CreateTerminalRequest,
   type RendererCommand,
   type RendererCommandResult,
@@ -26,7 +28,6 @@ type RendererTerminalSessionService = Pick<
   | "input"
   | "resize"
   | "scroll"
-  | "close"
   | "getViewBootstrap"
   | "setPresentation"
   | "reportViewport"
@@ -40,6 +41,7 @@ export type TerminalCommandServices = {
   presentationRegistry: TerminalPresentationRegistry;
   presentationController: TerminalPresentationController;
   rendererId: number;
+  closeSession(request: CloseTerminalRequest): Promise<CloseTerminalResult>;
   getConfig(): TerminalConfig;
   saveConfig(config: TerminalConfig): Promise<TerminalConfig>;
   policy: TerminalPolicy;
@@ -105,9 +107,9 @@ async function executeRendererCommand(
     case "session.resize":
       return createRendererCommandSuccess(command.requestId, await manager.resize(command.payload));
     case "session.scroll":
-      return createRendererCommandSuccess(command.requestId, manager.scroll(command.payload));
+      return createRendererCommandSuccess(command.requestId, await manager.scroll(command.payload));
     case "session.close": {
-      const result = await manager.close(command.payload);
+      const result = await services.closeSession(command.payload);
       if (result.status === "closed") {
         services.presentationRegistry.removeSession(command.payload.sessionId);
       }
@@ -116,7 +118,7 @@ async function executeRendererCommand(
     case "session.openView": {
       services.presentationRegistry.open(command.payload.sessionId, services.rendererId);
       try {
-        manager.setPresentation(command.payload.sessionId, {
+        await manager.setPresentation(command.payload.sessionId, {
           state: "background",
           windowVisible: true,
           windowFocused: false,
@@ -132,7 +134,7 @@ async function executeRendererCommand(
     }
     case "session.closeView":
       if (services.presentationRegistry.close(command.payload.sessionId, services.rendererId)) {
-        setHeadlessIfPresent(manager, command.payload.sessionId);
+        await setHeadlessIfPresent(manager, command.payload.sessionId);
       }
       return createRendererCommandSuccess(command.requestId, null);
     case "session.reportViewport":
@@ -142,7 +144,7 @@ async function executeRendererCommand(
           operation: command.type,
         });
       }
-      manager.reportViewport(command.payload);
+      await manager.reportViewport(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
     case "recording.start":
       await manager.startRecording(command.payload);
@@ -267,12 +269,12 @@ export function applyConfiguredShell(
   };
 }
 
-function setHeadlessIfPresent(
+async function setHeadlessIfPresent(
   manager: RendererTerminalSessionService,
   sessionId: Parameters<RendererTerminalSessionService["setPresentation"]>[0],
-): void {
+): Promise<void> {
   try {
-    manager.setPresentation(sessionId, {
+    await manager.setPresentation(sessionId, {
       state: "headless",
       windowVisible: false,
       windowFocused: false,

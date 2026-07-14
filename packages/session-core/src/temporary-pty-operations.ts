@@ -10,6 +10,7 @@ import {
   type RunningTerminalRun,
   type SessionId,
   type TerminalPresentationMode,
+  type TerminalSessionSummary,
 } from "@terminal/protocol";
 
 import type { TerminalSessionManager } from "./session-manager.js";
@@ -18,13 +19,13 @@ type TemporaryPtyOperation = {
   operationId: OperationId;
   sessionId: SessionId;
   startedAt: number;
-  presentation: TerminalPresentationMode;
 };
 
 export class TemporaryPtyOperations {
   private readonly operations = new Map<OperationId, TemporaryPtyOperation>();
   private readonly operationIdsBySession = new Map<SessionId, OperationId>();
   private readonly expiryTimers = new Map<OperationId, ReturnType<typeof setTimeout>>();
+  private readonly unsubscribeSessionEvents: () => void;
 
   constructor(
     private readonly sessions: TerminalSessionManager,
@@ -34,7 +35,15 @@ export class TemporaryPtyOperations {
       now: () => number;
       onBackgroundError: (error: unknown) => void;
     },
-  ) {}
+  ) {
+    this.unsubscribeSessionEvents = sessions.onSessionEvent((event) => {
+      if (event.type !== "session.updated") return;
+      const operationId = this.operationIdsBySession.get(event.payload.sessionId);
+      if (!operationId) return;
+      const operation = this.operations.get(operationId);
+      if (operation) this.reconcileRetention(operation, event.payload);
+    });
+  }
 
   get operationIds(): OperationId[] {
     return [...this.operations.keys()];
@@ -63,7 +72,7 @@ export class TemporaryPtyOperations {
       outputLimitBytes: TEMPORARY_PTY_OUTPUT_BYTES,
     });
     const presentation = request.presentation ?? "headless";
-    const operation = { operationId, sessionId: session.sessionId, startedAt, presentation };
+    const operation = { operationId, sessionId: session.sessionId, startedAt };
     this.operations.set(operationId, operation);
     this.operationIdsBySession.set(session.sessionId, operationId);
     void this.monitor(operation);
@@ -124,22 +133,33 @@ export class TemporaryPtyOperations {
   }
 
   dispose(): void {
+    this.unsubscribeSessionEvents();
     for (const operation of this.operations.values()) this.remove(operation);
   }
 
   private async monitor(operation: TemporaryPtyOperation): Promise<void> {
     try {
       if (await this.sessions.waitForExit(operation.sessionId)) {
-        this.scheduleExpiry(operation);
+        this.reconcileRetention(
+          operation,
+          this.sessions.getSession({ sessionId: operation.sessionId }),
+        );
       }
     } catch (error: unknown) {
       this.options.onBackgroundError(error);
     }
   }
 
-  private scheduleExpiry(operation: TemporaryPtyOperation): void {
+  private reconcileRetention(
+    operation: TemporaryPtyOperation,
+    session: TerminalSessionSummary,
+  ): void {
     if (this.operations.get(operation.operationId) !== operation) return;
-    if (operation.presentation !== "headless") return;
+    if (session.lifecycle !== "exited" || isPresented(session)) {
+      this.cancelExpiry(operation.operationId);
+      return;
+    }
+    if (this.expiryTimers.has(operation.operationId)) return;
     const timer = setTimeout(() => {
       void this.expire(operation);
     }, this.options.retentionMs);
@@ -149,19 +169,32 @@ export class TemporaryPtyOperations {
 
   private async expire(operation: TemporaryPtyOperation): Promise<void> {
     try {
+      const session = this.sessions.getSession({ sessionId: operation.sessionId });
+      if (session.lifecycle !== "exited" || isPresented(session)) {
+        this.cancelExpiry(operation.operationId);
+        return;
+      }
       const result = await this.sessions.close({ sessionId: operation.sessionId });
       if (result.status === "closed") this.remove(operation);
     } catch (error: unknown) {
+      if (isSessionNotFound(error)) {
+        this.remove(operation);
+        return;
+      }
       this.options.onBackgroundError(error);
     }
   }
 
   private remove(operation: TemporaryPtyOperation): void {
-    const timer = this.expiryTimers.get(operation.operationId);
-    if (timer) clearTimeout(timer);
-    this.expiryTimers.delete(operation.operationId);
+    this.cancelExpiry(operation.operationId);
     this.operations.delete(operation.operationId);
     this.operationIdsBySession.delete(operation.sessionId);
+  }
+
+  private cancelExpiry(operationId: OperationId): void {
+    const timer = this.expiryTimers.get(operationId);
+    if (timer) clearTimeout(timer);
+    this.expiryTimers.delete(operationId);
   }
 }
 
@@ -173,4 +206,17 @@ function validateTemporaryRun(request: RunTerminalRequest): void {
       { operation: "terminal.run" },
     );
   }
+}
+
+function isPresented(session: TerminalSessionSummary): boolean {
+  return session.presentation.state !== "headless";
+}
+
+function isSessionNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "type" in error &&
+    error.type === "session_not_found"
+  );
 }

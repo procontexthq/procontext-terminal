@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createOperationId, type OperationId, type RunTerminalRequest } from "@terminal/protocol";
+import {
+  createOperationId,
+  type OperationId,
+  type RunTerminalRequest,
+  type SessionId,
+} from "@terminal/protocol";
 import type { PtyHost, PtySession } from "@terminal/pty-host";
 
 import {
@@ -295,7 +300,13 @@ describe("TerminalOperationManager captured runs", () => {
     try {
       const ptyHost = new FakePtyHost();
       const sessions = new TerminalSessionManager(ptyHost);
-      const onTemporarySessionCreated = vi.fn(() => Promise.resolve());
+      const onTemporarySessionCreated = vi.fn((sessionId: SessionId) =>
+        sessions.setPresentation(sessionId, {
+          state: "background",
+          windowVisible: true,
+          windowFocused: false,
+        }),
+      );
       const manager = createManager(new FakeCapturedProcessHost(), { retentionMs: 50 }, sessions);
       const runningPromise = manager.run(
         runRequest({
@@ -319,6 +330,75 @@ describe("TerminalOperationManager captured runs", () => {
       await expect(manager.close({ operationId: running.operationId })).resolves.toMatchObject({
         status: "closed",
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retains a completed temporary PTY that is presented after starting headless", async () => {
+    vi.useFakeTimers();
+    try {
+      const ptyHost = new FakePtyHost();
+      const sessions = new TerminalSessionManager(ptyHost);
+      const manager = createManager(new FakeCapturedProcessHost(), { retentionMs: 50 }, sessions);
+      const runningPromise = manager.run(runRequest({ input: "watch", tty: true, timeoutMs: 1 }));
+      await vi.advanceTimersByTimeAsync(1);
+      const running = await runningPromise;
+      if (!running.tty) throw new Error("Expected a terminal run.");
+
+      await sessions.setPresentation(running.sessionId, {
+        state: "foreground",
+        windowVisible: true,
+        windowFocused: true,
+      });
+      ptyHost.pty.emitExit({ exitCode: 0, signal: null });
+      await sessions.waitForExit(running.sessionId, 100);
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(sessions.getSession({ sessionId: running.sessionId }).lifecycle).toBe("exited");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("expires a completed temporary PTY after its presentation becomes headless", async () => {
+    vi.useFakeTimers();
+    try {
+      const ptyHost = new FakePtyHost();
+      const sessions = new TerminalSessionManager(ptyHost);
+      const manager = createManager(new FakeCapturedProcessHost(), { retentionMs: 50 }, sessions);
+      const runningPromise = manager.run(
+        runRequest({
+          input: "watch",
+          tty: true,
+          timeoutMs: 1,
+          presentation: "background",
+        }),
+        {
+          onTemporarySessionCreated: (sessionId) =>
+            sessions.setPresentation(sessionId, {
+              state: "background",
+              windowVisible: true,
+              windowFocused: false,
+            }),
+        },
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      const running = await runningPromise;
+      if (!running.tty) throw new Error("Expected a terminal run.");
+
+      ptyHost.pty.emitExit({ exitCode: 0, signal: null });
+      await sessions.waitForExit(running.sessionId, 100);
+      await sessions.setPresentation(running.sessionId, {
+        state: "headless",
+        windowVisible: false,
+        windowFocused: false,
+      });
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(() => sessions.getSession({ sessionId: running.sessionId })).toThrow(
+        expect.objectContaining({ type: "session_not_found" }),
+      );
     } finally {
       vi.useRealTimers();
     }

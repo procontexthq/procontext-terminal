@@ -37,20 +37,37 @@ __pct_encode() {
 __pct_emit() {
   printf '\\033]633;PCT;1;%s;%s;%s;%s\\033\\\\' "$__pct_nonce" "$1" "$2" "$3"
 }
-__pct_original_prompt_command="\${PROMPT_COMMAND-}"
+__pct_original_prompt_commands=()
+case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in
+  "declare -a"*)
+    __pct_original_prompt_commands=("\${PROMPT_COMMAND[@]}")
+    ;;
+  *)
+    if [ -n "\${PROMPT_COMMAND-}" ]; then
+      __pct_original_prompt_commands=("$PROMPT_COMMAND")
+    fi
+    ;;
+esac
 __pct_original_debug_trap="$(trap -p DEBUG)"
 __pct_original_debug_trap="\${__pct_original_debug_trap#trap -- \\'}"
 __pct_original_debug_trap="\${__pct_original_debug_trap%\\' DEBUG}"
+__pct_restore_status() {
+  return "$1"
+}
 __pct_prompt() {
   local __pct_status=$?
+  local __pct_prompt_status=$__pct_status
+  local __pct_prompt_command
   __pct_in_hook=1
   if [ -n "$__pct_active_id" ]; then
     __pct_emit command-finish "$__pct_active_id" "$(__pct_encode "$__pct_status")"
     __pct_active_id=
   fi
-  if [ -n "$__pct_original_prompt_command" ]; then
-    eval "$__pct_original_prompt_command"
-  fi
+  for __pct_prompt_command in "\${__pct_original_prompt_commands[@]}"; do
+    __pct_restore_status "$__pct_prompt_status"
+    eval "$__pct_prompt_command"
+    __pct_prompt_status=$?
+  done
   __pct_emit prompt "" "$(__pct_encode "$PWD")"
   __pct_in_hook=0
   return "$__pct_status"
@@ -60,6 +77,7 @@ __pct_debug() {
   [ "$__pct_in_hook" = 1 ] && return
   __pct_in_hook=1
   if [ -n "$__pct_original_debug_trap" ]; then
+    __pct_restore_status "$__pct_status"
     eval "$__pct_original_debug_trap"
   fi
   if [ -n "$__pct_active_id" ]; then

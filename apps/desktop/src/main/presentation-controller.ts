@@ -96,7 +96,7 @@ export function createTerminalPresentationController({
         return session.presentation;
       }
 
-      sessions.setPresentation(request.sessionId, {
+      await sessions.setPresentation(request.sessionId, {
         state: "opening",
         windowVisible:
           ownerId === undefined ? false : (windowForRenderer(ownerId)?.isVisible() ?? false),
@@ -111,7 +111,7 @@ export function createTerminalPresentationController({
             await requestRenderer(ownerWindow, request.sessionId, "hide");
           }
           const presentation = headlessPresentation();
-          sessions.setPresentation(request.sessionId, presentation);
+          await sessions.setPresentation(request.sessionId, presentation);
           return presentation;
         }
 
@@ -147,7 +147,7 @@ export function createTerminalPresentationController({
           windowVisible: window.isVisible(),
           windowFocused: window.isFocused(),
         };
-        sessions.setPresentation(request.sessionId, presentation);
+        await sessions.setPresentation(request.sessionId, presentation);
         return presentation;
       } catch (error: unknown) {
         const window = registry.rendererIdFor(request.sessionId);
@@ -157,7 +157,7 @@ export function createTerminalPresentationController({
           windowVisible: owningWindow?.isVisible() ?? false,
           windowFocused: owningWindow?.isFocused() ?? false,
         };
-        sessions.setPresentation(request.sessionId, unavailable);
+        await sessions.setPresentation(request.sessionId, unavailable);
         logger.warn("presentation", "transition_unavailable", {
           sessionId: request.sessionId,
           requestedPresentation: request.presentation,

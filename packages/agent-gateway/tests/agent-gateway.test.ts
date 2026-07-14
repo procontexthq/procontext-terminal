@@ -55,6 +55,27 @@ describe("agent gateway", () => {
     client.close();
   });
 
+  it("returns a protocol-specific error for unsupported authentication versions", async () => {
+    const runtime = await createRuntime();
+    const client = await AgentClient.connect(runtime.gateway.descriptor.url);
+
+    await expect(
+      client.requestRaw({
+        type: "agent.authenticate",
+        requestId: createRequestId("request-unsupported-version"),
+        payload: { token: "test-token", protocolVersion: 2 },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        type: "protocol_version_unsupported",
+        operation: "agent.authenticate",
+      },
+    });
+
+    client.close();
+  });
+
   it("rejects unauthenticated requests and removed command names", async () => {
     const runtime = await createRuntime();
     const client = await AgentClient.connect(runtime.gateway.descriptor.url);

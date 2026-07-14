@@ -37,7 +37,7 @@ export type AgentTerminalService = {
   run(request: RunTerminalRequest): Promise<RunTerminalResult>;
   input(request: TerminalInputRequest): Promise<TerminalInputResult>;
   resize(request: ResizeTerminalRequest): Promise<ResizeTerminalResult>;
-  scroll(request: ScrollTerminalRequest): ScrollTerminalResult;
+  scroll(request: ScrollTerminalRequest): Promise<ScrollTerminalResult>;
   setPresentation(request: SetTerminalPresentationRequest): Promise<TerminalPresentation>;
   observe(
     request: ObserveTerminalRequest | ObserveCapturedOperationRequest,

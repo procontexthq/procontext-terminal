@@ -126,20 +126,36 @@ describe("terminal command handler", () => {
   it("removes presentation ownership only after a completed close", async () => {
     const base = createServices();
     base.presentationRegistry.open(sessionId, 11);
-    vi.mocked(base.sessionManager.close).mockResolvedValueOnce({
+    vi.mocked(base.closeSession).mockResolvedValueOnce({
       status: "termination_pending",
     });
 
     await handleRendererCommandPayload(createRendererCommand("session.close", { sessionId }), base);
     expect(base.presentationRegistry.owns(sessionId, 11)).toBe(true);
 
-    vi.mocked(base.sessionManager.close).mockResolvedValueOnce({
+    vi.mocked(base.closeSession).mockResolvedValueOnce({
       status: "closed",
       exitCode: 0,
       signal: null,
     });
     await handleRendererCommandPayload(createRendererCommand("session.close", { sessionId }), base);
     expect(base.presentationRegistry.owns(sessionId, 11)).toBe(false);
+  });
+
+  it("routes session close through the operation-aware close service", async () => {
+    const closeSession = vi.fn(() =>
+      Promise.resolve({
+        status: "closed" as const,
+        exitCode: 0,
+        signal: null,
+      }),
+    );
+    const base = { ...createServices(), closeSession };
+
+    await handleRendererCommandPayload(createRendererCommand("session.close", { sessionId }), base);
+
+    expect(closeSession).toHaveBeenCalledWith({ sessionId });
+    expect(base.closeSession).toHaveBeenCalledOnce();
   });
 
   it("authorizes recording before invoking recorder operations", async () => {
@@ -219,22 +235,15 @@ function createServices(overrides: { policy?: TerminalPolicy } = {}): TerminalCo
       getSession: vi.fn(() => summary),
       input: vi.fn(() => Promise.resolve({ accepted: true as const, observationVersion: 1 })),
       resize: vi.fn(() => Promise.resolve({ observationVersion: 2 })),
-      scroll: vi.fn(() => ({ status: "unchanged" as const, observationVersion: 2 })),
-      close: vi.fn(() =>
-        Promise.resolve({
-          status: "closed" as const,
-          exitCode: 0,
-          signal: null,
-        }),
-      ),
+      scroll: vi.fn(() => Promise.resolve({ status: "unchanged" as const, observationVersion: 2 })),
       getViewBootstrap: vi.fn(() => ({
         session: summary,
         serialized: "serialized framebuffer",
         sequence: 7,
         viewportY: 3,
       })),
-      setPresentation: vi.fn(),
-      reportViewport: vi.fn(() => true),
+      setPresentation: vi.fn(() => Promise.resolve()),
+      reportViewport: vi.fn(() => Promise.resolve(true)),
       startRecording: vi.fn(() => Promise.resolve()),
       stopRecording: vi.fn(() => Promise.resolve()),
       exportRecording: vi.fn(() =>
@@ -246,6 +255,13 @@ function createServices(overrides: { policy?: TerminalPolicy } = {}): TerminalCo
         }),
       ),
     },
+    closeSession: vi.fn(() =>
+      Promise.resolve({
+        status: "closed" as const,
+        exitCode: 0,
+        signal: null,
+      }),
+    ),
     getConfig: defaultTerminalConfig,
     saveConfig: (config) => Promise.resolve(config),
     policy: overrides.policy ?? createDefaultTerminalPolicy(),

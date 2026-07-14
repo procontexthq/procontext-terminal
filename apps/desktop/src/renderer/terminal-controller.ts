@@ -40,6 +40,7 @@ export type TerminalLaunchMetadata = {
 
 export type TerminalController = {
   sessionId: SessionId;
+  readonly lifecycle: TerminalLifecycleState;
   focus(): void;
   resize(): Promise<void>;
   setFontFamily(fontFamily: string): void;
@@ -158,6 +159,9 @@ export async function createTerminalSession(
     const activeSessionId = sessionId;
     return {
       sessionId: activeSessionId,
+      get lifecycle() {
+        return lifecycle;
+      },
       focus() {
         terminal.focus?.();
       },
