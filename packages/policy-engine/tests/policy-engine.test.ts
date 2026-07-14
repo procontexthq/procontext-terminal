@@ -187,6 +187,68 @@ describe("default agent policy", () => {
       }),
     ).toMatchObject({ type: "allow" });
   });
+
+  it("returns privacy-safe prompts for configured agent permission categories", () => {
+    const policy = createDefaultAgentPolicy({
+      createDecisionId: () => "decision-prompt",
+      getPermissionMode: (category) => (category === "termination" ? "ask" : "allow"),
+    });
+    const sessionId = createSessionId("session-prompt");
+
+    expect(
+      policy.authorize({
+        actor: {
+          kind: "agent",
+          authenticated: true,
+          local: true,
+          attachedSessionIds: new Set([sessionId]),
+        },
+        operation: {
+          type: "terminal.close",
+          sessionId,
+          inputKind: "close",
+          cwd: "/SECRET_PATH",
+          shell: "SECRET_SHELL",
+        },
+      }),
+    ).toEqual({
+      type: "prompt",
+      decisionId: "decision-prompt",
+      prompt: {
+        decisionId: "decision-prompt",
+        category: "termination",
+        operation: "terminal.close",
+        sessionId,
+      },
+    });
+  });
+
+  it("denies configured categories without creating a prompt", () => {
+    const policy = createDefaultAgentPolicy({
+      createDecisionId: () => "decision-configured-deny",
+      getPermissionMode: (category) => (category === "recording" ? "deny" : "allow"),
+    });
+    const sessionId = createSessionId("session-recording-denied");
+
+    expect(
+      policy.authorize({
+        actor: {
+          kind: "agent",
+          authenticated: true,
+          local: true,
+          attachedSessionIds: new Set([sessionId]),
+        },
+        operation: {
+          type: "terminal.recording.start",
+          sessionId,
+          recordingKind: "start",
+        },
+      }),
+    ).toMatchObject({
+      type: "deny",
+      reason: { code: "permission_denied", sessionId },
+    });
+  });
 });
 
 describe("default terminal policy", () => {

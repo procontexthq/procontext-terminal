@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 import {
+  agentPermissionCategories,
+  saveAgentPolicyRequestSchema,
   saveUiThemeRequestSchema,
+  type AgentPermissionCategory,
+  type AgentPolicyConfig,
+  type SaveAgentPolicyRequest,
   type SaveUiThemeRequest,
   type TerminalConfig,
   type UiThemePreference,
@@ -16,6 +21,7 @@ import {
 } from "./errors.js";
 import {
   createRequestId,
+  decisionIdSchema,
   requestIdSchema,
   sessionIdSchema,
   type RequestId,
@@ -46,6 +52,7 @@ import {
   type TerminalInputResult,
   type TerminalSessionSummary,
 } from "./sessions.js";
+import type { PolicyDenialCode } from "./agent.js";
 
 export type TerminalViewBootstrap = {
   session: TerminalSessionSummary;
@@ -57,6 +64,7 @@ export type TerminalViewBootstrap = {
 export type OpenTerminalViewRequest = { sessionId: SessionId };
 export type CloseTerminalViewRequest = { sessionId: SessionId };
 export type ReportTerminalViewportRequest = { sessionId: SessionId; viewportY: number };
+export type ReportTerminalViewFocusRequest = { sessionId: SessionId; focused: boolean };
 export type RendererPresentationAction = "open" | "focus" | "hide" | "close";
 export type RendererPresentationCommand = {
   commandId: RequestId;
@@ -66,6 +74,49 @@ export type RendererPresentationCommand = {
 export type RendererPresentationAcknowledgement = RendererPresentationCommand & {
   status: "completed" | "failed";
   message?: string;
+};
+
+export type AgentSessionControlState = {
+  sessionId: SessionId;
+  state: "attached" | "detached" | "revoked";
+  attachedAt: string | null;
+};
+
+export type RevokeAgentControlRequest = { sessionId: SessionId };
+export type AllowAgentControlRequest = { sessionId: SessionId };
+
+export type RecordingExportFileResult =
+  | { status: "saved"; fileName: string }
+  | { status: "cancelled" };
+
+export type PolicyDenialNotice = {
+  decisionId: string;
+  at: string;
+  actor: "agent" | "human";
+  operation: string;
+  sessionId?: SessionId;
+  code: PolicyDenialCode;
+  message: string;
+};
+
+export type AgentPermissionRequest = {
+  permissionId: string;
+  category: AgentPermissionCategory;
+  operation: string;
+  sessionId?: SessionId;
+  requestedAt: string;
+  expiresAt: string;
+};
+
+export type PermissionResolutionDecision = "allow" | "deny";
+export type PermissionResolutionOutcome = PermissionResolutionDecision | "timeout" | "cancelled";
+export type ResolvePermissionRequest = {
+  permissionId: string;
+  decision: PermissionResolutionDecision;
+};
+export type PermissionResolvedEvent = {
+  permissionId: string;
+  outcome: PermissionResolutionOutcome;
 };
 
 export type RendererSessionEvent =
@@ -78,9 +129,14 @@ export type RendererSessionEvent =
       payload: { sessionId: SessionId; viewportY: number; observationVersion: number };
     }
   | { type: "session.updated"; payload: TerminalSessionSummary }
+  | { type: "session.removed"; payload: { sessionId: SessionId } }
   | { type: "session.bell"; payload: { sessionId: SessionId } }
   | { type: "session.error"; payload: TerminalError }
   | { type: "agent.activity"; payload: AgentActivityState }
+  | { type: "agent.control.changed"; payload: AgentSessionControlState }
+  | { type: "policy.denied"; payload: PolicyDenialNotice }
+  | { type: "permission.requested"; payload: AgentPermissionRequest }
+  | { type: "permission.resolved"; payload: PermissionResolvedEvent }
   | { type: "presentation.command"; payload: RendererPresentationCommand };
 
 export type AgentActivityState = {
@@ -104,11 +160,39 @@ export type RendererCommand =
       requestId: RequestId;
       payload: ReportTerminalViewportRequest;
     }
+  | {
+      type: "session.reportViewFocus";
+      requestId: RequestId;
+      payload: ReportTerminalViewFocusRequest;
+    }
   | { type: "recording.start"; requestId: RequestId; payload: RecordingControlRequest }
   | { type: "recording.stop"; requestId: RequestId; payload: RecordingControlRequest }
   | { type: "recording.export"; requestId: RequestId; payload: RecordingControlRequest }
+  | { type: "recording.exportFile"; requestId: RequestId; payload: RecordingControlRequest }
+  | { type: "agent.control.list"; requestId: RequestId; payload: Record<string, never> }
+  | {
+      type: "agent.control.revoke";
+      requestId: RequestId;
+      payload: RevokeAgentControlRequest;
+    }
+  | {
+      type: "agent.control.allow";
+      requestId: RequestId;
+      payload: AllowAgentControlRequest;
+    }
+  | { type: "permission.list"; requestId: RequestId; payload: Record<string, never> }
+  | {
+      type: "permission.resolve";
+      requestId: RequestId;
+      payload: ResolvePermissionRequest;
+    }
   | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> }
   | { type: "settings.saveUiTheme"; requestId: RequestId; payload: SaveUiThemeRequest }
+  | {
+      type: "settings.saveAgentPolicy";
+      requestId: RequestId;
+      payload: SaveAgentPolicyRequest;
+    }
   | { type: "presentation.ready"; requestId: RequestId; payload: Record<string, never> }
   | {
       type: "presentation.acknowledge";
@@ -133,6 +217,56 @@ const rendererPresentationAcknowledgementSchema = z.object({
   status: z.enum(["completed", "failed"]),
   message: z.string().min(1).optional(),
 });
+export const agentSessionControlStateSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    state: z.enum(["attached", "detached", "revoked"]),
+    attachedAt: z.string().min(1).nullable(),
+  })
+  .strict();
+export const policyDenialNoticeSchema = z
+  .object({
+    decisionId: z.string().min(1),
+    at: z.string().min(1),
+    actor: z.enum(["agent", "human"]),
+    operation: z.string().min(1),
+    sessionId: sessionIdSchema.optional(),
+    code: z.enum([
+      "auth_required",
+      "remote_control_disabled",
+      "session_not_owned",
+      "session_in_use",
+      "agent_control_revoked",
+      "permission_denied",
+      "permission_timeout",
+      "permission_unavailable",
+    ]),
+    message: z.string().min(1),
+  })
+  .strict();
+export const agentPermissionRequestSchema = z
+  .object({
+    permissionId: decisionIdSchema,
+    category: z.enum(agentPermissionCategories),
+    operation: z.string().min(1),
+    sessionId: sessionIdSchema.optional(),
+    requestedAt: z.string().min(1),
+    expiresAt: z.string().min(1),
+  })
+  .strict();
+export const permissionResolutionOutcomeSchema = z.enum(["allow", "deny", "timeout", "cancelled"]);
+export const permissionResolvedEventSchema = z
+  .object({
+    permissionId: decisionIdSchema,
+    outcome: permissionResolutionOutcomeSchema,
+  })
+  .strict();
+export const resolvePermissionRequestSchema = z
+  .object({
+    permissionId: decisionIdSchema,
+    decision: z.enum(["allow", "deny"]),
+  })
+  .strict();
 
 export const rendererCommandSchema = z.discriminatedUnion("type", [
   z.object({
@@ -182,6 +316,11 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     payload: z.object({ sessionId: sessionIdSchema, viewportY: z.number().int().nonnegative() }),
   }),
   z.object({
+    type: z.literal("session.reportViewFocus"),
+    requestId: requestIdSchema,
+    payload: z.object({ sessionId: sessionIdSchema, focused: z.boolean() }),
+  }),
+  z.object({
     type: z.literal("recording.start"),
     requestId: requestIdSchema,
     payload: recordingControlRequestSchema,
@@ -196,11 +335,46 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     requestId: requestIdSchema,
     payload: recordingControlRequestSchema,
   }),
+  z.object({
+    type: z.literal("recording.exportFile"),
+    requestId: requestIdSchema,
+    payload: recordingControlRequestSchema,
+  }),
+  z.object({
+    type: z.literal("agent.control.list"),
+    requestId: requestIdSchema,
+    payload: z.object({}),
+  }),
+  z.object({
+    type: z.literal("agent.control.revoke"),
+    requestId: requestIdSchema,
+    payload: viewRequestSchema,
+  }),
+  z.object({
+    type: z.literal("agent.control.allow"),
+    requestId: requestIdSchema,
+    payload: viewRequestSchema,
+  }),
+  z.object({
+    type: z.literal("permission.list"),
+    requestId: requestIdSchema,
+    payload: z.object({}),
+  }),
+  z.object({
+    type: z.literal("permission.resolve"),
+    requestId: requestIdSchema,
+    payload: resolvePermissionRequestSchema,
+  }),
   z.object({ type: z.literal("settings.get"), requestId: requestIdSchema, payload: z.object({}) }),
   z.object({
     type: z.literal("settings.saveUiTheme"),
     requestId: requestIdSchema,
     payload: saveUiThemeRequestSchema,
+  }),
+  z.object({
+    type: z.literal("settings.saveAgentPolicy"),
+    requestId: requestIdSchema,
+    payload: saveAgentPolicyRequestSchema,
   }),
   z.object({
     type: z.literal("presentation.ready"),
@@ -228,11 +402,19 @@ export type RendererTerminalApi = {
   openView(request: OpenTerminalViewRequest): Promise<TerminalViewBootstrap>;
   closeView(request: CloseTerminalViewRequest): Promise<void>;
   reportViewport(request: ReportTerminalViewportRequest): Promise<void>;
+  reportViewFocus(request: ReportTerminalViewFocusRequest): Promise<void>;
   startRecording(request: RecordingControlRequest): Promise<void>;
   stopRecording(request: RecordingControlRequest): Promise<void>;
   exportRecording(request: RecordingControlRequest): Promise<TerminalRecordingExport>;
+  exportRecordingFile(request: RecordingControlRequest): Promise<RecordingExportFileResult>;
+  listAgentControls(): Promise<AgentSessionControlState[]>;
+  revokeAgentControl(request: RevokeAgentControlRequest): Promise<AgentSessionControlState>;
+  allowAgentControl(request: AllowAgentControlRequest): Promise<AgentSessionControlState>;
+  listPermissions(): Promise<AgentPermissionRequest[]>;
+  resolvePermission(request: ResolvePermissionRequest): Promise<boolean>;
   getConfig(): Promise<TerminalConfig>;
   saveUiTheme(theme: UiThemePreference): Promise<TerminalConfig>;
+  saveAgentPolicy(policy: AgentPolicyConfig): Promise<TerminalConfig>;
   presentationReady(): Promise<void>;
   acknowledgePresentation(request: RendererPresentationAcknowledgement): Promise<void>;
   onAppShortcut(handler: (action: AppShortcutAction) => void): Unsubscribe;
@@ -280,6 +462,8 @@ export function isRendererSessionEvent(value: unknown): value is RendererSession
       );
     case "session.updated":
       return terminalSessionSummarySchema.safeParse(value.payload).success;
+    case "session.removed":
+      return sessionIdSchema.safeParse(value.payload.sessionId).success;
     case "session.bell":
       return typeof value.payload.sessionId === "string";
     case "session.error":
@@ -289,6 +473,14 @@ export function isRendererSessionEvent(value: unknown): value is RendererSession
         typeof value.payload.activeConnections === "number" &&
         typeof value.payload.authenticatedConnections === "number"
       );
+    case "agent.control.changed":
+      return agentSessionControlStateSchema.safeParse(value.payload).success;
+    case "policy.denied":
+      return policyDenialNoticeSchema.safeParse(value.payload).success;
+    case "permission.requested":
+      return agentPermissionRequestSchema.safeParse(value.payload).success;
+    case "permission.resolved":
+      return permissionResolvedEventSchema.safeParse(value.payload).success;
     case "presentation.command":
       return (
         typeof value.payload.commandId === "string" &&

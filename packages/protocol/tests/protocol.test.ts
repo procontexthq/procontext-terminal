@@ -308,6 +308,9 @@ describe("terminal protocol", () => {
       }),
     ).toMatchObject({ type: "session.reportViewport" });
     expect(
+      createRendererCommand("session.reportViewFocus", { sessionId, focused: true }, requestId),
+    ).toMatchObject({ type: "session.reportViewFocus" });
+    expect(
       isRendererSessionEvent({
         type: "session.output",
         payload: { sessionId, sequence: 4, data: "output" },
@@ -332,13 +335,135 @@ describe("terminal protocol", () => {
         requestId,
       ),
     ).toMatchObject({ type: "presentation.acknowledge" });
+    expect(createRendererCommand("agent.control.list", {}, requestId)).toMatchObject({
+      type: "agent.control.list",
+    });
+    expect(createRendererCommand("agent.control.revoke", { sessionId }, requestId)).toMatchObject({
+      type: "agent.control.revoke",
+    });
+    expect(createRendererCommand("agent.control.allow", { sessionId }, requestId)).toMatchObject({
+      type: "agent.control.allow",
+    });
+    expect(createRendererCommand("recording.exportFile", { sessionId }, requestId)).toMatchObject({
+      type: "recording.exportFile",
+    });
+    expect(createRendererCommand("permission.list", {}, requestId)).toMatchObject({
+      type: "permission.list",
+    });
+    expect(
+      createRendererCommand(
+        "permission.resolve",
+        { permissionId: "decision-permission", decision: "allow" },
+        requestId,
+      ),
+    ).toMatchObject({ type: "permission.resolve" });
+    expect(
+      createRendererCommand(
+        "settings.saveAgentPolicy",
+        {
+          policy: {
+            observation: "allow",
+            execution: "ask",
+            interaction: "allow",
+            presentation: "deny",
+            recording: "ask",
+            termination: "deny",
+          },
+        },
+        requestId,
+      ),
+    ).toMatchObject({ type: "settings.saveAgentPolicy" });
+    expect(
+      isRendererSessionEvent({
+        type: "permission.requested",
+        payload: {
+          permissionId: "decision-permission",
+          category: "termination",
+          operation: "terminal.close",
+          sessionId,
+          requestedAt: "2026-07-14T00:00:00.000Z",
+          expiresAt: "2026-07-14T00:00:30.000Z",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "permission.resolved",
+        payload: { permissionId: "decision-permission", outcome: "deny" },
+      }),
+    ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "agent.control.changed",
+        payload: {
+          sessionId,
+          state: "attached",
+          attachedAt: "2026-07-14T00:00:00.000Z",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "policy.denied",
+        payload: {
+          decisionId: "decision-renderer",
+          at: "2026-07-14T00:00:00.000Z",
+          actor: "agent",
+          operation: "terminal.input",
+          sessionId,
+          code: "session_not_owned",
+          message: "Agent connection is not attached to this terminal session.",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "session.removed",
+        payload: { sessionId },
+      }),
+    ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "agent.control.changed",
+        payload: {
+          sessionId,
+          state: "attached",
+          attachedAt: null,
+          connectionId: "private",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRendererSessionEvent({
+        type: "agent.control.changed",
+        payload: {
+          sessionId,
+          state: "revoked",
+          attachedAt: null,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "policy.denied",
+        payload: {
+          decisionId: "decision-revoked",
+          at: "2026-07-14T00:00:00.000Z",
+          actor: "agent",
+          operation: "terminal.attach",
+          sessionId,
+          code: "agent_control_revoked",
+          message: "Agent control has been revoked for this terminal session.",
+        },
+      }),
+    ).toBe(true);
   });
 
   it("keeps configuration and recording formats compatible", () => {
     const sessionId = createSessionId("session-recording");
     expect(
       parseTerminalConfig({
-        schemaVersion: 2,
+        schemaVersion: 3,
         terminal: {
           fontFamily: "monospace",
           fontSize: 13,
@@ -348,8 +473,16 @@ describe("terminal protocol", () => {
         shell: { defaultProfile: null, profiles: [] },
         recording: { state: "disabled", redactedPatterns: [] },
         ui: { theme: "default" },
+        agentPolicy: {
+          observation: "allow",
+          execution: "allow",
+          interaction: "allow",
+          presentation: "ask",
+          recording: "ask",
+          termination: "ask",
+        },
       }),
-    ).toMatchObject({ schemaVersion: 2, terminal: { scrollback: 5000 } });
+    ).toMatchObject({ schemaVersion: 3, agentPolicy: { presentation: "ask" } });
     expect(
       parseTerminalRecordingExport({
         schemaVersion: 1,

@@ -29,9 +29,30 @@ describe("renderer terminal api", () => {
     await expect(api.reportViewport({ sessionId, viewportY: 4 })).resolves.toBe(
       "session.reportViewport",
     );
+    await expect(api.reportViewFocus({ sessionId, focused: true })).resolves.toBe(
+      "session.reportViewFocus",
+    );
     await expect(api.closeView({ sessionId })).resolves.toBe("session.closeView");
     await expect(api.startRecording({ sessionId })).resolves.toBe("recording.start");
+    await expect(api.exportRecordingFile({ sessionId })).resolves.toBe("recording.exportFile");
+    await expect(api.listAgentControls()).resolves.toBe("agent.control.list");
+    await expect(api.revokeAgentControl({ sessionId })).resolves.toBe("agent.control.revoke");
+    await expect(api.allowAgentControl({ sessionId })).resolves.toBe("agent.control.allow");
+    await expect(api.listPermissions()).resolves.toBe("permission.list");
+    await expect(
+      api.resolvePermission({ permissionId: "decision-1", decision: "deny" }),
+    ).resolves.toBe("permission.resolve");
     await expect(api.saveUiTheme("gamer")).resolves.toBe("settings.saveUiTheme");
+    await expect(
+      api.saveAgentPolicy({
+        observation: "allow",
+        execution: "ask",
+        interaction: "allow",
+        presentation: "deny",
+        recording: "ask",
+        termination: "deny",
+      }),
+    ).resolves.toBe("settings.saveAgentPolicy");
     await expect(api.presentationReady()).resolves.toBe("presentation.ready");
     await expect(
       api.acknowledgePresentation({

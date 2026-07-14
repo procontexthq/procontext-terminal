@@ -12,9 +12,14 @@ export function nextTerminalStatus(
     case "session.output":
       return current === "starting" || current === "creating" ? "running" : current;
     case "session.viewport":
+    case "session.removed":
     case "session.bell":
     case "session.error":
     case "agent.activity":
+    case "agent.control.changed":
+    case "policy.denied":
+    case "permission.requested":
+    case "permission.resolved":
     case "presentation.command":
       return current;
   }

@@ -35,6 +35,10 @@ The window manager must not:
 
 Window state is UI state. Terminal session state remains owned by the [Terminal Session Manager](./terminal-session-manager.md).
 
+Window restoration is limited to validated size, position, and display
+placement. It must not restore terminal sessions, tabs, operations, PTY runtime
+state, or workspace layouts.
+
 ## Close Behavior
 
 Window close handling must preserve the distinction between closing a view and ending a session.

@@ -22,6 +22,7 @@ const controller: TerminalController = {
   resize: vi.fn(() => Promise.resolve()),
   setFontFamily: vi.fn(),
   setTheme: vi.fn(),
+  setFocused: vi.fn(() => Promise.resolve()),
   dispose: vi.fn(() => Promise.resolve(true)),
 };
 
@@ -51,6 +52,8 @@ describe("TerminalTabView", () => {
     createTerminalSessionMock.mockResolvedValue(controller);
     vi.mocked(controller.dispose).mockClear();
     vi.mocked(controller.resize).mockClear();
+    vi.mocked(controller.setFocused).mockClear();
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
     globalThis.ResizeObserver = class {
       observe(): void {}
       unobserve(): void {}
@@ -59,6 +62,7 @@ describe("TerminalTabView", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     document.body.replaceChildren();
   });
 
@@ -118,6 +122,48 @@ describe("TerminalTabView", () => {
     act(() => {
       root.unmount();
     });
+  });
+
+  it("reports active-tab focus changes through its terminal controller", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const tab = createTab("/workspace");
+    const props = createProps(tab);
+
+    act(() => {
+      root.render(createElement(TerminalTabView, props));
+    });
+    await act(() => Promise.resolve());
+
+    expect(controller.setFocused).toHaveBeenCalledWith(true);
+
+    vi.mocked(document.hasFocus).mockReturnValue(false);
+    await act(() => {
+      window.dispatchEvent(new Event("blur"));
+      return Promise.resolve();
+    });
+    expect(controller.setFocused).toHaveBeenLastCalledWith(false);
+
+    vi.mocked(document.hasFocus).mockReturnValue(true);
+    await act(() => {
+      window.dispatchEvent(new Event("focus"));
+      return Promise.resolve();
+    });
+    expect(controller.setFocused).toHaveBeenLastCalledWith(true);
+
+    act(() => {
+      root.render(createElement(TerminalTabView, { ...props, active: false }));
+    });
+    await act(() => Promise.resolve());
+
+    expect(controller.setFocused).toHaveBeenLastCalledWith(false);
+    await act(() => {
+      window.dispatchEvent(new Event("focus"));
+      return Promise.resolve();
+    });
+    expect(controller.setFocused).toHaveBeenLastCalledWith(false);
+    act(() => root.unmount());
   });
 
   it("terminates a newly created session when its tab unmounts before startup completes", async () => {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { agentPermissionCategories, type AgentPermissionCategory } from "./config.js";
 import {
   commandResultSchema,
   createCommandFailure,
@@ -67,7 +68,11 @@ export type PolicyDenialCode =
   | "auth_required"
   | "remote_control_disabled"
   | "session_not_owned"
-  | "session_in_use";
+  | "session_in_use"
+  | "agent_control_revoked"
+  | "permission_denied"
+  | "permission_timeout"
+  | "permission_unavailable";
 
 export type PolicyDenial = {
   decisionId: string;
@@ -78,9 +83,17 @@ export type PolicyDenial = {
   operationId?: OperationId;
 };
 
+export type PolicyPrompt = {
+  decisionId: string;
+  category: AgentPermissionCategory;
+  operation: string;
+  sessionId?: SessionId;
+};
+
 export type PolicyDecision =
   | { type: "allow"; decisionId: string; reason?: string }
-  | { type: "deny"; decisionId: string; reason: PolicyDenial };
+  | { type: "deny"; decisionId: string; reason: PolicyDenial }
+  | { type: "prompt"; decisionId: string; prompt: PolicyPrompt };
 
 export type AgentCommand =
   | {
@@ -162,12 +175,30 @@ export const agentGatewayDescriptorSchema = z
 
 export const policyDenialSchema = z.object({
   decisionId: decisionIdSchema,
-  code: z.enum(["auth_required", "remote_control_disabled", "session_not_owned", "session_in_use"]),
+  code: z.enum([
+    "auth_required",
+    "remote_control_disabled",
+    "session_not_owned",
+    "session_in_use",
+    "agent_control_revoked",
+    "permission_denied",
+    "permission_timeout",
+    "permission_unavailable",
+  ]),
   message: z.string().min(1),
   operation: z.string().min(1),
   sessionId: sessionIdSchema.optional(),
   operationId: operationIdSchema.optional(),
 });
+
+export const policyPromptSchema = z
+  .object({
+    decisionId: decisionIdSchema,
+    category: z.enum(agentPermissionCategories),
+    operation: z.string().min(1),
+    sessionId: sessionIdSchema.optional(),
+  })
+  .strict();
 
 export const policyDecisionSchema = z.discriminatedUnion("type", [
   z.object({
@@ -176,6 +207,11 @@ export const policyDecisionSchema = z.discriminatedUnion("type", [
     reason: z.string().optional(),
   }),
   z.object({ type: z.literal("deny"), decisionId: decisionIdSchema, reason: policyDenialSchema }),
+  z.object({
+    type: z.literal("prompt"),
+    decisionId: decisionIdSchema,
+    prompt: policyPromptSchema,
+  }),
 ]);
 
 export const agentCommandSchema = z.discriminatedUnion("type", [

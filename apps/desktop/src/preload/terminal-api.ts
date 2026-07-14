@@ -37,15 +37,29 @@ export function createRendererTerminalApi({
       invokeCommand(invoke, createRendererCommand("session.closeView", request)),
     reportViewport: (request) =>
       invokeCommand(invoke, createRendererCommand("session.reportViewport", request)),
+    reportViewFocus: (request) =>
+      invokeCommand(invoke, createRendererCommand("session.reportViewFocus", request)),
     startRecording: (request) =>
       invokeCommand(invoke, createRendererCommand("recording.start", request)),
     stopRecording: (request) =>
       invokeCommand(invoke, createRendererCommand("recording.stop", request)),
     exportRecording: (request) =>
       invokeCommand(invoke, createRendererCommand("recording.export", request)),
+    exportRecordingFile: (request) =>
+      invokeCommand(invoke, createRendererCommand("recording.exportFile", request)),
+    listAgentControls: () => invokeCommand(invoke, createRendererCommand("agent.control.list", {})),
+    revokeAgentControl: (request) =>
+      invokeCommand(invoke, createRendererCommand("agent.control.revoke", request)),
+    allowAgentControl: (request) =>
+      invokeCommand(invoke, createRendererCommand("agent.control.allow", request)),
+    listPermissions: () => invokeCommand(invoke, createRendererCommand("permission.list", {})),
+    resolvePermission: (request) =>
+      invokeCommand(invoke, createRendererCommand("permission.resolve", request)),
     getConfig: () => invokeCommand(invoke, createRendererCommand("settings.get", {})),
     saveUiTheme: (theme) =>
       invokeCommand(invoke, createRendererCommand("settings.saveUiTheme", { theme })),
+    saveAgentPolicy: (policy) =>
+      invokeCommand(invoke, createRendererCommand("settings.saveAgentPolicy", { policy })),
     presentationReady: () => invokeCommand(invoke, createRendererCommand("presentation.ready", {})),
     acknowledgePresentation: (request) =>
       invokeCommand(invoke, createRendererCommand("presentation.acknowledge", request)),
@@ -78,11 +92,16 @@ function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId):
     case "session.output":
     case "session.viewport":
     case "session.updated":
+    case "session.removed":
     case "session.bell":
       return event.payload.sessionId === sessionId;
     case "session.error":
       return event.payload.sessionId === sessionId;
     case "agent.activity":
+    case "agent.control.changed":
+    case "policy.denied":
+    case "permission.requested":
+    case "permission.resolved":
     case "presentation.command":
       return false;
   }

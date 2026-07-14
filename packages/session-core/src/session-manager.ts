@@ -170,6 +170,7 @@ export class TerminalSessionManager {
     if (result.status === "closed") {
       session.dispose();
       this.sessions.delete(request.sessionId);
+      this.emit({ type: "session.removed", payload: { sessionId: request.sessionId } });
     }
     return result;
   }
@@ -198,6 +199,7 @@ export class TerminalSessionManager {
             terminated += 1;
             session.dispose();
             this.sessions.delete(sessionId);
+            this.emit({ type: "session.removed", payload: { sessionId } });
           } else {
             timedOut += 1;
           }

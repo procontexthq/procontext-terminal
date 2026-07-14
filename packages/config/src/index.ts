@@ -12,7 +12,7 @@ export type ConfigParseResult = {
 
 export function defaultTerminalConfig(): TerminalConfig {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     terminal: {
       fontFamily:
         '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
@@ -35,12 +35,25 @@ export function defaultTerminalConfig(): TerminalConfig {
       state: "disabled",
       redactedPatterns: [],
     },
+    agentPolicy: {
+      observation: "allow",
+      execution: "allow",
+      interaction: "allow",
+      presentation: "allow",
+      recording: "allow",
+      termination: "allow",
+    },
   };
 }
 
 export function parseTerminalConfig(value: unknown): ConfigParseResult {
   const schemaVersion = readSchemaVersion(value);
-  if (schemaVersion !== undefined && schemaVersion !== 1 && schemaVersion !== 2) {
+  if (
+    schemaVersion !== undefined &&
+    schemaVersion !== 1 &&
+    schemaVersion !== 2 &&
+    schemaVersion !== 3
+  ) {
     return {
       config: defaultTerminalConfig(),
       warnings: [`Unsupported terminal settings schema version ${schemaVersion}; using defaults.`],
@@ -53,7 +66,7 @@ export function parseTerminalConfig(value: unknown): ConfigParseResult {
   const merged = {
     ...defaults,
     ...raw,
-    schemaVersion: 2,
+    schemaVersion: 3,
     terminal: {
       ...defaults.terminal,
       ...(isObject(raw.terminal) ? raw.terminal : {}),
@@ -67,6 +80,10 @@ export function parseTerminalConfig(value: unknown): ConfigParseResult {
       ...(isObject(raw.ui) ? raw.ui : {}),
     },
     recording: recording.config,
+    agentPolicy: {
+      ...defaults.agentPolicy,
+      ...(isObject(raw.agentPolicy) ? raw.agentPolicy : {}),
+    },
   };
   const parsed = terminalConfigSchema.safeParse(merged);
   if (parsed.success) {

@@ -22,6 +22,8 @@ The complete agent contract is defined by
 - Every PTY session owns one headless xterm.js model outside the renderer.
 - Renderer xterm.js instances are projections, not canonical terminal state.
 - PTY lifecycle, renderer presentation, and agent attachment are independent.
+- Renderer collaboration status composes canonical summaries with sanitized
+  gateway attachment state. Gateway connection identifiers remain private.
 - Terminal input is one raw ordered byte-string operation.
 - Versioned observation replaces snapshots, output replay, and specialized
   waiting operations.
@@ -217,8 +219,8 @@ is unchanged; keys intended for the application remain terminal input.
 
 - Settings and recording formats remain versioned.
 - Full transcripts persist only when recording is explicitly enabled.
-- Session and operation runtime state is not restored after app restart in the
-  foundation release.
+- Session, operation, tab, and PTY runtime state is not restored after app
+  restart. Phase 5 may restore validated window geometry only.
 - Default PTY scrollback is 5,000 rows.
 - Captured operation streams default to 1 MiB each and may request up to
   16 MiB each.
@@ -228,7 +230,9 @@ is unchanged; keys intended for the application remain terminal input.
 
 ## Subsequent Phases
 
-- Panes, search, links, settings UI, and release packaging improvements.
+- Collaboration visibility and human control for agent-operated sessions.
+- Focused terminal search, validated links, settings, and accessibility.
+- Cross-platform PTY, packaging, installer, signing, and release hardening.
 
 The subsequent-phase contracts are already fixed in the agent interface design
 and must be implemented without reintroducing competing terminal state models.

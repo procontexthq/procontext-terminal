@@ -8,8 +8,14 @@ import {
   type CloseTerminalRequest,
   type CloseTerminalResult,
   type CreateTerminalRequest,
+  type AgentSessionControlState,
+  type AgentPermissionRequest,
+  type PolicyDenialNotice,
+  type RecordingControlRequest,
+  type RecordingExportFileResult,
   type RendererCommand,
   type RendererCommandResult,
+  type ResolvePermissionRequest,
   type TerminalConfig,
   type TerminalError,
 } from "@terminal/protocol";
@@ -44,6 +50,13 @@ export type TerminalCommandServices = {
   closeSession(request: CloseTerminalRequest): Promise<CloseTerminalResult>;
   getConfig(): TerminalConfig;
   saveConfig(config: TerminalConfig): Promise<TerminalConfig>;
+  listAgentControls(): AgentSessionControlState[];
+  revokeAgentControl(sessionId: AgentSessionControlState["sessionId"]): AgentSessionControlState;
+  allowAgentControl(sessionId: AgentSessionControlState["sessionId"]): AgentSessionControlState;
+  listPermissions(): AgentPermissionRequest[];
+  resolvePermission(request: ResolvePermissionRequest): boolean;
+  exportRecordingFile(request: RecordingControlRequest): Promise<RecordingExportFileResult>;
+  onPolicyDenied?(notice: PolicyDenialNotice): void;
   policy: TerminalPolicy;
   logger?: AppLogger;
 };
@@ -146,6 +159,19 @@ async function executeRendererCommand(
       }
       await manager.reportViewport(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
+    case "session.reportViewFocus":
+      if (!services.presentationRegistry.owns(command.payload.sessionId, services.rendererId)) {
+        throw createTerminalError("view_unavailable", "Renderer does not own this terminal view.", {
+          sessionId: command.payload.sessionId,
+          operation: command.type,
+        });
+      }
+      await manager.setPresentation(command.payload.sessionId, {
+        state: command.payload.focused ? "foreground" : "background",
+        windowVisible: true,
+        windowFocused: command.payload.focused,
+      });
+      return createRendererCommandSuccess(command.requestId, null);
     case "recording.start":
       await manager.startRecording(command.payload);
       return createRendererCommandSuccess(command.requestId, null);
@@ -156,6 +182,32 @@ async function executeRendererCommand(
       return createRendererCommandSuccess(
         command.requestId,
         await manager.exportRecording(command.payload),
+      );
+    case "recording.exportFile":
+      return createRendererCommandSuccess(
+        command.requestId,
+        await services.exportRecordingFile(command.payload),
+      );
+    case "agent.control.list":
+      return createRendererCommandSuccess(command.requestId, services.listAgentControls());
+    case "agent.control.revoke":
+      manager.getSession(command.payload);
+      return createRendererCommandSuccess(
+        command.requestId,
+        services.revokeAgentControl(command.payload.sessionId),
+      );
+    case "agent.control.allow":
+      manager.getSession(command.payload);
+      return createRendererCommandSuccess(
+        command.requestId,
+        services.allowAgentControl(command.payload.sessionId),
+      );
+    case "permission.list":
+      return createRendererCommandSuccess(command.requestId, services.listPermissions());
+    case "permission.resolve":
+      return createRendererCommandSuccess(
+        command.requestId,
+        services.resolvePermission(command.payload),
       );
     case "settings.get":
       return createRendererCommandSuccess(command.requestId, services.getConfig());
@@ -169,6 +221,21 @@ async function executeRendererCommand(
         return createRendererCommandSuccess(command.requestId, saved);
       } catch (error: unknown) {
         throw createTerminalError("settings_save_failed", "Could not save UI theme settings.", {
+          operation: command.type,
+          cause: errorMessage(error),
+        });
+      }
+    }
+    case "settings.saveAgentPolicy": {
+      const current = services.getConfig();
+      try {
+        const saved = await services.saveConfig({
+          ...current,
+          agentPolicy: command.payload.policy,
+        });
+        return createRendererCommandSuccess(command.requestId, saved);
+      } catch (error: unknown) {
+        throw createTerminalError("settings_save_failed", "Could not save agent policy settings.", {
           operation: command.type,
           cause: errorMessage(error),
         });
@@ -201,14 +268,33 @@ function authorizeRendererCommand(
     outcome: decision.type,
     ...(decision.type === "deny" ? { denialCode: decision.reason.code } : {}),
   });
-  if (decision.type === "deny") {
+  if (decision.type !== "allow") {
+    const denial =
+      decision.type === "deny"
+        ? decision.reason
+        : {
+            decisionId: decision.decisionId,
+            code: "permission_unavailable" as const,
+            message: "Interactive approval is unavailable for local renderer commands.",
+            operation: command.type,
+            ...(operation.sessionId ? { sessionId: operation.sessionId } : {}),
+          };
+    services.onPolicyDenied?.({
+      decisionId: decision.decisionId,
+      at: new Date().toISOString(),
+      actor: "human",
+      operation: command.type,
+      ...(operation.sessionId ? { sessionId: operation.sessionId } : {}),
+      code: denial.code,
+      message: denial.message,
+    });
     throw createTerminalError(
-      decision.reason.code === "auth_required" ? "auth_required" : "policy_denied",
-      decision.reason.message,
+      denial.code === "auth_required" ? "auth_required" : "policy_denied",
+      denial.message,
       {
         operation: command.type,
         ...(operation.sessionId ? { sessionId: operation.sessionId } : {}),
-        cause: decision.reason.code,
+        cause: denial.code,
       },
     );
   }
@@ -234,6 +320,12 @@ function policyOperation(command: RendererCommand): TerminalPolicyOperation {
     case "session.scroll":
     case "session.reportViewport":
       return { type: command.type, sessionId: command.payload.sessionId, inputKind: "scroll" };
+    case "session.reportViewFocus":
+      return {
+        type: command.type,
+        sessionId: command.payload.sessionId,
+        presentationKind: command.payload.focused ? "foreground" : "background",
+      };
     case "session.close":
       return { type: command.type, sessionId: command.payload.sessionId, inputKind: "close" };
     case "session.closeView":
@@ -244,8 +336,21 @@ function policyOperation(command: RendererCommand): TerminalPolicyOperation {
       return { type: command.type, sessionId: command.payload.sessionId, recordingKind: "stop" };
     case "recording.export":
       return { type: command.type, sessionId: command.payload.sessionId, recordingKind: "export" };
+    case "recording.exportFile":
+      return { type: command.type, sessionId: command.payload.sessionId, recordingKind: "export" };
+    case "agent.control.list":
+      return { type: command.type, observationKind: "list" };
+    case "agent.control.revoke":
+      return { type: command.type, sessionId: command.payload.sessionId, inputKind: "close" };
+    case "agent.control.allow":
+      return { type: command.type, sessionId: command.payload.sessionId };
+    case "permission.list":
+      return { type: command.type, observationKind: "list" };
+    case "permission.resolve":
+      return { type: command.type };
     case "settings.get":
     case "settings.saveUiTheme":
+    case "settings.saveAgentPolicy":
     case "presentation.ready":
     case "presentation.acknowledge":
       return { type: command.type };
