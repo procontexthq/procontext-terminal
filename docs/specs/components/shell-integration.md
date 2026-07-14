@@ -25,7 +25,8 @@ Normal user startup configuration runs before ProContext installs its hooks:
   before installing `preexec` and `precmd` hooks.
 - Fish installs event handlers through its post-configuration initialization
   command.
-- PowerShell installs prompt and PSReadLine hooks after profiles load.
+- PowerShell runs a generated private bootstrap script after profiles load,
+  then installs prompt and PSReadLine hooks.
 
 Hook failure must not prevent the shell from starting or accepting input.
 Generated Bash and Zsh references to user startup files retain POSIX path
@@ -62,6 +63,11 @@ marker changes the state to `available`. Partial activation or a ten-second
 initialization timeout changes it to `degraded`; a later valid marker may
 recover the session. Unsupported shells report `unavailable`.
 
+PowerShell emits its capability marker during bootstrap and again at each
+prompt. Re-advertising capabilities lets a session recover when an early marker
+is lost during Windows PTY startup; it does not require a protocol
+acknowledgement.
+
 While integration is `degraded` or `unavailable`, command state is `unknown`.
 For available integration:
 
@@ -95,5 +101,7 @@ maps cmdlet success or failure to `0` or `1`.
   produce trusted command state.
 - Real PTY tests cover each installed supported shell, with deterministic
   bootstrap tests for shells unavailable on the current platform.
+- PowerShell launch tests verify generated bootstrap cleanup and repeated
+  capability advertisement.
 - Real-shell cwd assertions compare canonical filesystem identity so Windows
   short and long path spellings are treated as the same directory.

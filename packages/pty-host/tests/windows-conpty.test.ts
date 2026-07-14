@@ -63,7 +63,7 @@ describe("Windows ConPTY hardening", () => {
     });
   });
 
-  it("uses the bundled ConPTY DLL backend", async () => {
+  it("uses the operating-system ConPTY backend", async () => {
     await spawnWindowsPty();
 
     expect(mocks.spawn).toHaveBeenCalledWith(
@@ -71,9 +71,9 @@ describe("Windows ConPTY hardening", () => {
       [],
       expect.objectContaining({
         useConpty: true,
-        useConptyDll: true,
       }),
     );
+    expect(mocks.spawn.mock.calls[0]?.[2]).not.toHaveProperty("useConptyDll");
   });
 
   it("does not kill a PTY again after its exit event", async () => {

@@ -215,6 +215,13 @@ try {
   }
   $script:__PctValidationInstalled = $true
 } catch {}
+function global:__PctEmitReady {
+  if ($script:__PctValidationInstalled) {
+    __PctEmit 'ready' '' '${fullCapabilities}'
+  } else {
+    __PctEmit 'ready' '' '${promptCapabilities}'
+  }
+}
 function global:prompt {
   $commandSucceeded = $?
   $nativeExitCode = $global:LASTEXITCODE
@@ -224,15 +231,12 @@ function global:prompt {
     $script:__PctActiveId = $null
     $script:__PctNativeCommand = $false
   }
+  __PctEmitReady
   __PctEmit 'prompt' '' (__PctEncode (Get-Location).Path)
   if ($script:__PctOriginalPrompt) { return & $script:__PctOriginalPrompt }
   return 'PS ' + (Get-Location) + '> '
 }
-if ($script:__PctValidationInstalled) {
-  __PctEmit 'ready' '' '${fullCapabilities}'
-} else {
-  __PctEmit 'ready' '' '${promptCapabilities}'
-}
+__PctEmitReady
 `.trim();
 }
 
