@@ -2,29 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import { createSessionId } from "@terminal/protocol";
 
-import { NodePtyHost } from "../src/index";
+import { NodePtyHost, resolveShell } from "../src/index";
 
 describe.skipIf(process.platform !== "win32")("Windows ConPTY transport", () => {
   it("preserves OSC control sequences from a real PowerShell PTY", async () => {
     const marker = "\u001b]633;PCT_TRANSPORT\u001b\\";
     const session = await new NodePtyHost().spawn({
       sessionId: createSessionId("windows-osc"),
-      shell: {
-        executable: "powershell.exe",
-        args: [
-          "-NoProfile",
-          "-Command",
-          "$null=[Console]::ReadLine(); $e=[char]27; [Console]::Write($e + ']633;PCT_TRANSPORT' + $e + '\\')",
-        ],
-        cwd: process.cwd(),
-        env: environment(),
-      },
+      shell: resolveShell({ shell: "powershell.exe", cwd: process.cwd() }),
       cols: 80,
       rows: 24,
     });
 
     const output = outputUntilExit(session);
-    session.write("\r");
+    session.write("$e=[char]27; [Console]::Write($e + ']633;PCT_TRANSPORT' + $e + '\\'); exit\r");
 
     await expect(output).resolves.toContain(marker);
   });
@@ -64,12 +55,4 @@ function outputUntilExit(session: Awaited<ReturnType<NodePtyHost["spawn"]>>): Pr
       finish();
     });
   });
-}
-
-function environment(): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(process.env).filter((entry): entry is [string, string] => {
-      return typeof entry[1] === "string";
-    }),
-  );
 }

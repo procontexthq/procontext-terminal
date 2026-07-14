@@ -26,8 +26,9 @@ describe("real shell integration", () => {
       const manager = new TerminalSessionManager(new NodePtyHost(), {
         shellIntegrationInitializationTimeoutMs: 5_000,
       });
+      let session: TerminalSessionSummary | null = null;
       try {
-        const session = await manager.createSession({
+        session = await manager.createSession({
           shell: executable,
           cwd: fixture.home,
           env: fixture.env,
@@ -35,6 +36,7 @@ describe("real shell integration", () => {
         const ready = await waitForSummary(
           manager,
           session,
+          "negotiation",
           (summary) =>
             summary.shellIntegration.status === "available" && summary.command.state === "idle",
         );
@@ -48,6 +50,7 @@ describe("real shell integration", () => {
         const completed = await waitForSummary(
           manager,
           ready,
+          "command completion",
           (summary) =>
             summary.command.state === "idle" &&
             summary.command.lastCommand?.exitCode === 0 &&
@@ -71,10 +74,12 @@ describe("real shell integration", () => {
           expect.arrayContaining([expect.objectContaining({ text: "PCT_REAL_OK" })]),
         );
       } finally {
+        if (session) await exitFixtureShell(manager, session, name);
         await manager.shutdown({ timeoutMs: 2_000 });
         fixture.cleanup();
       }
     },
+    20_000,
   );
 
   const bash = installedShells().find((candidate) => candidate.name === "bash");
@@ -110,6 +115,7 @@ describe("real shell integration", () => {
         const ready = await waitForSummary(
           manager,
           session,
+          "bash negotiation",
           (summary) =>
             summary.shellIntegration.status === "available" && summary.command.state === "idle",
         );
@@ -123,6 +129,7 @@ describe("real shell integration", () => {
         await waitForSummary(
           manager,
           ready,
+          "bash command completion",
           (summary) =>
             summary.command.state === "idle" && summary.command.lastCommand?.exitCode === 1,
         );
@@ -145,6 +152,7 @@ describe("real shell integration", () => {
 async function waitForSummary(
   manager: TerminalSessionManager,
   initial: TerminalSessionSummary,
+  stage: string,
   predicate: (summary: TerminalSessionSummary) => boolean,
 ): Promise<TerminalSessionSummary> {
   let current = initial;
@@ -152,10 +160,18 @@ async function waitForSummary(
   while (!predicate(current)) {
     if (Date.now() >= deadline) {
       throw new Error(
-        `Timed out waiting for shell integration: ${JSON.stringify({
+        `Timed out during ${stage}: ${JSON.stringify({
+          lifecycle: current.lifecycle,
           status: current.shellIntegration.status,
           capabilities: current.shellIntegration.capabilities,
           command: current.command.state,
+          hasLastCommand: current.command.state === "idle" && Boolean(current.command.lastCommand),
+          lastExitCode:
+            current.command.state === "idle" ? current.command.lastCommand?.exitCode : undefined,
+          commandLineCaptured:
+            current.command.state === "idle"
+              ? Boolean(current.command.lastCommand?.commandLine)
+              : undefined,
         })}`,
       );
     }
@@ -232,6 +248,20 @@ function commandFor(name: ShellName): string {
   return name === "pwsh" || name === "powershell"
     ? "Write-Output PCT_REAL_OK\r"
     : "printf 'PCT_REAL_OK\\n'\n";
+}
+
+async function exitFixtureShell(
+  manager: TerminalSessionManager,
+  session: TerminalSessionSummary,
+  name: ShellName,
+): Promise<void> {
+  if (manager.getSession({ sessionId: session.sessionId }).lifecycle !== "running") return;
+  await manager.input({
+    sessionId: session.sessionId,
+    input: name === "pwsh" || name === "powershell" ? "exit\r" : "exit\n",
+    origin: "system",
+  });
+  await manager.waitForExit(session.sessionId, 2_000);
 }
 
 function canonicalPath(path: string): string {

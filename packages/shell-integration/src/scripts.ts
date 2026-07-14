@@ -199,24 +199,35 @@ function global:__PctEmit([string]$EventName, [string]$CommandId, [string]$Paylo
 }
 $script:__PctOriginalPrompt = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue
 $script:__PctPreviousValidation = $null
-$script:__PctValidationInstalled = $false
+$script:__PctPreviousValidationCaptured = $false
 $script:__PctNativeCommand = $false
-try {
-  $script:__PctPreviousValidation = (Get-PSReadLineOption).CommandValidationHandler
-  Set-PSReadLineOption -CommandValidationHandler {
-    param($CommandAst)
-    if ($script:__PctPreviousValidation) { & $script:__PctPreviousValidation $CommandAst }
-    $firstCommand = $CommandAst.Find({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $false)
-    $commandInfo = if ($firstCommand) { Get-Command $firstCommand.GetCommandName() -ErrorAction SilentlyContinue } else { $null }
-    $script:__PctNativeCommand = $commandInfo -and $commandInfo.CommandType -eq [System.Management.Automation.CommandTypes]::Application
-    $script:__PctSequence += 1
-    $script:__PctActiveId = 'c' + $script:__PctSequence
-    __PctEmit 'command-start' $script:__PctActiveId (__PctEncode $CommandAst.Extent.Text)
+$script:__PctValidationHandler = {
+  param($CommandAst)
+  if ($script:__PctPreviousValidation) { & $script:__PctPreviousValidation $CommandAst }
+  $firstCommand = $CommandAst.Find({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $false)
+  $commandInfo = if ($firstCommand) { Get-Command $firstCommand.GetCommandName() -ErrorAction SilentlyContinue } else { $null }
+  $script:__PctNativeCommand = $commandInfo -and $commandInfo.CommandType -eq [System.Management.Automation.CommandTypes]::Application
+  $script:__PctSequence += 1
+  $script:__PctActiveId = 'c' + $script:__PctSequence
+  __PctEmit 'command-start' $script:__PctActiveId (__PctEncode $CommandAst.Extent.Text)
+}
+function global:__PctEnsureValidation {
+  try {
+    if (-not (Get-Module PSReadLine)) {
+      Import-Module PSReadLine -ErrorAction Stop
+    }
+    if (-not $script:__PctPreviousValidationCaptured) {
+      $script:__PctPreviousValidation = (Get-PSReadLineOption).CommandValidationHandler
+      $script:__PctPreviousValidationCaptured = $true
+    }
+    Set-PSReadLineOption -CommandValidationHandler $script:__PctValidationHandler
+    return $true
+  } catch {
+    return $false
   }
-  $script:__PctValidationInstalled = $true
-} catch {}
-function global:__PctEmitReady {
-  if ($script:__PctValidationInstalled) {
+}
+function global:__PctEmitReady([bool]$ValidationInstalled) {
+  if ($ValidationInstalled) {
     __PctEmit 'ready' '' '${fullCapabilities}'
   } else {
     __PctEmit 'ready' '' '${promptCapabilities}'
@@ -231,12 +242,14 @@ function global:prompt {
     $script:__PctActiveId = $null
     $script:__PctNativeCommand = $false
   }
-  __PctEmitReady
+  $validationInstalled = __PctEnsureValidation
+  __PctEmitReady $validationInstalled
   __PctEmit 'prompt' '' (__PctEncode (Get-Location).Path)
   if ($script:__PctOriginalPrompt) { return & $script:__PctOriginalPrompt }
   return 'PS ' + (Get-Location) + '> '
 }
-__PctEmitReady
+$validationInstalled = __PctEnsureValidation
+__PctEmitReady $validationInstalled
 `.trim();
 }
 
