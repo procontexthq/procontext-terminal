@@ -24,6 +24,9 @@ const alias = {
   "@terminal/session-core": fileURLToPath(
     new URL("../../packages/session-core/src/index.ts", import.meta.url),
   ),
+  "@terminal/shell-integration": fileURLToPath(
+    new URL("../../packages/shell-integration/src/index.ts", import.meta.url),
+  ),
 };
 
 const require = createRequire(import.meta.url);
