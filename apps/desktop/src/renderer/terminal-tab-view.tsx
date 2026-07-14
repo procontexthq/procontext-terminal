@@ -93,6 +93,7 @@ export function TerminalTabView({
         registerController(tab.id, nextController);
         setStatus(tab.id, nextController.lifecycle);
         await nextController.resize();
+        await nextController.setFocused(active && document.hasFocus());
         if (active) {
           nextController.focus();
         }
@@ -154,11 +155,24 @@ export function TerminalTabView({
   }, [active, fontLoadDescriptors, onError, terminalFontFamily]);
 
   useEffect(() => {
+    const reportFocus = (): void => {
+      void controller.current?.setFocused(active && document.hasFocus());
+    };
+    reportFocus();
+    window.addEventListener("focus", reportFocus);
+    window.addEventListener("blur", reportFocus);
     if (!active) {
-      return;
+      return () => {
+        window.removeEventListener("focus", reportFocus);
+        window.removeEventListener("blur", reportFocus);
+      };
     }
     controller.current?.focus();
     void controller.current?.resize();
+    return () => {
+      window.removeEventListener("focus", reportFocus);
+      window.removeEventListener("blur", reportFocus);
+    };
   }, [active]);
 
   return (

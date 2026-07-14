@@ -65,6 +65,11 @@ bytes, title updates, screen snapshots, or lifecycle events independently of
   connection. PTY session interaction still requires attachment.
 - Human control is independent and may coexist with one attached agent.
 - Connection loss releases agent attachment without closing the PTY.
+- Human revocation releases the current attachment, cancels pending
+  session-scoped observation, and blocks every agent connection from attaching
+  to that session until human control explicitly allows attachment again.
+- Allowing agent control removes the session-level block but does not
+  automatically attach a connection.
 
 ## Policy And Audit
 

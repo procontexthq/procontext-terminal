@@ -13,7 +13,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 ## Responsibilities
 
 - Layout the terminal surface.
-- Manage tabs, panes, session list, status bar, settings, and command palette.
+- Manage tabs, session list, collaboration status, local search, and focused
+  settings.
 - Route focus between terminal instances.
 - Show agent activity indicators and permission prompts.
 - Display session status such as running, exited, disconnected, or blocked by policy.
@@ -32,7 +33,8 @@ The renderer app shell must not:
 - Treat UI state as canonical terminal lifecycle state.
 - Persist terminal transcripts directly.
 
-The renderer can store ephemeral UI state such as selected tab, pane sizing, local search text, and active command palette state.
+The renderer can store ephemeral UI state such as the selected tab, session-list
+visibility, local search text, and transient permission prompts.
 
 ## UI State vs Session State
 
@@ -41,10 +43,9 @@ UI state answers what the human is looking at. Session state answers what the te
 Examples of UI state:
 
 - Active tab.
-- Focused pane.
 - Sidebar visibility.
 - Search query.
-- Temporary command palette selection.
+- Pending local permission prompt.
 
 Examples of canonical session state:
 
@@ -113,9 +114,52 @@ The first multi-session milestone supports tabs only.
   launches the shell from the platform user home directory, matching native
   terminal startup behavior for packaged apps.
 
+## Phase 5 Collaboration UX
+
+- The session list includes visible and headless sessions and identifies human
+  versus agent origin.
+- The renderer composes canonical session summaries with separate,
+  privacy-safe agent-control state keyed by session ID. Gateway connection IDs
+  are never exposed to the renderer.
+- Per-session status shows agent attachment, lifecycle, presentation, cwd,
+  shell-integration, top-level command state, and recording state without
+  displaying command lines or sensitive terminal content.
+- Human actions can reveal, focus, hide, detach agent control, or terminate a
+  session while preserving the distinction between renderer views, agent
+  attachment, and PTY lifecycle.
+- Activating a human tab reports that owned renderer view as foreground and
+  reports previously active visible views as background through typed IPC, so
+  canonical presentation remains consistent with actual window focus.
+- Revoked agent control is visibly distinct from ordinary detached state. A
+  revoked session rejects every agent attachment until a human explicitly
+  allows agent control again; allowing control does not attach an agent by
+  itself.
+- Policy denials are visible through bounded, non-persisted notifications.
+- Interactive permission requests use a bounded, non-persisted queue with
+  allow-once and deny actions. Prompt metadata never contains terminal content,
+  command text, environment values, transcripts, connection IDs, or
+  authentication material.
+- Agent-policy settings use coarse observation, execution, interaction,
+  presentation, recording, and termination categories with `allow`, `ask`, and
+  `deny` modes.
+- Recording export uses a main-process native save dialog so transcript data is
+  not used as renderer-controlled file contents.
+- Recording redaction status exposes only the configured pattern count, never
+  the pattern values.
+- Search remains local to the renderer xterm scrollback.
+- Link activation validates supported URL schemes and local file targets before
+  delegating to main-process OS integration.
+- Settings remain focused on existing terminal, shell, recording, policy,
+  presentation, accessibility, and appearance contracts.
+
+Split panes, persisted layouts, restored terminal sessions, and a broad command
+palette are explicitly out of scope.
+
 ## Testing Expectations
 
 - UI actions call the preload API rather than main-process or PTY modules.
 - Session status renders from canonical session summaries and observations.
 - Agent activity and policy-denial states are visible to users.
-- Closing a tab or pane follows the configured detach or terminate behavior.
+- Closing a tab follows the configured detach or terminate behavior.
+- Renderer settings and window geometry persistence never include tabs,
+  sessions, PTYs, or terminal output.

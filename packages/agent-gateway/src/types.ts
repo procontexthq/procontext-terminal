@@ -3,6 +3,7 @@ import type {
   AgentActivityState,
   AgentAuditEvent,
   AgentGatewayDescriptor,
+  AgentSessionControlState,
   AttachTerminalRequest,
   CloseOperationRequest,
   CloseTerminalRequest,
@@ -13,6 +14,9 @@ import type {
   ObserveCapturedOperationResult,
   ObserveTerminalRequest,
   ObserveTerminalResult,
+  PermissionResolutionOutcome,
+  PolicyDenialNotice,
+  PolicyPrompt,
   RecordingControlRequest,
   ResizeTerminalRequest,
   ResizeTerminalResult,
@@ -61,17 +65,28 @@ export type AgentGatewayOptions = {
   now?: () => Date;
   audit?: (event: AgentAuditEvent) => void;
   onActivity?: (state: AgentActivityState) => void;
+  onControlChanged?: (state: AgentSessionControlState) => void;
+  onPolicyDenied?: (notice: PolicyDenialNotice) => void;
+  requestPermission?: (
+    prompt: PolicyPrompt,
+    signal: AbortSignal,
+  ) => Promise<PermissionResolutionOutcome>;
 };
 
 export type AgentGateway = {
   descriptor: AgentGatewayDescriptor;
   descriptorPath: string;
+  listSessionControls(): AgentSessionControlState[];
+  revokeSessionControl(sessionId: SessionId): AgentSessionControlState;
+  allowSessionControl(sessionId: SessionId): AgentSessionControlState;
+  removeSessionControl(sessionId: SessionId): void;
   stop(): Promise<void>;
 };
 
 export type AttachmentRegistry = {
-  attach(sessionId: SessionId, connectionId: string): boolean;
+  attach(sessionId: SessionId, connectionId: string, attachedAt: string): boolean;
   detach(sessionId: SessionId, connectionId: string): void;
-  release(sessionId: SessionId): void;
-  detachConnection(connectionId: string): void;
+  release(sessionId: SessionId): string | undefined;
+  detachConnection(connectionId: string): SessionId[];
+  list(): AgentSessionControlState[];
 };

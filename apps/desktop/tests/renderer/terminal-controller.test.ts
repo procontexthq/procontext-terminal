@@ -4,6 +4,7 @@ import {
   createSessionId,
   type RendererSessionEvent,
   type RendererTerminalApi,
+  type SessionId,
   type TerminalSessionSummary,
 } from "@terminal/protocol";
 
@@ -65,6 +66,18 @@ describe("terminal controller", () => {
     expect(api.reportViewport).toHaveBeenCalledTimes(1);
     expect(api.reportViewport).toHaveBeenCalledWith({ sessionId, viewportY: 5 });
     expect(terminal.scrollToLine).toHaveBeenCalledWith(2);
+  });
+
+  it("reports whether its renderer view is foreground or background", async () => {
+    const terminal = new FakeTerminal();
+    const { api } = createApi();
+    const controller = await createController(api, terminal);
+
+    await controller.setFocused(true);
+    await controller.setFocused(false);
+
+    expect(api.reportViewFocus).toHaveBeenNthCalledWith(1, { sessionId, focused: true });
+    expect(api.reportViewFocus).toHaveBeenNthCalledWith(2, { sessionId, focused: false });
   });
 
   it("stops accepting input when canonical lifecycle exits", async () => {
@@ -194,6 +207,7 @@ function createApi(): {
     ),
     closeView: vi.fn(() => Promise.resolve()),
     reportViewport: vi.fn(() => Promise.resolve()),
+    reportViewFocus: vi.fn(() => Promise.resolve()),
     startRecording: vi.fn(() => Promise.resolve()),
     stopRecording: vi.fn(() => Promise.resolve()),
     exportRecording: vi.fn(() =>
@@ -204,8 +218,27 @@ function createApi(): {
         events: [],
       }),
     ),
+    exportRecordingFile: vi.fn(() => Promise.resolve({ status: "cancelled" as const })),
+    listAgentControls: vi.fn(() => Promise.resolve([])),
+    revokeAgentControl: vi.fn(({ sessionId: revokedSessionId }: { sessionId: SessionId }) =>
+      Promise.resolve({
+        sessionId: revokedSessionId,
+        state: "revoked" as const,
+        attachedAt: null,
+      }),
+    ),
+    allowAgentControl: vi.fn(({ sessionId: allowedSessionId }: { sessionId: SessionId }) =>
+      Promise.resolve({
+        sessionId: allowedSessionId,
+        state: "detached" as const,
+        attachedAt: null,
+      }),
+    ),
+    listPermissions: vi.fn(() => Promise.resolve([])),
+    resolvePermission: vi.fn(() => Promise.resolve(false)),
     getConfig: vi.fn(),
     saveUiTheme: vi.fn(),
+    saveAgentPolicy: vi.fn(),
     presentationReady: vi.fn(() => Promise.resolve()),
     acknowledgePresentation: vi.fn(() => Promise.resolve()),
     onAppShortcut: vi.fn(() => vi.fn()),

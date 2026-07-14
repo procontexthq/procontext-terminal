@@ -90,6 +90,7 @@ The architecture specs describe components. The repository structure groups some
 | Shell integration | `packages/shell-integration` |
 | Agent gateway | `packages/agent-gateway` |
 | Policy engine | `packages/policy-engine` |
+| Interactive permission broker | `apps/desktop/src/main/permission-broker.ts` |
 | Canonical observation | Headless xterm model in `packages/session-core`; renderer xterm is a projection |
 | Recorder and transcript store | `packages/recorder` |
 | Settings store | `packages/config` |
@@ -191,6 +192,10 @@ Responsibilities:
 - Wire session manager, PTY host, settings, policy, recorder, logger, and agent gateway.
 - Adapt session and operation managers to the narrow agent service in a focused
   main-process module.
+- Compose privacy-safe collaboration IPC, policy-denial events, and native
+  recording export in focused main-process services.
+- Broker time-bounded, allow-once agent permission requests without exposing
+  terminal content or connection credentials to the renderer.
 - Correlate renderer presentation commands and acknowledgements while keeping
   view state independent from PTY lifecycle.
 - Own app lifecycle and graceful shutdown.
@@ -265,7 +270,12 @@ Responsibilities:
 
 - Render the app shell.
 - Render terminal views through xterm.js.
-- Manage tabs, panes, status UI, settings UI, and command palette.
+- Manage tabs, session-list and collaboration status UI, local search, and
+  focused settings. Session-list state composes canonical summaries with
+  renderer-only agent-control metadata instead of creating another terminal
+  model.
+- Present a bounded, non-persisted queue of privacy-safe agent permission
+  requests and focused coarse policy controls.
 - Capture keyboard, paste, selection, focus, resize, and mouse interactions.
 - Bootstrap from canonical serialized terminal state and report human viewport
   movement.
@@ -281,7 +291,7 @@ Good delegation tasks:
 
 - Build the terminal view component.
 - Add resize handling.
-- Add tab or pane UI.
+- Add tab or session-list UI.
 - Add search/copy/paste UI.
 - Add agent activity indicator UI.
 
@@ -432,6 +442,8 @@ Responsibilities:
 - Authorize operations through the policy engine.
 - Translate agent commands into session-core operations.
 - Enforce one controlling agent connection per session.
+- Track revocation independently from attachment and cancel session-scoped
+  pending requests when human control is revoked.
 - Return request/response results and cancellable long-poll observations.
 - Emit audit events.
 

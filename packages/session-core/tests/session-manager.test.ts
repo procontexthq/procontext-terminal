@@ -543,6 +543,22 @@ describe("TerminalSessionManager", () => {
     );
   });
 
+  it("emits session removal only after a completed close releases the record", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const events: RendererSessionEvent[] = [];
+    manager.onSessionEvent((event) => events.push(event));
+    const summary = await manager.createSession(request);
+
+    await manager.close({ sessionId: summary.sessionId });
+
+    expect(events.at(-1)).toEqual({
+      type: "session.removed",
+      payload: { sessionId: summary.sessionId },
+    });
+    expect(manager.listSessions()).toEqual([]);
+  });
+
   it("preserves an exited record when recording finalization fails", async () => {
     const host = new FakePtyHost();
     const recorder = createRecorder();

@@ -171,6 +171,87 @@ describe("desktop terminal smoke", () => {
     }
   });
 
+  it("lets a human reveal, record, hide, revoke, and terminate an agent session", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    const descriptor = await waitForAgentDescriptor(userDataDir);
+    const agent = await authenticatedAgent(descriptor);
+
+    try {
+      const created = (await expectAgentOk(
+        agent.request(createAgentCommand("terminal.create", {})),
+      )) as TerminalSessionSummary;
+      const card = page.getByTestId(`session-card-${created.sessionId}`);
+      await card.waitFor({ timeout: e2eUiTimeoutMs });
+      await card.getByText("Agent attached").waitFor({ timeout: e2eUiTimeoutMs });
+      await card.getByText("headless").waitFor({ timeout: e2eUiTimeoutMs });
+
+      await card.getByRole("button", { name: "Reveal" }).click();
+      await waitForActiveSession(page, created.sessionId);
+      await expectTabCount(page, 2);
+      await card.getByText("foreground", { exact: true }).waitFor({ timeout: e2eUiTimeoutMs });
+
+      await card.getByRole("button", { name: "Record", exact: true }).click();
+      await card.getByText("active", { exact: true }).waitFor({ timeout: e2eUiTimeoutMs });
+      await card.getByRole("button", { name: "Stop recording" }).click();
+      await card.getByText("inactive", { exact: true }).waitFor({ timeout: e2eUiTimeoutMs });
+
+      await card.getByRole("button", { name: "Hide" }).click();
+      await expectTabCount(page, 1);
+      await card.getByText("headless").waitFor({ timeout: e2eUiTimeoutMs });
+
+      await card.getByRole("button", { name: "Reveal" }).click();
+      await waitForActiveSession(page, created.sessionId);
+      await card.getByText("foreground", { exact: true }).waitFor({ timeout: e2eUiTimeoutMs });
+      await card.getByRole("button", { name: "Revoke agent" }).click();
+      await card.getByText("Agent blocked").waitFor({ timeout: e2eUiTimeoutMs });
+
+      const denied = await agent.request(
+        createAgentCommand("terminal.input", {
+          sessionId: created.sessionId,
+          input: `${platformPrintCommand("AGENT_SHOULD_NOT_RUN")}\r`,
+        }),
+      );
+      if (denied.ok || denied.error.cause !== "session_not_owned") {
+        throw new Error(`Expected revoked agent input denial: ${JSON.stringify(denied)}`);
+      }
+      await page
+        .getByText("Agent connection is not attached to this terminal session.")
+        .waitFor({ timeout: e2eUiTimeoutMs });
+
+      const blockedAttach = await agent.request(
+        createAgentCommand("terminal.attach", { sessionId: created.sessionId }),
+      );
+      if (blockedAttach.ok || blockedAttach.error.cause !== "agent_control_revoked") {
+        throw new Error(`Expected revoked attachment denial: ${JSON.stringify(blockedAttach)}`);
+      }
+
+      await card.getByRole("button", { name: "Allow agent control" }).click();
+      await card.getByText("No agent").waitFor({ timeout: e2eUiTimeoutMs });
+      await expectAgentOk(
+        agent.request(createAgentCommand("terminal.attach", { sessionId: created.sessionId })),
+      );
+      await card.getByText("Agent attached").waitFor({ timeout: e2eUiTimeoutMs });
+      await card.getByRole("button", { name: "Revoke agent" }).click();
+      await card.getByText("Agent blocked").waitFor({ timeout: e2eUiTimeoutMs });
+
+      await writeRendererInput(
+        page,
+        created.sessionId,
+        `${platformPrintCommand("HUMAN_AFTER_REVOKE")}\r`,
+      );
+      await waitForTerminalText(page, "HUMAN_AFTER_REVOKE");
+
+      page.once("dialog", (dialog) => dialog.accept());
+      await card.getByRole("button", { name: "Terminate" }).click();
+      await card.waitFor({ state: "detached", timeout: e2eUiTimeoutMs });
+    } finally {
+      agent.close();
+    }
+  });
+
   it("exposes trusted shell lifecycle and cwd for a headless agent session", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
@@ -497,6 +578,13 @@ describe("desktop terminal smoke", () => {
       "utf8",
     );
     browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    await page.getByText("Redaction 1 pattern").waitFor({ timeout: e2eUiTimeoutMs });
+    const sidebarText = await page.getByTestId("session-sidebar").textContent();
+    if (sidebarText?.includes("SECRET_TOKEN")) {
+      throw new Error("Recording redaction patterns must not be exposed in collaboration UI.");
+    }
     const descriptor = await waitForAgentDescriptor(userDataDir);
     const agent = await authenticatedAgent(descriptor);
 
@@ -534,6 +622,61 @@ describe("desktop terminal smoke", () => {
       if (!text.includes("VALUE_[redacted]") || text.includes("SECRET_TOKEN")) {
         throw new Error("Expected recording export to redact configured transcript patterns.");
       }
+    } finally {
+      agent.close();
+    }
+  });
+
+  it("lets a human deny or allow-once an agent operation without exposing command content", async () => {
+    const userDataDir = await createTempUserDataDir();
+    await writeFile(
+      join(userDataDir, "settings.json"),
+      `${JSON.stringify(
+        {
+          ...defaultTerminalConfig(),
+          agentPolicy: {
+            ...defaultTerminalConfig().agentPolicy,
+            termination: "ask",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    const descriptor = await waitForAgentDescriptor(userDataDir);
+    const agent = await authenticatedAgent(descriptor);
+
+    try {
+      const created = (await expectAgentOk(
+        agent.request(createAgentCommand("terminal.create", {})),
+      )) as TerminalSessionSummary;
+
+      const deniedResult = agent.request(
+        createAgentCommand("terminal.close", { sessionId: created.sessionId }),
+      );
+      const permission = page.getByTestId(`permission-${created.sessionId}`);
+      await permission.waitFor({ timeout: e2eUiTimeoutMs });
+      const permissionText = await permission.textContent();
+      if (permissionText?.includes("SECRET_COMMAND")) {
+        throw new Error("Permission UI exposed terminal command content.");
+      }
+      await permission.getByRole("button", { name: "Deny" }).click();
+      const denied = await deniedResult;
+      if (denied.ok || denied.error.cause !== "permission_denied") {
+        throw new Error(`Expected human permission denial: ${JSON.stringify(denied)}`);
+      }
+      await waitForSessionLifecycle(agent, created.sessionId, "running");
+
+      const allowedResult = agent.request(
+        createAgentCommand("terminal.close", { sessionId: created.sessionId }),
+      );
+      await permission.waitFor({ timeout: e2eUiTimeoutMs });
+      await permission.getByRole("button", { name: "Allow once" }).click();
+      await expectAgentOk(allowedResult);
     } finally {
       agent.close();
     }

@@ -79,8 +79,16 @@ describe("agent gateway", () => {
   it("rejects unauthenticated requests and removed command names", async () => {
     const runtime = await createRuntime();
     const client = await AgentClient.connect(runtime.gateway.descriptor.url);
+    const revokedSessionId = createSessionId("revoked-before-authentication");
+    runtime.gateway.revokeSessionControl(revokedSessionId);
 
     await expect(client.request(createAgentCommand("terminal.list", {}))).resolves.toMatchObject({
+      ok: false,
+      error: { type: "auth_required" },
+    });
+    await expect(
+      client.request(createAgentCommand("terminal.attach", { sessionId: revokedSessionId })),
+    ).resolves.toMatchObject({
       ok: false,
       error: { type: "auth_required" },
     });
@@ -267,6 +275,159 @@ describe("agent gateway", () => {
     expect(observedSignal?.aborted).toBe(true);
   });
 
+  it("lists privacy-safe attachment state and revokes only the selected session", async () => {
+    const services = createServices();
+    let observedSignal: AbortSignal | undefined;
+    services.observe.mockImplementation((_request, signal) => {
+      observedSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("revoked")), { once: true });
+      });
+    });
+    const onControlChanged = vi.fn();
+    const onPolicyDenied = vi.fn();
+    const runtime = await createRuntime(services, vi.fn(), {
+      onControlChanged,
+      onPolicyDenied,
+    });
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+    const firstSessionId = createSessionId("controlled-first");
+    const secondSessionId = createSessionId("controlled-second");
+    await client.request(createAgentCommand("terminal.attach", { sessionId: firstSessionId }));
+    await client.request(createAgentCommand("terminal.attach", { sessionId: secondSessionId }));
+
+    const controls = runtime.gateway.listSessionControls();
+    expect(controls.map((control) => control.sessionId)).toEqual(
+      expect.arrayContaining([firstSessionId, secondSessionId]),
+    );
+    expect(controls.every((control) => typeof control.attachedAt === "string")).toBe(true);
+    expect(JSON.stringify(controls)).not.toContain("connection");
+    expect(runtime.gateway.allowSessionControl(secondSessionId)).toMatchObject({
+      sessionId: secondSessionId,
+      state: "attached",
+    });
+
+    void client.request(
+      createAgentCommand("terminal.observe", {
+        sessionId: firstSessionId,
+        afterVersion: 1,
+        timeoutMs: 10_000,
+      }),
+    );
+    await waitFor(() => observedSignal !== undefined);
+
+    expect(runtime.gateway.revokeSessionControl(firstSessionId)).toEqual({
+      sessionId: firstSessionId,
+      state: "revoked",
+      attachedAt: null,
+    });
+    const controlChangeCount = onControlChanged.mock.calls.length;
+    expect(runtime.gateway.revokeSessionControl(firstSessionId)).toEqual({
+      sessionId: firstSessionId,
+      state: "revoked",
+      attachedAt: null,
+    });
+    expect(onControlChanged).toHaveBeenCalledTimes(controlChangeCount);
+    await waitFor(() => observedSignal?.aborted === true);
+    expect(runtime.gateway.listSessionControls()).toEqual(
+      expect.arrayContaining([
+        {
+          sessionId: firstSessionId,
+          state: "revoked",
+          attachedAt: null,
+        },
+        expect.objectContaining({
+          sessionId: secondSessionId,
+          state: "attached",
+        }),
+      ]),
+    );
+
+    await expect(
+      client.request(
+        createAgentCommand("terminal.input", { sessionId: firstSessionId, input: "echo denied\r" }),
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", cause: "session_not_owned" },
+    });
+    await expect(
+      client.request(
+        createAgentCommand("terminal.input", {
+          sessionId: secondSessionId,
+          input: "echo allowed\r",
+        }),
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      client.request(createAgentCommand("terminal.attach", { sessionId: firstSessionId })),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", cause: "agent_control_revoked" },
+    });
+
+    expect(onControlChanged).toHaveBeenCalledWith({
+      sessionId: firstSessionId,
+      state: "revoked",
+      attachedAt: null,
+    });
+    expect(onPolicyDenied).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "agent",
+        operation: "terminal.input",
+        sessionId: firstSessionId,
+        code: "session_not_owned",
+      }),
+    );
+    expect(onPolicyDenied).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "agent",
+        operation: "terminal.attach",
+        sessionId: firstSessionId,
+        code: "agent_control_revoked",
+      }),
+    );
+    expect(JSON.stringify(onPolicyDenied.mock.calls)).not.toContain("echo denied");
+
+    expect(runtime.gateway.allowSessionControl(firstSessionId)).toEqual({
+      sessionId: firstSessionId,
+      state: "detached",
+      attachedAt: null,
+    });
+    await expect(
+      client.request(createAgentCommand("terminal.attach", { sessionId: firstSessionId })),
+    ).resolves.toMatchObject({ ok: true });
+    client.close();
+  });
+
+  it("does not report a pending attachment as successful after human revocation", async () => {
+    const services = createServices();
+    const pendingAttach = deferred<TerminalSessionSummary>();
+    services.attach.mockImplementation(() => pendingAttach.promise);
+    const runtime = await createRuntime(services);
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+    const sessionId = createSessionId("revoked-pending-attach");
+
+    const attachResult = client.request(createAgentCommand("terminal.attach", { sessionId }));
+    await waitFor(() => services.attach.mock.calls.length === 1);
+    runtime.gateway.revokeSessionControl(sessionId);
+    pendingAttach.resolve(sessionSummary(sessionId));
+
+    await expect(attachResult).resolves.toMatchObject({
+      ok: false,
+      error: {
+        type: "policy_denied",
+        cause: "agent_control_revoked",
+      },
+    });
+    expect(runtime.gateway.listSessionControls()).toContainEqual({
+      sessionId,
+      state: "revoked",
+      attachedAt: null,
+    });
+    client.close();
+  });
+
   it("audits safe metadata without terminal input", async () => {
     const audit = vi.fn();
     const runtime = await createRuntime(createServices(), audit);
@@ -290,11 +451,84 @@ describe("agent gateway", () => {
     expect(serialized).not.toContain("SECRET_VALUE");
     client.close();
   });
+
+  it("waits for a human allow-once decision before dispatching an asked operation", async () => {
+    const services = createServices();
+    const permission = deferred<"allow" | "deny" | "timeout" | "cancelled">();
+    const requestPermission = vi.fn(() => permission.promise);
+    const policy = createDefaultAgentPolicy({
+      getPermissionMode: (category) => (category === "termination" ? "ask" : "allow"),
+    });
+    const runtime = await createRuntime(services, vi.fn(), { policy, requestPermission });
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+    const sessionId = createSessionId("permission-allow");
+    await client.request(createAgentCommand("terminal.attach", { sessionId }));
+
+    const result = client.request(createAgentCommand("terminal.close", { sessionId }));
+    await waitFor(() => requestPermission.mock.calls.length === 1);
+    expect(services.close).not.toHaveBeenCalled();
+    const requestCall = requestPermission.mock.calls[0];
+    expect(requestCall?.[0]).toMatchObject({
+      category: "termination",
+      operation: "terminal.close",
+      sessionId,
+    });
+    expect(typeof requestCall?.[0].decisionId).toBe("string");
+    expect(requestCall?.[1]).toBeInstanceOf(AbortSignal);
+
+    permission.resolve("allow");
+    await expect(result).resolves.toMatchObject({ ok: true });
+    expect(services.close).toHaveBeenCalledWith({ sessionId });
+    client.close();
+  });
+
+  it("returns safe policy denials for rejected and unavailable permission requests", async () => {
+    const services = createServices();
+    const onPolicyDenied = vi.fn();
+    const policy = createDefaultAgentPolicy({
+      getPermissionMode: (category) => (category === "execution" ? "ask" : "allow"),
+    });
+    const requestPermission = vi.fn(() => Promise.resolve("deny" as const));
+    const runtime = await createRuntime(services, vi.fn(), {
+      policy,
+      requestPermission,
+      onPolicyDenied,
+    });
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+
+    await expect(
+      client.request(
+        createAgentCommand("terminal.run", {
+          input: "SECRET_COMMAND",
+          env: { SECRET_ENVIRONMENT: "SECRET_VALUE" },
+        }),
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { type: "policy_denied", cause: "permission_denied" },
+    });
+    expect(services.run).not.toHaveBeenCalled();
+    expect(onPolicyDenied).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "terminal.run",
+        code: "permission_denied",
+      }),
+    );
+    expect(JSON.stringify(requestPermission.mock.calls)).not.toContain("SECRET_COMMAND");
+    expect(JSON.stringify(onPolicyDenied.mock.calls)).not.toContain("SECRET_VALUE");
+    client.close();
+  });
 });
 
 async function createRuntime(
   services = createServices(),
   audit = vi.fn(),
+  callbacks: Partial<
+    Pick<
+      Parameters<typeof startAgentGateway>[0],
+      "onControlChanged" | "onPolicyDenied" | "requestPermission" | "policy"
+    >
+  > = {},
 ): Promise<{ gateway: AgentGateway; descriptorPath: string }> {
   const directory = await mkdtemp(join(tmpdir(), "terminal-gateway-"));
   const descriptorPath = resolveAgentGatewayDescriptorPath(directory);
@@ -305,6 +539,7 @@ async function createRuntime(
     token: "test-token",
     tokenExpiresAt: "2099-01-01T00:00:00.000Z",
     audit,
+    ...callbacks,
   });
   cleanups.push(async () => {
     await gateway.stop();
@@ -421,6 +656,14 @@ async function authenticatedClient(descriptor: AgentGatewayDescriptor): Promise<
 function successValue<T>(result: AgentCommandResult): T {
   if (!result.ok) throw new Error(result.error.message);
   return result.value as T;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {

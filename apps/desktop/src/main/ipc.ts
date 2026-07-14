@@ -2,8 +2,14 @@ import { BrowserWindow, ipcMain, type WebContents } from "electron";
 
 import type { TerminalPolicy } from "@terminal/policy-engine";
 import type {
+  AgentSessionControlState,
+  AgentPermissionRequest,
   CloseTerminalRequest,
   CloseTerminalResult,
+  PolicyDenialNotice,
+  RecordingControlRequest,
+  RecordingExportFileResult,
+  ResolvePermissionRequest,
   RendererSessionEvent,
   SessionId,
   TerminalConfig,
@@ -30,6 +36,15 @@ export function registerTerminalIpc({
   closeSession,
   getConfig,
   saveConfig,
+  listAgentControls,
+  revokeAgentControl,
+  allowAgentControl,
+  exportRecordingFile,
+  listPermissions,
+  resolvePermission,
+  onPolicyDenied,
+  onRendererUnavailable,
+  onSessionRemoved,
 }: {
   sessionManager: TerminalSessionManager;
   presentationRegistry: TerminalPresentationRegistry;
@@ -39,6 +54,15 @@ export function registerTerminalIpc({
   closeSession: (request: CloseTerminalRequest) => Promise<CloseTerminalResult>;
   getConfig: () => TerminalConfig;
   saveConfig: (config: TerminalConfig) => Promise<TerminalConfig>;
+  listAgentControls: () => AgentSessionControlState[];
+  revokeAgentControl: (sessionId: SessionId) => AgentSessionControlState;
+  allowAgentControl: (sessionId: SessionId) => AgentSessionControlState;
+  exportRecordingFile: (request: RecordingControlRequest) => Promise<RecordingExportFileResult>;
+  listPermissions: () => AgentPermissionRequest[];
+  resolvePermission: (request: ResolvePermissionRequest) => boolean;
+  onPolicyDenied?: (notice: PolicyDenialNotice) => void;
+  onRendererUnavailable?: () => void;
+  onSessionRemoved?: (sessionId: SessionId) => void;
 }): () => void {
   const trackedRendererIds = new Set<number>();
   ipcMain.handle(IPC_CHANNELS.command, async (event, payload: unknown) => {
@@ -49,6 +73,7 @@ export function registerTerminalIpc({
       presentationController,
       sessionManager,
       logger,
+      onRendererUnavailable,
     });
     return handleRendererCommandPayload(payload, {
       sessionManager,
@@ -58,12 +83,20 @@ export function registerTerminalIpc({
       closeSession,
       getConfig,
       saveConfig,
+      listAgentControls,
+      revokeAgentControl,
+      allowAgentControl,
+      exportRecordingFile,
+      listPermissions,
+      resolvePermission,
+      onPolicyDenied,
       policy,
       logger,
     });
   });
 
   const unsubscribe = sessionManager.onSessionEvent((event) => {
+    if (event.type === "session.removed") onSessionRemoved?.(event.payload.sessionId);
     broadcastRendererEvent(event);
     logSessionEvent(event, logger);
   });
@@ -82,6 +115,10 @@ export function broadcastRendererEvent(event: RendererSessionEvent): void {
   }
 }
 
+export function hasAvailableRenderer(): boolean {
+  return BrowserWindow.getAllWindows().some(isUsableRendererWindow);
+}
+
 function trackRendererCleanup({
   sender,
   trackedRendererIds,
@@ -89,6 +126,7 @@ function trackRendererCleanup({
   presentationController,
   sessionManager,
   logger,
+  onRendererUnavailable,
 }: {
   sender: WebContents;
   trackedRendererIds: Set<number>;
@@ -96,6 +134,7 @@ function trackRendererCleanup({
   presentationController: TerminalPresentationController;
   sessionManager: TerminalSessionManager;
   logger: Pick<AppLogger, "warn">;
+  onRendererUnavailable?: () => void;
 }): void {
   if (trackedRendererIds.has(sender.id)) return;
   const rendererId = sender.id;
@@ -109,6 +148,7 @@ function trackRendererCleanup({
     for (const sessionId of presentationRegistry.removeRenderer(rendererId)) {
       void setHeadlessIfPresent(sessionManager, sessionId, logger);
     }
+    onRendererUnavailable?.();
   };
   sender.once("destroyed", cleanup);
   sender.once("render-process-gone", cleanup);
@@ -148,12 +188,19 @@ function logSessionEvent(event: RendererSessionEvent, logger: AppLogger): void {
         cause: event.payload.cause,
       });
       break;
+    case "session.removed":
+      logger.info("session", "removed", { sessionId: event.payload.sessionId });
+      break;
     case "session.bell":
       logger.info("session", "bell", { sessionId: event.payload.sessionId });
       break;
     case "session.output":
     case "session.viewport":
     case "agent.activity":
+    case "agent.control.changed":
+    case "policy.denied":
+    case "permission.requested":
+    case "permission.resolved":
     case "presentation.command":
       break;
   }

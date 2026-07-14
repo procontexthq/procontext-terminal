@@ -187,10 +187,117 @@ Status: implemented.
 
 ## Phase 5: Human UX And Release Hardening
 
-- Add panes, search, links, settings UI, window restoration, accessibility, and
-  packaging verification.
-- Expand platform coverage for macOS, Linux, Windows, ConPTY, and supported
-  shells.
+Status: planned.
+
+### Phase 5A: Human-Agent Collaboration Core
+
+Status: implemented.
+
+- Keep canonical terminal summaries independent from gateway connection ownership.
+- Add renderer-only agent-control state keyed by session ID with attached,
+  detached, or revoked state and an optional attachment timestamp. Never expose
+  gateway connection identifiers.
+- Add renderer commands to list, revoke, and allow agent control and to export
+  a recording through a native save dialog.
+- Add renderer events for agent-control changes, sanitized policy denials, and
+  removed session records.
+- Let revocation cancel pending observation for the selected session and deny
+  future attachment and control operations without terminating the PTY or
+  disconnecting the agent from other sessions. Revoked control remains blocked
+  for every agent connection until a human explicitly allows control again.
+- Add a non-persisted session sidebar for visible and headless sessions.
+- Keep status summaries privacy-safe: command state may be shown, but command
+  lines, terminal contents, environment values, and transcript data are not.
+- Add reveal, focus, hide, revoke, terminate or remove, and recording actions
+  while preserving the separate PTY, renderer-view, and agent-control
+  lifecycles.
+- Show whether recording redaction is configured using only a pattern count;
+  never expose the configured pattern values in collaboration UI.
+- Keep canonical foreground/background presentation synchronized when humans
+  reveal or switch terminal tabs.
+- Surface policy denials and action failures in a bounded, accessible,
+  in-memory notification area.
+- Keep interactive per-request approval queues deferred to a later Phase 5
+  collaboration milestone.
+
+### Phase 5B: Interactive Agent Permissions
+
+Status: implemented.
+
+- Add persisted `allow`, `ask`, or `deny` modes for agent observation,
+  execution, interaction, presentation, recording, and termination categories.
+- Preserve current behavior by defaulting every category to `allow` when
+  migrating existing settings.
+- Convert `ask` policy decisions into privacy-safe, 30-second permission
+  requests. Prompts include operation category, operation name, session ID when
+  present, and timestamps only.
+- Never include command text, terminal input or output, environment values,
+  transcript data, gateway connection IDs, or authentication material.
+- Let the first renderer resolution allow the operation once or deny it.
+  Disconnect, timeout, shutdown, and unavailable UI resolve safely as denial.
+- Expose pending requests to newly opened renderer windows and remove resolved
+  requests from every renderer.
+- Add a focused agent-policy settings panel without introducing a general
+  command palette or broad settings framework.
+
+### Human-agent collaboration
+
+- Add a session list that includes visible and headless sessions without
+  introducing a second terminal-state model.
+- Show session origin, agent attachment, lifecycle, presentation, cwd,
+  top-level command, shell-integration, and recording status.
+- Let humans reveal or focus agent sessions and revoke agent control without
+  implicitly terminating the shared PTY.
+- Surface policy denials and configured permission prompts through the desktop
+  UI with clear allow, deny, detach, hide, and terminate outcomes.
+- Add explicit recording start, stop, export, and redaction-status controls.
+- Keep activity summaries coarse and privacy-safe; do not expose terminal
+  input, output, command lines, environment values, or transcript contents as
+  diagnostics.
+
+### Focused terminal usability
+
+- Add local terminal search over the human-visible xterm scrollback.
+- Add validated clickable URLs and local file paths without turning terminal
+  output into trusted application commands.
+- Add a focused settings UI for shell profiles, terminal appearance,
+  scrollback, accessibility, recording, agent policy, and default presentation
+  behavior.
+- Improve keyboard-only navigation, focus indication, screen-reader labels and
+  announcements, contrast, and reduced-motion behavior.
+- Persist validated window size, position, and display placement only.
+
+### Release hardening
+
+- Expand PTY, shell-integration, TUI, reconnect, renderer-loss, and shutdown
+  coverage across macOS, Linux, Windows, ConPTY, and supported shells.
+- Verify packaged native PTY behavior, installers, artifact generation,
+  signing or notarization inputs, and release provenance.
+
+### Explicitly out of scope
+
+- Split panes or pane layout management.
+- Persisted tab or workspace layouts.
+- Restoring terminal sessions, operations, tabs, or PTY runtime state after app
+  restart.
+- A broad command palette or general-purpose command framework.
+
+### Required tests
+
+- Protocol validation for agent-control, policy-denial, recording-file-export,
+  and session-removal messages.
+- Gateway attachment listing, session-scoped revocation, observation
+  cancellation, disconnect cleanup, and future ownership denial.
+- Session-list and per-session collaboration status for human, agent, headless,
+  background, foreground, running, and exited sessions.
+- Human reveal, focus, detach, revoke, hide, and terminate behavior without
+  accidental PTY lifecycle changes.
+- Policy denial, permission prompt, and recording-control UI behavior.
+- Search, validated link handling, focused settings, accessibility, and window
+  geometry validation.
+- Cross-platform packaged-app and native PTY smoke coverage.
+- Regression coverage proving excluded layout and session-restoration state is
+  not persisted.
 
 ## Verification
 

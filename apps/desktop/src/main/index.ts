@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { app, BrowserWindow, nativeImage } from "electron";
+import { app, BrowserWindow, dialog, nativeImage } from "electron";
 
 import {
   resolveAgentGatewayDescriptorPath,
@@ -22,16 +22,23 @@ import {
   TerminalOperationManager,
   TerminalSessionManager,
 } from "@terminal/session-core";
-import type { TerminalConfig, TerminalSessionSummary } from "@terminal/protocol";
+import type { TerminalConfig } from "@terminal/protocol";
 
-import { broadcastRendererEvent, IPC_CHANNELS, registerTerminalIpc } from "./ipc";
+import {
+  broadcastRendererEvent,
+  hasAvailableRenderer,
+  IPC_CHANNELS,
+  registerTerminalIpc,
+} from "./ipc";
 import { resolveAppShortcut, type AppShortcutPlatform } from "../shared/app-shortcuts";
 import { createAgentTerminalService } from "./agent-terminal-service";
 import { PRODUCT_NAME, shouldSetDevelopmentDockIcon } from "./app-branding";
+import { createDesktopCollaborationServices } from "./collaboration-services";
 import { resolveDefaultTerminalCwd } from "./default-terminal-cwd";
 import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
 import { createTerminalPresentationRegistry } from "./presentation-registry";
 import { createTerminalPresentationController } from "./presentation-controller";
+import { waitForInitialHumanSessionSettled } from "./startup-session";
 import { attachWindowCloseSessionCleanup } from "./window-lifecycle";
 
 app.setName(PRODUCT_NAME);
@@ -90,6 +97,7 @@ const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
 let agentGateway: AgentGateway | null = null;
 let terminalConfig: TerminalConfig = defaultTerminalConfig();
+let disposeCollaborationServices: (() => void) | null = null;
 let quitAfterShutdown = false;
 let suppressNextWindowAllClosedQuit = false;
 
@@ -256,6 +264,14 @@ void app
       directory: join(app.getPath("userData"), "recordings"),
       redactors: [createPatternRedactor(terminalConfig.recording.redactedPatterns)],
     });
+    const collaborationServices = createDesktopCollaborationServices({
+      getGateway: () => agentGateway,
+      sessions: sessionManager,
+      showSaveDialog: (options) => dialog.showSaveDialog(options),
+      broadcast: broadcastRendererEvent,
+      hasAvailableRenderer,
+    });
+    disposeCollaborationServices = () => collaborationServices.dispose();
 
     unregisterIpc = registerTerminalIpc({
       sessionManager,
@@ -266,6 +282,7 @@ void app
       closeSession: (request) => operationManager.close(request),
       getConfig: () => terminalConfig,
       saveConfig,
+      ...collaborationServices.renderer,
     });
     let startupWindowCreated = false;
     await createMainWindow()
@@ -297,7 +314,9 @@ void app
         operationManager,
         presentationController,
       ),
-      policy: createDefaultAgentPolicy(),
+      policy: createDefaultAgentPolicy({
+        getPermissionMode: (category) => terminalConfig.agentPolicy[category],
+      }),
       audit: (event) => {
         logger.info("agent", "audit", {
           connectionId: event.connectionId,
@@ -310,9 +329,7 @@ void app
           denialCode: event.denialCode,
         });
       },
-      onActivity: (payload) => {
-        broadcastRendererEvent({ type: "agent.activity", payload });
-      },
+      ...collaborationServices.gateway,
     });
     logger.info("agent", "gateway_started", {
       descriptorPath: agentGateway.descriptorPath,
@@ -424,6 +441,8 @@ async function saveConfig(config: TerminalConfig): Promise<TerminalConfig> {
 }
 
 async function shutdownApp() {
+  disposeCollaborationServices?.();
+  disposeCollaborationServices = null;
   if (agentGateway) {
     logger.info("agent", "gateway_shutdown_started");
     await agentGateway.stop();
@@ -446,52 +465,6 @@ async function shutdownApp() {
   const sessionResult = await sessionManager.shutdown({ timeoutMs: 1500 });
   if (operationShutdownError) throw operationShutdownError;
   return sessionResult;
-}
-
-type InitialHumanSessionWaitResult =
-  | { status: "settled"; session: TerminalSessionSummary }
-  | { status: "timed_out"; timeoutMs: number };
-
-function waitForInitialHumanSessionSettled(
-  manager: TerminalSessionManager,
-  timeoutMs: number,
-): Promise<InitialHumanSessionWaitResult> {
-  const settled = findSettledHumanSession(manager);
-  if (settled) {
-    return Promise.resolve({ status: "settled", session: settled });
-  }
-
-  return new Promise((resolve) => {
-    let unsubscribe: (() => void) | null = null;
-    let finished = false;
-    const finish = (result: InitialHumanSessionWaitResult): void => {
-      if (finished) {
-        return;
-      }
-      finished = true;
-      unsubscribe?.();
-      clearTimeout(timeout);
-      resolve(result);
-    };
-    const timeout = setTimeout(() => {
-      finish({ status: "timed_out", timeoutMs });
-    }, timeoutMs);
-
-    unsubscribe = manager.onSessionEvent(() => {
-      const nextSettled = findSettledHumanSession(manager);
-      if (nextSettled) {
-        finish({ status: "settled", session: nextSettled });
-      }
-    });
-  });
-}
-
-function findSettledHumanSession(
-  manager: TerminalSessionManager,
-): TerminalSessionSummary | undefined {
-  return manager
-    .listSessions()
-    .find((session) => session.createdBy === "human" && session.lifecycle !== "creating");
 }
 
 function sanitizeUrlForLog(value: string): string {

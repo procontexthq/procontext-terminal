@@ -4,6 +4,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import type {
   AppShortcutAction,
+  AgentPolicyConfig,
   RendererPresentationAcknowledgement,
   RendererPresentationCommand,
   RendererSessionEvent,
@@ -35,12 +36,15 @@ import {
   type TerminalTabsState,
 } from "./terminal-tabs";
 import { nextTerminalStatus, type TerminalUiStatus } from "./terminal-status";
+import { NotificationCenter } from "./notification-center";
+import { AgentPolicySettings } from "./agent-policy-settings";
+import { PermissionCenter } from "./permission-center";
+import { SessionSidebar } from "./session-sidebar";
 import { themeFontLoadDescriptors, themeFontSet } from "./theme-fonts";
-import {
-  resolveAppShortcut,
-  type AppShortcutInput,
-  type AppShortcutPlatform,
-} from "../shared/app-shortcuts";
+import { useSessionCollaboration } from "./use-session-collaboration";
+import { useAgentPermissions } from "./use-agent-permissions";
+import { resolveAppShortcut } from "../shared/app-shortcuts";
+import { keyboardEventShortcutInput, rendererShortcutPlatform } from "./renderer-shortcuts";
 
 export function App(): ReactElement {
   const [config, setConfig] = useState<TerminalConfig | null>(null);
@@ -51,9 +55,13 @@ export function App(): ReactElement {
   const tabsStateRef = useRef<TerminalTabsState | null>(null);
   const pendingOpenCommands = useRef(new Map<SessionId, RendererPresentationCommand>());
 
-  const reportError = useCallback((error: unknown) => {
-    console.error(error);
-  }, []);
+  const collaboration = useSessionCollaboration({
+    tabsStateRef,
+    controllers,
+    setTabsState,
+  });
+  const reportError = collaboration.reportError;
+  const permissions = useAgentPermissions(reportError);
 
   useEffect(() => {
     let disposed = false;
@@ -289,6 +297,16 @@ export function App(): ReactElement {
   return (
     <main className="app-shell" data-theme={uiTheme} style={appStyle}>
       <header className="titlebar">
+        <button
+          type="button"
+          className={`session-sidebar-toggle${collaboration.sidebarOpen ? " is-active" : ""}`}
+          aria-label={`${collaboration.sidebarOpen ? "Hide" : "Show"} terminal sessions`}
+          aria-expanded={collaboration.sidebarOpen}
+          data-testid="session-sidebar-toggle"
+          onClick={collaboration.toggleSidebar}
+        >
+          Sessions
+        </button>
         <div className="tab-strip" role="tablist" aria-label="Terminal tabs">
           {tabs.map((tab, index) => (
             <div className={`tab-item${tab.id === activeTabId ? " is-active" : ""}`} key={tab.id}>
@@ -350,6 +368,14 @@ export function App(): ReactElement {
               <option value="classic">Classic</option>
             </select>
           </label>
+          {config ? (
+            <AgentPolicySettings
+              policy={config.agentPolicy}
+              onSave={(policy: AgentPolicyConfig) => {
+                void window.terminalApi.saveAgentPolicy(policy).then(setConfig).catch(reportError);
+              }}
+            />
+          ) : null}
           <span
             className={`agent-activity${agentActive ? " is-active" : ""}`}
             data-testid="agent-activity"
@@ -364,27 +390,41 @@ export function App(): ReactElement {
           </span>
         </div>
       </header>
-      <section className="terminal-workspace">
-        {config && terminalTheme && tabsState
-          ? tabs.map((tab) => (
-              <TerminalTabView
-                key={tab.id}
-                tab={tab}
-                config={config}
-                active={tab.id === activeTabId}
-                terminalFontFamily={fonts.terminalFontFamily}
-                fontLoadDescriptors={fontLoadDescriptors}
-                terminalTheme={terminalTheme}
-                registerController={registerController}
-                setStatus={setTabStatus}
-                onSessionEvent={updateStatusFromEvent}
-                onTitleChange={setTabTitle}
-                onBell={setTabBell}
-                onError={reportError}
-              />
-            ))
-          : null}
+      <section className={`workspace-shell${collaboration.sidebarOpen ? " has-sidebar" : ""}`}>
+        <SessionSidebar
+          open={collaboration.sidebarOpen}
+          items={collaboration.items}
+          activeSessionId={activeTab?.sessionId ?? null}
+          redactionPatternCount={config?.recording.redactedPatterns.length ?? 0}
+          actions={collaboration.actions}
+        />
+        <section className="terminal-workspace">
+          {config && terminalTheme && tabsState
+            ? tabs.map((tab) => (
+                <TerminalTabView
+                  key={tab.id}
+                  tab={tab}
+                  config={config}
+                  active={tab.id === activeTabId}
+                  terminalFontFamily={fonts.terminalFontFamily}
+                  fontLoadDescriptors={fontLoadDescriptors}
+                  terminalTheme={terminalTheme}
+                  registerController={registerController}
+                  setStatus={setTabStatus}
+                  onSessionEvent={updateStatusFromEvent}
+                  onTitleChange={setTabTitle}
+                  onBell={setTabBell}
+                  onError={reportError}
+                />
+              ))
+            : null}
+        </section>
       </section>
+      <NotificationCenter
+        notifications={collaboration.notifications}
+        onDismiss={collaboration.dismissNotification}
+      />
+      <PermissionCenter requests={permissions.requests} onResolve={permissions.resolve} />
     </main>
   );
 }
@@ -430,33 +470,6 @@ function requiresCloseConfirmation(status: TerminalUiStatus): boolean {
   return (
     status === "starting" || status === "creating" || status === "running" || status === "exiting"
   );
-}
-
-function keyboardEventShortcutInput(event: KeyboardEvent): AppShortcutInput {
-  return {
-    key: event.key,
-    code: event.code,
-    alt: event.altKey,
-    control: event.ctrlKey,
-    meta: event.metaKey,
-    shift: event.shiftKey,
-    type: "keyDown",
-    isAutoRepeat: event.repeat,
-  };
-}
-
-function rendererShortcutPlatform(): AppShortcutPlatform | null {
-  const platform = navigator.platform.toLowerCase();
-  if (platform.includes("mac")) {
-    return "darwin";
-  }
-  if (platform.includes("win")) {
-    return "win32";
-  }
-  if (platform.includes("linux") || platform.includes("x11")) {
-    return "linux";
-  }
-  return null;
 }
 
 function parseUiTheme(value: string | null): UiThemePreference {

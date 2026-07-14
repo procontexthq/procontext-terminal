@@ -12,9 +12,9 @@ import {
 } from "../src/index";
 
 describe("terminal config", () => {
-  it("provides safe Phase 2A defaults", () => {
+  it("provides backward-compatible permission defaults", () => {
     expect(defaultTerminalConfig()).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       terminal: {
         fontFamily:
           '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
@@ -32,6 +32,14 @@ describe("terminal config", () => {
         state: "disabled",
         redactedPatterns: [],
       },
+      agentPolicy: {
+        observation: "allow",
+        execution: "allow",
+        interaction: "allow",
+        presentation: "allow",
+        recording: "allow",
+        termination: "allow",
+      },
     });
   });
 
@@ -44,11 +52,12 @@ describe("terminal config", () => {
 
     expect(parsed.warnings).toHaveLength(0);
     expect(parsed.config).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh", profiles: [] },
       ui: { theme: "default" },
       recording: { redactedPatterns: ["token"] },
+      agentPolicy: { termination: "allow" },
     });
     expect(parsed.config).not.toHaveProperty("workspace");
   });
@@ -61,7 +70,7 @@ describe("terminal config", () => {
     });
 
     expect(parsed.config).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh", profiles: [] },
       recording: { redactedPatterns: ["token"] },
@@ -72,7 +81,7 @@ describe("terminal config", () => {
     ]);
   });
 
-  it("migrates explicit schema version 1 settings to schema version 2", () => {
+  it("migrates explicit schema version 1 settings to schema version 3", () => {
     const parsed = parseTerminalConfig({
       schemaVersion: 1,
       terminal: { fontSize: 15 },
@@ -81,7 +90,7 @@ describe("terminal config", () => {
 
     expect(parsed.warnings).toHaveLength(0);
     expect(parsed.config).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       terminal: { fontSize: 15 },
       shell: { defaultProfile: "/bin/bash" },
       ui: { theme: "default" },
@@ -91,7 +100,7 @@ describe("terminal config", () => {
 
   it("ignores legacy workspace state without restoring tab layout", () => {
     const parsed = parseTerminalConfig({
-      schemaVersion: 2,
+      schemaVersion: 3,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh" },
       workspace: { tabs: [], activeTabIndex: 0 },
@@ -99,7 +108,7 @@ describe("terminal config", () => {
 
     expect(parsed.warnings).toHaveLength(0);
     expect(parsed.config).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh" },
       ui: { theme: "default" },
@@ -150,7 +159,7 @@ describe("terminal config", () => {
         config,
         warnings: [],
       });
-      await expect(readFile(settingsPath, "utf8")).resolves.toContain('"schemaVersion": 2');
+      await expect(readFile(settingsPath, "utf8")).resolves.toContain('"schemaVersion": 3');
       await expect(readFile(settingsPath, "utf8")).resolves.not.toContain('"workspace"');
     } finally {
       await rm(tempDir, { recursive: true, force: true });

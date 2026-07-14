@@ -2,6 +2,17 @@ import { z } from "zod";
 
 export type RecordingState = "disabled" | "enabled";
 export type UiThemePreference = "default" | "coder" | "gamer" | "classic";
+export const agentPermissionCategories = [
+  "observation",
+  "execution",
+  "interaction",
+  "presentation",
+  "recording",
+  "termination",
+] as const;
+export type AgentPermissionCategory = (typeof agentPermissionCategories)[number];
+export type AgentPermissionMode = "allow" | "ask" | "deny";
+export type AgentPolicyConfig = Record<AgentPermissionCategory, AgentPermissionMode>;
 
 export type TerminalTheme = {
   background: string;
@@ -23,7 +34,7 @@ export type RecordingConfig = {
 };
 
 export type TerminalConfig = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   terminal: {
     fontFamily: string;
     fontSize: number;
@@ -38,6 +49,7 @@ export type TerminalConfig = {
     theme: UiThemePreference;
   };
   recording: RecordingConfig;
+  agentPolicy: AgentPolicyConfig;
 };
 
 export const terminalThemeSchema = z.object({
@@ -60,9 +72,18 @@ export const recordingConfigSchema = z.object({
   state: z.enum(["disabled", "enabled"]),
   redactedPatterns: z.array(z.string()),
 });
+export const agentPermissionModeSchema = z.enum(["allow", "ask", "deny"]);
+export const agentPolicyConfigSchema = z.object({
+  observation: agentPermissionModeSchema,
+  execution: agentPermissionModeSchema,
+  interaction: agentPermissionModeSchema,
+  presentation: agentPermissionModeSchema,
+  recording: agentPermissionModeSchema,
+  termination: agentPermissionModeSchema,
+});
 
 export const terminalConfigSchema = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   terminal: z.object({
     fontFamily: z.string().min(1),
     fontSize: z.number().int().min(8).max(40),
@@ -75,10 +96,13 @@ export const terminalConfigSchema = z.object({
   }),
   ui: z.object({ theme: uiThemePreferenceSchema }),
   recording: recordingConfigSchema,
+  agentPolicy: agentPolicyConfigSchema,
 });
 
 export type SaveUiThemeRequest = { theme: UiThemePreference };
+export type SaveAgentPolicyRequest = { policy: AgentPolicyConfig };
 export const saveUiThemeRequestSchema = z.object({ theme: uiThemePreferenceSchema });
+export const saveAgentPolicyRequestSchema = z.object({ policy: agentPolicyConfigSchema });
 
 export function parseTerminalConfig(value: unknown): TerminalConfig {
   return terminalConfigSchema.parse(value);
@@ -86,4 +110,8 @@ export function parseTerminalConfig(value: unknown): TerminalConfig {
 
 export function parseSaveUiThemeRequest(value: unknown): SaveUiThemeRequest {
   return saveUiThemeRequestSchema.parse(value);
+}
+
+export function parseSaveAgentPolicyRequest(value: unknown): SaveAgentPolicyRequest {
+  return saveAgentPolicyRequestSchema.parse(value);
 }

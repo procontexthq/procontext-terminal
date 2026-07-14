@@ -59,15 +59,18 @@ The settings store can persist:
 - UI theme preference.
 - Shell profiles.
 - Agent gateway settings.
-- Policy settings.
+- Agent policy modes for observation, execution, interaction, presentation,
+  recording, and termination.
 - Recording defaults.
-- Window state.
+- Validated window size, position, and display placement.
 
 It must not persist:
 
 - Expired agent tokens.
 - Secrets from terminal output.
 - Full transcripts.
+- Tab order, active tabs, session IDs, PTY processes, operations, or workspace
+  layouts.
 
 ## Testing Expectations
 

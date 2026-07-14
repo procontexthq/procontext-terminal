@@ -43,6 +43,7 @@ export type TerminalController = {
   readonly lifecycle: TerminalLifecycleState;
   focus(): void;
   resize(): Promise<void>;
+  setFocused(focused: boolean): Promise<void>;
   setFontFamily(fontFamily: string): void;
   setTheme(theme: TerminalTheme): void;
   dispose(options?: TerminalControllerDisposeOptions): Promise<boolean>;
@@ -97,6 +98,8 @@ export async function createTerminalSession(
         lifecycle = event.payload.lifecycle;
         if (event.payload.title) options.onTitleChange?.(event.payload.title);
         break;
+      case "session.removed":
+        break;
       case "session.bell":
         options.onBell?.();
         break;
@@ -104,6 +107,8 @@ export async function createTerminalSession(
         options.onError?.(event.payload);
         break;
       case "agent.activity":
+      case "agent.control.changed":
+      case "policy.denied":
       case "presentation.command":
         break;
     }
@@ -179,6 +184,14 @@ export async function createTerminalSession(
         const nextDimensions = fitAddon.proposeDimensions() ?? dimensions;
         try {
           await options.api.resize({ sessionId: activeSessionId, ...nextDimensions });
+        } catch (error: unknown) {
+          options.onError?.(error);
+        }
+      },
+      async setFocused(focused) {
+        if (disposed) return;
+        try {
+          await options.api.reportViewFocus({ sessionId: activeSessionId, focused });
         } catch (error: unknown) {
           options.onError?.(error);
         }
@@ -261,11 +274,16 @@ function eventMatchesSession(event: RendererSessionEvent, sessionId: SessionId):
     case "session.output":
     case "session.viewport":
     case "session.updated":
+    case "session.removed":
     case "session.bell":
       return event.payload.sessionId === sessionId;
     case "session.error":
       return event.payload.sessionId === sessionId;
     case "agent.activity":
+    case "agent.control.changed":
+    case "policy.denied":
+    case "permission.requested":
+    case "permission.resolved":
     case "presentation.command":
       return false;
   }
