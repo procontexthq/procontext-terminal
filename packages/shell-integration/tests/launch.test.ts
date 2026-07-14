@@ -86,14 +86,19 @@ describe("shell integration launch preparation", () => {
     const prepared = prepare("C:\\Program Files\\PowerShell\\7\\pwsh.exe", {
       USERPROFILE: "C:\\Users\\test",
     });
-    const commandIndex = prepared.launch.args.indexOf("-Command");
-    const script = prepared.launch.args[commandIndex + 1];
+    const fileIndex = prepared.launch.args.indexOf("-File");
+    expect(fileIndex).toBeGreaterThanOrEqual(0);
+    const bootstrapFile = prepared.launch.args[fileIndex + 1];
+    const script = readFileSync(bootstrapFile!, "utf8");
 
     expect(prepared.launch.args).toContain("-NoExit");
+    expect(prepared.temporaryPath && existsSync(prepared.temporaryPath)).toBe(true);
     expect(script).toContain("Set-PSReadLineOption");
     expect(script).toContain("CommandValidationHandler");
     expect(script).toContain("function global:prompt");
+    expect(script.match(/__PctEmitReady/g)).toHaveLength(3);
     prepared.cleanup();
+    expect(prepared.temporaryPath && existsSync(prepared.temporaryPath)).toBe(false);
   });
 
   it("does not expose the session nonce through the inherited environment", () => {

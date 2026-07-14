@@ -112,7 +112,6 @@ export class NodePtyHost implements PtyHost {
         ...(process.platform === "win32"
           ? {
               useConpty: true,
-              useConptyDll: true,
             }
           : {}),
       });

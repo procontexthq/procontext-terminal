@@ -119,7 +119,13 @@ export function prepareShellIntegrationLaunch(
     writeFileSync(initFile, fishBootstrap(nonce), { encoding: "utf8", mode: 0o600 });
     args = [...args, "--init-command", `source ${shellQuote(initFile)}`];
   } else {
-    args = [...args, "-NoExit", "-Command", powershellBootstrap(nonce)];
+    temporaryPath = privateTemporaryDirectory(options.temporaryRoot);
+    const bootstrapFile = join(temporaryPath, "powershell-bootstrap.ps1");
+    writeFileSync(bootstrapFile, powershellBootstrap(nonce), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    args = [...args, "-NoExit", "-File", bootstrapFile];
   }
 
   return {
