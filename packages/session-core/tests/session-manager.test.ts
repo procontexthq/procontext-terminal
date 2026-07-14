@@ -11,7 +11,7 @@ import {
   fullShellIntegrationCapabilities,
 } from "@terminal/shell-integration";
 
-import { TerminalSessionManager, type TerminalRecorder } from "../src/index";
+import { TerminalModel, TerminalSessionManager, type TerminalRecorder } from "../src/index";
 
 class FakePtySession implements PtySession {
   readonly onDataHandlers = new Set<(data: string) => void>();
@@ -358,6 +358,48 @@ describe("TerminalSessionManager", () => {
     });
   });
 
+  it("waits for earlier PTY output parsing before applying a resize", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const summary = await manager.createSession(request);
+    const originalWrite = TerminalModel.prototype.write;
+    let releaseWrite: () => void = () => undefined;
+    let markWriteStarted: () => void = () => undefined;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    const continueWrite = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const write = vi
+      .spyOn(TerminalModel.prototype, "write")
+      .mockImplementationOnce(async function (data) {
+        markWriteStarted();
+        await continueWrite;
+        return await originalWrite.call(this, data);
+      });
+
+    try {
+      host.pty.emitData("before-resize");
+      await writeStarted;
+      const resize = manager.resize({
+        sessionId: summary.sessionId,
+        cols: 100,
+        rows: 30,
+      });
+      await Promise.resolve();
+
+      expect(host.pty.resize).not.toHaveBeenCalled();
+
+      releaseWrite();
+      await resize;
+
+      expect(host.pty.resize).toHaveBeenCalledWith(100, 30);
+    } finally {
+      write.mockRestore();
+    }
+  });
+
   it("supports shared scroll and viewport reporting", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host, { scrollback: 5_000 });
@@ -369,11 +411,11 @@ describe("TerminalSessionManager", () => {
       timeoutMs: 100,
     });
 
-    const scrolled = manager.scroll({
+    const scrolled = await manager.scroll({
       sessionId: summary.sessionId,
       scroll: { type: "lines", delta: -1 },
     });
-    const reported = manager.reportViewport({
+    const reported = await manager.reportViewport({
       sessionId: summary.sessionId,
       viewportY: 0,
     });

@@ -136,12 +136,12 @@ export class TerminalSessionManager {
     return await this.get(request.sessionId).resize(request);
   }
 
-  scroll(request: ScrollTerminalRequest): ScrollTerminalResult {
-    return this.get(request.sessionId).scroll(request);
+  async scroll(request: ScrollTerminalRequest): Promise<ScrollTerminalResult> {
+    return await this.get(request.sessionId).scroll(request);
   }
 
-  reportViewport(request: ReportTerminalViewportRequest): boolean {
-    return this.get(request.sessionId).reportViewport(request.viewportY);
+  async reportViewport(request: ReportTerminalViewportRequest): Promise<boolean> {
+    return await this.get(request.sessionId).reportViewport(request.viewportY);
   }
 
   observe(request: ObserveTerminalRequest, signal?: AbortSignal): Promise<ObserveTerminalResult> {
@@ -160,8 +160,8 @@ export class TerminalSessionManager {
     return this.get(sessionId).waitForExit(timeoutMs);
   }
 
-  setPresentation(sessionId: SessionId, presentation: TerminalPresentation): void {
-    this.get(sessionId).setPresentation(presentation);
+  async setPresentation(sessionId: SessionId, presentation: TerminalPresentation): Promise<void> {
+    await this.get(sessionId).setPresentation(presentation);
   }
 
   async close(request: CloseTerminalRequest): Promise<CloseTerminalResult> {

@@ -263,6 +263,7 @@ void app
       presentationController,
       policy: terminalPolicy,
       logger,
+      closeSession: (request) => operationManager.close(request),
       getConfig: () => terminalConfig,
       saveConfig,
     });

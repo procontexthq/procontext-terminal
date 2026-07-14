@@ -39,6 +39,13 @@ export function TerminalTabView({
 }): ReactElement {
   const terminalElement = useRef<HTMLDivElement | null>(null);
   const controller = useRef<TerminalController | null>(null);
+  const launch = useRef({
+    session: {
+      cwd: tab.cwd,
+      shell: tab.shell,
+    },
+    attachSessionId: tab.sessionId,
+  });
   const terminalFinished = tab.status === "exited" || tab.status === "failed";
 
   useEffect(() => {
@@ -58,11 +65,8 @@ export function TerminalTabView({
         const nextController = await createTerminalSession({
           api: window.terminalApi,
           element: terminalElement.current,
-          session: {
-            cwd: tab.cwd,
-            shell: tab.shell,
-          },
-          attachSessionId: tab.sessionId ?? undefined,
+          session: launch.current.session,
+          attachSessionId: launch.current.attachSessionId ?? undefined,
           createTerminal: () =>
             new Terminal({
               fontFamily: terminalFontFamily,
@@ -79,13 +83,15 @@ export function TerminalTabView({
         });
 
         if (disposed) {
-          void nextController.dispose();
+          await nextController.dispose(
+            launch.current.attachSessionId ? undefined : { sessionLifecycle: "terminate" },
+          );
           return;
         }
 
         controller.current = nextController;
         registerController(tab.id, nextController);
-        setStatus(tab.id, "running");
+        setStatus(tab.id, nextController.lifecycle);
         await nextController.resize();
         if (active) {
           nextController.focus();
@@ -112,17 +118,7 @@ export function TerminalTabView({
       void controller.current?.dispose();
       controller.current = null;
     };
-  }, [
-    onBell,
-    onError,
-    onSessionEvent,
-    onTitleChange,
-    registerController,
-    setStatus,
-    tab.cwd,
-    tab.id,
-    tab.shell,
-  ]);
+  }, [onBell, onError, onSessionEvent, onTitleChange, registerController, setStatus, tab.id]);
 
   useEffect(() => {
     controller.current?.setFontFamily(terminalFontFamily);

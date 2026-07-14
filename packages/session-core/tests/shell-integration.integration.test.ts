@@ -77,6 +77,70 @@ describe("real shell integration", () => {
       }
     },
   );
+
+  const bash = installedShells().find((candidate) => candidate.name === "bash");
+  it.skipIf(!bash)(
+    "preserves Bash PROMPT_COMMAND arrays and the previous command status",
+    async () => {
+      if (!bash) throw new Error("Expected an installed Bash executable.");
+      const fixture = createShellFixture("bash");
+      writeFileSync(
+        join(fixture.home, ".bashrc"),
+        [
+          "PROMPT_COMMAND=(",
+          '  \'printf "PCT_PROMPT_STATUS:%s\\\\n" "$?"\'',
+          "  'printf \"PCT_PROMPT_SECOND\\\\n\"'",
+          ")",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      const manager = new TerminalSessionManager(new NodePtyHost(), {
+        shellIntegrationInitializationTimeoutMs: 5_000,
+      });
+      let output = "";
+      const unsubscribe = manager.onSessionEvent((event) => {
+        if (event.type === "session.output") output += event.payload.data;
+      });
+      try {
+        const session = await manager.createSession({
+          shell: bash.executable,
+          cwd: fixture.home,
+          env: fixture.env,
+        });
+        const ready = await waitForSummary(
+          manager,
+          session,
+          (summary) =>
+            summary.shellIntegration.status === "available" && summary.command.state === "idle",
+        );
+        output = "";
+
+        await manager.input({
+          sessionId: ready.sessionId,
+          input: "false\n",
+          origin: "system",
+        });
+        await waitForSummary(
+          manager,
+          ready,
+          (summary) =>
+            summary.command.state === "idle" && summary.command.lastCommand?.exitCode === 1,
+        );
+        await waitForCondition(
+          () => output.includes("PCT_PROMPT_STATUS:1") && output.includes("PCT_PROMPT_SECOND"),
+          1_000,
+        );
+
+        expect(output).toContain("PCT_PROMPT_STATUS:1");
+        expect(output).toContain("PCT_PROMPT_SECOND");
+      } finally {
+        unsubscribe();
+        await manager.shutdown({ timeoutMs: 2_000 });
+        fixture.cleanup();
+      }
+    },
+  );
 });
 
 async function waitForSummary(
@@ -110,6 +174,16 @@ async function waitForSummary(
     }
   }
   return current;
+}
+
+async function waitForCondition(predicate: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for shell prompt output.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 function installedShells(): Array<{ name: ShellName; executable: string }> {

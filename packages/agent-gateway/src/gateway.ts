@@ -117,21 +117,37 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
   async function handleMessage(data: RawData, connection: ConnectionContext): Promise<void> {
     lastActiveAt = now().toISOString();
     emitActivity();
-    let command: AgentCommand;
+    let rawCommand: unknown;
     try {
-      command = parseAgentCommand(JSON.parse(rawDataToString(data)) as unknown);
+      rawCommand = JSON.parse(rawDataToString(data)) as unknown;
     } catch (error: unknown) {
+      sendInvalidCommand(data, connection, error);
+      return;
+    }
+    const unsupportedVersion = readUnsupportedProtocolVersion(rawCommand);
+    if (unsupportedVersion !== undefined) {
       const requestId = extractRequestIdFromRaw(data);
       sendResult(
         connection,
         createAgentCommandFailure(
           requestId,
-          createTerminalError("invalid_request", "Invalid agent command payload.", {
-            operation: "agent.command",
-            cause: error instanceof Error ? error.message : String(error),
-          }),
+          createTerminalError(
+            "protocol_version_unsupported",
+            `Terminal protocol version ${String(unsupportedVersion)} is unsupported.`,
+            {
+              operation: "agent.authenticate",
+            },
+          ),
         ),
       );
+      return;
+    }
+
+    let command: AgentCommand;
+    try {
+      command = parseAgentCommand(rawCommand);
+    } catch (error: unknown) {
+      sendInvalidCommand(data, connection, error);
       return;
     }
 
@@ -178,6 +194,20 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       audit(connection, command, "failure", normalized);
       sendResult(connection, createAgentCommandFailure(command.requestId, normalized));
     }
+  }
+
+  function sendInvalidCommand(data: RawData, connection: ConnectionContext, error: unknown): void {
+    const requestId = extractRequestIdFromRaw(data);
+    sendResult(
+      connection,
+      createAgentCommandFailure(
+        requestId,
+        createTerminalError("invalid_request", "Invalid agent command payload.", {
+          operation: "agent.command",
+          cause: error instanceof Error ? error.message : String(error),
+        }),
+      ),
+    );
   }
 
   function authenticate(
@@ -307,4 +337,18 @@ function sendResult(connection: ConnectionContext, result: AgentCommandResult): 
   if (connection.socket.readyState === 1) {
     connection.socket.send(JSON.stringify(result));
   }
+}
+
+function readUnsupportedProtocolVersion(value: unknown): number | undefined {
+  if (!isRecord(value) || value.type !== "agent.authenticate" || !isRecord(value.payload)) {
+    return undefined;
+  }
+  if (!("protocolVersion" in value.payload)) return undefined;
+  const protocolVersion = value.payload.protocolVersion;
+  if (typeof protocolVersion !== "number") return undefined;
+  return protocolVersion === TERMINAL_PROTOCOL_VERSION ? undefined : protocolVersion;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

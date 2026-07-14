@@ -20,7 +20,7 @@ export type CapturedProcessSpawnRequest = {
 };
 
 export type CapturedProcess = {
-  kill(): void;
+  kill(): void | Promise<void>;
 };
 
 export type CapturedProcessHost = {
@@ -41,6 +41,7 @@ export class NodeCapturedProcessHost implements CapturedProcessHost {
       env: request.shell.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
       windowsHide: true,
       windowsVerbatimArguments: request.shell.windowsVerbatimArguments,
     });
@@ -61,7 +62,7 @@ export class NodeCapturedProcessHost implements CapturedProcessHost {
         spawned = true;
         resolve({
           kill() {
-            child.kill();
+            return terminateProcessTree(child);
           },
         });
       });
@@ -81,4 +82,50 @@ export class NodeCapturedProcessHost implements CapturedProcessHost {
       });
     });
   }
+}
+
+function terminateProcessTree(child: ReturnType<typeof spawn>): void | Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === "win32") {
+    return terminateWindowsProcessTree(child);
+  }
+
+  const pid = child.pid;
+  if (pid !== undefined) {
+    try {
+      process.kill(-pid, "SIGTERM");
+      return;
+    } catch (error: unknown) {
+      if (!isNoSuchProcessError(error)) throw error;
+    }
+  }
+
+  if (child.exitCode === null && child.signalCode === null && !child.kill("SIGTERM")) {
+    throw new Error("Captured process could not be terminated.");
+  }
+}
+
+function terminateWindowsProcessTree(child: ReturnType<typeof spawn>): Promise<void> {
+  const pid = child.pid;
+  if (pid === undefined) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const taskkill = spawn("taskkill.exe", ["/pid", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    taskkill.once("error", reject);
+    taskkill.once("exit", (exitCode) => {
+      if (exitCode === 0 || child.exitCode !== null || child.signalCode !== null) {
+        resolve();
+        return;
+      }
+      reject(new Error(`taskkill exited with code ${String(exitCode)}.`));
+    });
+  });
+}
+
+function isNoSuchProcessError(error: unknown): boolean {
+  return (
+    error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ESRCH"
+  );
 }

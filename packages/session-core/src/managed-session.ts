@@ -50,7 +50,7 @@ export class ManagedTerminalSession {
   private readonly now: () => Date;
   private readonly recording: SessionRecording;
   private readonly runOutput: BoundedOutputJournal | undefined;
-  private outputQueue = Promise.resolve();
+  private operationQueue = Promise.resolve();
   private shellIntegrationTimeout: ReturnType<typeof setTimeout> | undefined;
   private sequence = 0;
   private createdAt: string;
@@ -143,71 +143,81 @@ export class ManagedTerminalSession {
   }
 
   async input(input: string, origin: InputOrigin): Promise<TerminalInputResult> {
-    this.requireRunning("terminal.input");
-    if (this.model.scrollToBottomForInput()) this.notifyState();
-    try {
-      this.options.pty.write(input);
-      await this.recording.append({
-        type: "terminal.input",
-        sessionId: this.options.sessionId,
-        at: this.now().toISOString(),
-        origin,
-        data: input,
-      });
-      return { accepted: true, observationVersion: this.model.version };
-    } catch (error: unknown) {
-      throw this.wrap(error, "session_input_failed", "terminal.input");
-    }
+    return await this.enqueue(async () => {
+      this.requireRunning("terminal.input");
+      if (this.model.scrollToBottomForInput()) this.notifyState();
+      try {
+        this.options.pty.write(input);
+        await this.recording.append({
+          type: "terminal.input",
+          sessionId: this.options.sessionId,
+          at: this.now().toISOString(),
+          origin,
+          data: input,
+        });
+        return { accepted: true, observationVersion: this.model.version };
+      } catch (error: unknown) {
+        throw this.wrap(error, "session_input_failed", "terminal.input");
+      }
+    });
   }
 
   async resize(request: ResizeTerminalRequest): Promise<{ observationVersion: number }> {
-    this.requireRunning("terminal.resize");
-    try {
-      this.options.pty.resize(request.cols, request.rows);
-      this.model.resize(request.cols, request.rows);
-      this.touch();
-      await this.recording.append({
-        type: "terminal.resize",
-        sessionId: this.options.sessionId,
-        at: this.updatedAt,
-        cols: request.cols,
-        rows: request.rows,
-      });
-      this.notifyState();
-      return { observationVersion: this.model.version };
-    } catch (error: unknown) {
-      throw this.wrap(error, "session_resize_failed", "terminal.resize");
-    }
+    return await this.enqueue(async () => {
+      this.requireRunning("terminal.resize");
+      try {
+        this.options.pty.resize(request.cols, request.rows);
+        this.model.resize(request.cols, request.rows);
+        this.touch();
+        await this.recording.append({
+          type: "terminal.resize",
+          sessionId: this.options.sessionId,
+          at: this.updatedAt,
+          cols: request.cols,
+          rows: request.rows,
+        });
+        this.notifyState();
+        return { observationVersion: this.model.version };
+      } catch (error: unknown) {
+        throw this.wrap(error, "session_resize_failed", "terminal.resize");
+      }
+    });
   }
 
-  scroll(request: ScrollTerminalRequest): ScrollTerminalResult {
-    this.requireRunningOrExited("terminal.scroll");
-    try {
-      const changed = this.model.scroll(request.scroll);
+  async scroll(request: ScrollTerminalRequest): Promise<ScrollTerminalResult> {
+    return await this.enqueue(() => {
+      this.requireRunningOrExited("terminal.scroll");
+      try {
+        const changed = this.model.scroll(request.scroll);
+        if (changed) this.notifyViewport();
+        return {
+          status: changed ? ("changed" as const) : ("unchanged" as const),
+          observationVersion: this.model.version,
+        };
+      } catch (error: unknown) {
+        throw this.wrap(error, "session_scroll_failed", "terminal.scroll");
+      }
+    });
+  }
+
+  async reportViewport(viewportY: number): Promise<boolean> {
+    return await this.enqueue(() => {
+      this.requireRunningOrExited("session.reportViewport");
+      const changed = this.model.reportViewport(viewportY);
       if (changed) this.notifyViewport();
-      return {
-        status: changed ? "changed" : "unchanged",
-        observationVersion: this.model.version,
-      };
-    } catch (error: unknown) {
-      throw this.wrap(error, "session_scroll_failed", "terminal.scroll");
-    }
+      return changed;
+    });
   }
 
-  reportViewport(viewportY: number): boolean {
-    this.requireRunningOrExited("session.reportViewport");
-    const changed = this.model.reportViewport(viewportY);
-    if (changed) this.notifyViewport();
-    return changed;
-  }
-
-  setPresentation(presentation: TerminalPresentation): void {
-    const previousVersion = this.model.version;
-    this.model.setPresentation(presentation);
-    if (this.model.version !== previousVersion) {
-      this.touch();
-      this.notifyState();
-    }
+  async setPresentation(presentation: TerminalPresentation): Promise<void> {
+    await this.enqueue(() => {
+      const previousVersion = this.model.version;
+      this.model.setPresentation(presentation);
+      if (this.model.version !== previousVersion) {
+        this.touch();
+        this.notifyState();
+      }
+    });
   }
 
   observe(request: ObserveTerminalRequest, signal?: AbortSignal): Promise<ObserveTerminalResult> {
@@ -265,7 +275,8 @@ export class ManagedTerminalSession {
   }
 
   async close(timeoutMs = this.options.closeTimeoutMs): Promise<CloseTerminalResult> {
-    if (this.model.currentLifecycle === "running") {
+    await this.enqueue(() => {
+      if (this.model.currentLifecycle !== "running") return;
       this.model.setLifecycle("exiting");
       this.touch();
       this.notifyState();
@@ -277,7 +288,7 @@ export class ManagedTerminalSession {
         this.notifyState();
         throw this.wrap(error, "session_close_failed", "terminal.close");
       }
-    }
+    });
     if (this.model.currentLifecycle === "exiting") {
       const exited = await this.waitForExit(timeoutMs);
       if (!exited) return { status: "termination_pending" };
@@ -285,7 +296,7 @@ export class ManagedTerminalSession {
     if (this.model.currentLifecycle !== "exited" && this.model.currentLifecycle !== "failed") {
       return { status: "termination_pending" };
     }
-    await this.recording.finalize();
+    await this.enqueue(() => this.recording.finalize());
     return {
       status: "closed",
       exitCode: this.exitCode ?? null,
@@ -294,16 +305,19 @@ export class ManagedTerminalSession {
   }
 
   async startRecording(): Promise<void> {
-    this.requireRunningOrExited("terminal.recording.start");
-    await this.recording.start();
+    await this.enqueue(async () => {
+      this.requireRunningOrExited("terminal.recording.start");
+      await this.recording.start();
+    });
   }
 
   async stopRecording(): Promise<void> {
-    await this.recording.stop();
+    await this.enqueue(() => this.recording.stop());
   }
 
-  exportRecording() {
-    return this.recording.export();
+  async exportRecording() {
+    await this.operationQueue;
+    return await this.recording.export();
   }
 
   dispose(): void {
@@ -314,7 +328,7 @@ export class ManagedTerminalSession {
   }
 
   private acceptOutput(data: string): void {
-    this.outputQueue = this.outputQueue.then(async () => {
+    void this.enqueue(async () => {
       const { titleChanged, shellIntegrationChanged } = await this.model.write(data);
       if (
         shellIntegrationChanged &&
@@ -341,11 +355,16 @@ export class ManagedTerminalSession {
         this.options.emit({ type: "session.updated", payload: this.summary });
       }
       this.waiters.notify();
+    }).catch((error: unknown) => {
+      this.options.emit({
+        type: "session.error",
+        payload: this.wrap(error, "observation_failed", "processTerminalOutput"),
+      });
     });
   }
 
   private acceptExit(event: PtyExitEvent): void {
-    this.outputQueue = this.outputQueue.then(async () => {
+    void this.enqueue(async () => {
       if (this.shellIntegrationTimeout) {
         clearTimeout(this.shellIntegrationTimeout);
         this.shellIntegrationTimeout = undefined;
@@ -366,6 +385,11 @@ export class ManagedTerminalSession {
       this.notifyState();
       for (const resolve of this.exitWaiters) resolve();
       this.exitWaiters.clear();
+    }).catch((error: unknown) => {
+      this.options.emit({
+        type: "session.error",
+        payload: this.wrap(error, "observation_failed", "processTerminalExit"),
+      });
     });
   }
 
@@ -388,6 +412,15 @@ export class ManagedTerminalSession {
 
   private touch(): void {
     this.updatedAt = this.now().toISOString();
+  }
+
+  private enqueue<T>(operation: () => T | Promise<T>): Promise<T> {
+    const result = this.operationQueue.then(operation);
+    this.operationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   private requireRunning(operation: string): void {
