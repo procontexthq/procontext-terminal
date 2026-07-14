@@ -28,6 +28,8 @@ Normal user startup configuration runs before ProContext installs its hooks:
 - PowerShell installs prompt and PSReadLine hooks after profiles load.
 
 Hook failure must not prevent the shell from starting or accepting input.
+Generated Bash and Zsh references to user startup files retain POSIX path
+syntax even when deterministic bootstrap tests run on Windows.
 
 ## Marker Protocol
 
@@ -93,3 +95,5 @@ maps cmdlet success or failure to `0` or `1`.
   produce trusted command state.
 - Real PTY tests cover each installed supported shell, with deterministic
   bootstrap tests for shells unavailable on the current platform.
+- Real-shell cwd assertions compare canonical filesystem identity so Windows
+  short and long path spellings are treated as the same directory.

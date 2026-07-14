@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -38,7 +39,7 @@ describe("real shell integration", () => {
             summary.shellIntegration.status === "available" && summary.command.state === "idle",
         );
 
-        expect(ready.cwd).toBe(fixture.home);
+        expect(canonicalPath(ready.cwd)).toBe(canonicalPath(fixture.home));
         await manager.input({
           sessionId: session.sessionId,
           input: commandFor(name),
@@ -63,11 +64,9 @@ describe("real shell integration", () => {
         });
         expect(observation).toMatchObject({
           status: "changed",
-          observation: {
-            cwd: fixture.home,
-          },
         });
         if (observation.status !== "changed") throw new Error("Expected a current observation.");
+        expect(canonicalPath(observation.observation.cwd)).toBe(canonicalPath(fixture.home));
         expect(observation.observation.viewport.rows).toEqual(
           expect.arrayContaining([expect.objectContaining({ text: "PCT_REAL_OK" })]),
         );
@@ -233,6 +232,11 @@ function commandFor(name: ShellName): string {
   return name === "pwsh" || name === "powershell"
     ? "Write-Output PCT_REAL_OK\r"
     : "printf 'PCT_REAL_OK\\n'\n";
+}
+
+function canonicalPath(path: string): string {
+  const canonical = realpathSync.native(path);
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
 }
 
 function isExecutable(path: string): boolean {

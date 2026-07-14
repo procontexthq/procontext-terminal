@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, posix } from "node:path";
 
 import type { ShellIntegrationState } from "@terminal/protocol";
 
@@ -84,7 +84,7 @@ export function prepareShellIntegrationLaunch(
   if (shell === "bash") {
     temporaryPath = privateTemporaryDirectory(options.temporaryRoot);
     const rcfile = join(temporaryPath, "bashrc");
-    writeFileSync(rcfile, bashBootstrap(join(env.HOME ?? "", ".bashrc"), nonce), {
+    writeFileSync(rcfile, bashBootstrap(posix.join(env.HOME ?? "", ".bashrc"), nonce), {
       encoding: "utf8",
       mode: 0o600,
     });
@@ -95,21 +95,21 @@ export function prepareShellIntegrationLaunch(
     const startupRoot = originalZdotdir ?? "";
     writeFileSync(
       join(temporaryPath, ".zshenv"),
-      `${forwardStartupFile(join(startupRoot, ".zshenv"))}export ZDOTDIR=${shellQuote(
+      `${forwardStartupFile(posix.join(startupRoot, ".zshenv"))}export ZDOTDIR=${shellQuote(
         temporaryPath,
       )}\n`,
       { encoding: "utf8", mode: 0o600 },
     );
     writeFileSync(
       join(temporaryPath, ".zprofile"),
-      `${forwardStartupFile(join(startupRoot, ".zprofile"))}export ZDOTDIR=${shellQuote(
+      `${forwardStartupFile(posix.join(startupRoot, ".zprofile"))}export ZDOTDIR=${shellQuote(
         temporaryPath,
       )}\n`,
       { encoding: "utf8", mode: 0o600 },
     );
     writeFileSync(
       join(temporaryPath, ".zshrc"),
-      zshBootstrap(join(startupRoot, ".zshrc"), originalZdotdir, nonce),
+      zshBootstrap(posix.join(startupRoot, ".zshrc"), originalZdotdir, nonce),
       { encoding: "utf8", mode: 0o600 },
     );
     env.ZDOTDIR = temporaryPath;

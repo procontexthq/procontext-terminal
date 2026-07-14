@@ -109,6 +109,12 @@ export class NodePtyHost implements PtyHost {
         env: shell.env,
         cols: request.cols,
         rows: request.rows,
+        ...(process.platform === "win32"
+          ? {
+              useConpty: true,
+              useConptyDll: true,
+            }
+          : {}),
       });
 
       return Promise.resolve(new NodePtySession(processHandle));
@@ -119,7 +125,14 @@ export class NodePtyHost implements PtyHost {
 }
 
 class NodePtySession implements PtySession {
-  constructor(private readonly processHandle: pty.IPty) {}
+  private exited = false;
+  private killRequested = false;
+
+  constructor(private readonly processHandle: pty.IPty) {
+    this.processHandle.onExit(() => {
+      this.exited = true;
+    });
+  }
 
   write(data: string): void {
     this.processHandle.write(data);
@@ -130,7 +143,14 @@ class NodePtySession implements PtySession {
   }
 
   kill(): void {
-    this.processHandle.kill();
+    if (this.exited || this.killRequested) return;
+    this.killRequested = true;
+    try {
+      this.processHandle.kill();
+    } catch (error: unknown) {
+      this.killRequested = false;
+      throw error;
+    }
   }
 
   onData(handler: (data: string) => void): () => void {
