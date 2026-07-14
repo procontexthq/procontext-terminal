@@ -16,6 +16,7 @@ This directory contains the detailed component specs for the terminal architectu
 - [Terminal Operation Manager](./terminal-operation-manager.md)
 - [PTY Host](./pty-host.md)
 - [Shell Resolver](./shell-resolver.md)
+- [Shell Integration](./shell-integration.md)
 - [Agent Gateway](./agent-gateway.md)
 - [Policy Engine](./policy-engine.md)
 - [Screen Observer](./screen-observer.md)

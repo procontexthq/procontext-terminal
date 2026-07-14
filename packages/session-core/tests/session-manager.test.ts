@@ -1,7 +1,15 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { createSessionId, type RendererSessionEvent } from "@terminal/protocol";
 import type { PtyHost, PtySession, PtySpawnRequest } from "@terminal/pty-host";
+import {
+  encodeShellIntegrationMarker,
+  formatShellIntegrationOsc,
+  fullShellIntegrationCapabilities,
+} from "@terminal/shell-integration";
 
 import { TerminalSessionManager, type TerminalRecorder } from "../src/index";
 
@@ -89,6 +97,132 @@ describe("TerminalSessionManager", () => {
       rows: 24,
     });
   });
+
+  it("prepares supported persistent shells and exposes trusted semantic state", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const summary = await manager.createSession({
+      shell: supportedInteractiveShell(),
+      cwd: process.cwd(),
+    });
+    const nonce = shellIntegrationNonce(host.spawnRequests[0]);
+    expect(summary.shellIntegration.status).toBe("initializing");
+    expect(host.spawnRequests[0]?.shell.env.PCT_SHELL_INTEGRATION_NONCE).toBeUndefined();
+    expect(host.spawnRequests[0]?.shell.args.length).toBeGreaterThan(0);
+
+    host.pty.emitData(
+      [
+        shellOsc(nonce, "ready", "", JSON.stringify(fullShellIntegrationCapabilities)),
+        shellOsc(nonce, "prompt", "", process.cwd()),
+        shellOsc(nonce, "command-start", "command-1", "echo ok"),
+      ].join(""),
+    );
+    const running = await manager.observe({
+      sessionId: summary.sessionId,
+      afterVersion: summary.observationVersion,
+      timeoutMs: 100,
+    });
+    expect(running).toMatchObject({
+      status: "changed",
+      observation: {
+        cwd: process.cwd(),
+        shellIntegration: { status: "available" },
+        command: { state: "running", commandId: "command-1", commandLine: "echo ok" },
+      },
+    });
+
+    host.pty.emitData(shellOsc(nonce, "command-finish", "command-1", "0"));
+    await waitForCommandState(manager, summary.sessionId, "idle");
+    expect(manager.getSession({ sessionId: summary.sessionId })).toMatchObject({
+      command: { state: "idle", lastCommand: { commandId: "command-1", exitCode: 0 } },
+    });
+  });
+
+  it("degrades supported sessions after the initialization timeout and permits recovery", async () => {
+    vi.useFakeTimers();
+    try {
+      const host = new FakePtyHost();
+      const manager = new TerminalSessionManager(host, {
+        shellIntegrationInitializationTimeoutMs: 50,
+      });
+      const summary = await manager.createSession({
+        shell: supportedInteractiveShell(),
+        cwd: process.cwd(),
+      });
+      const nonce = shellIntegrationNonce(host.spawnRequests[0]);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(manager.getSession({ sessionId: summary.sessionId })).toMatchObject({
+        shellIntegration: { status: "degraded" },
+        command: { state: "unknown" },
+      });
+
+      host.pty.emitData(
+        shellOsc(nonce, "ready", "", JSON.stringify(fullShellIntegrationCapabilities)),
+      );
+      vi.runAllTicks();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(manager.getSession({ sessionId: summary.sessionId }).shellIntegration.status).toBe(
+        "available",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not inject shell integration into temporary command sessions", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+
+    const summary = await manager.createCommandSession({
+      input: platformPrintCommand("ok"),
+      shell: testShell,
+      outputLimitBytes: 1024,
+      createdBy: "agent",
+    });
+
+    expect(host.spawnRequests[0]?.shell.env.PCT_SHELL_INTEGRATION_NONCE).toBeUndefined();
+    expect(summary.shellIntegration.status).toBe("unavailable");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "cleans generated shell startup files after close",
+    async () => {
+      const host = new FakePtyHost();
+      const manager = new TerminalSessionManager(host);
+      const summary = await manager.createSession({
+        shell: "/bin/bash",
+        cwd: process.cwd(),
+      });
+      const rcfile = host.spawnRequests[0]?.shell.args[1];
+      if (!rcfile) throw new Error("Expected a generated Bash rcfile.");
+      const temporaryPath = dirname(rcfile);
+
+      expect(existsSync(temporaryPath)).toBe(true);
+      await manager.close({ sessionId: summary.sessionId });
+      expect(existsSync(temporaryPath)).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "cleans generated shell startup files after spawn failure",
+    async () => {
+      let startupPath: string | null = null;
+      const host: PtyHost = {
+        spawn: vi.fn<PtyHost["spawn"]>((spawnRequest) => {
+          const rcfile = spawnRequest.shell.args[1];
+          startupPath = rcfile ? dirname(rcfile) : null;
+          return Promise.reject(new Error("spawn failed"));
+        }),
+      };
+      const manager = new TerminalSessionManager(host);
+
+      await expect(
+        manager.createSession({ shell: "/bin/bash", cwd: process.cwd() }),
+      ).rejects.toMatchObject({ type: "pty_spawn_failed" });
+      expect(startupPath).not.toBeNull();
+      expect(existsSync(startupPath!)).toBe(false);
+    },
+  );
 
   it("creates temporary command sessions and retains their bounded output tail", async () => {
     const host = new FakePtyHost();
@@ -485,6 +619,18 @@ async function waitForLifecycle(
   throw new Error(`Session did not reach ${lifecycle}.`);
 }
 
+async function waitForCommandState(
+  manager: TerminalSessionManager,
+  sessionId: ReturnType<typeof createSessionId>,
+  state: "idle" | "running" | "unknown",
+): Promise<void> {
+  for (let index = 0; index < 20; index += 1) {
+    if (manager.getSession({ sessionId }).command.state === state) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`Session did not reach command state ${state}.`);
+}
+
 function createRecorder() {
   return {
     record: vi.fn<TerminalRecorder["record"]>(() => Promise.resolve()),
@@ -506,6 +652,34 @@ function platformShell(): string {
     return process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe";
   }
   return "/bin/sh";
+}
+
+function supportedInteractiveShell(): string {
+  return process.platform === "win32" ? "powershell.exe" : "/bin/bash";
+}
+
+function shellOsc(
+  nonce: string,
+  event: "ready" | "prompt" | "command-start" | "command-finish",
+  commandId: string,
+  payload: string,
+): string {
+  return formatShellIntegrationOsc(
+    encodeShellIntegrationMarker({ nonce, event, commandId, payload }),
+  );
+}
+
+function shellIntegrationNonce(request: PtySpawnRequest | undefined): string {
+  if (!request) throw new Error("Expected a PTY spawn request.");
+  const sources = [...request.shell.args];
+  for (const argument of request.shell.args) {
+    if (existsSync(argument)) sources.push(readFileSync(argument, "utf8"));
+  }
+  const match = sources
+    .join("\n")
+    .match(/(?:__pct_nonce=|__PctNonce = |__pct_nonce )'([A-Za-z0-9_-]{22})'/);
+  if (!match?.[1]) throw new Error("Expected a generated shell integration nonce.");
+  return match[1];
 }
 
 function platformPrintCommand(text: string): string {

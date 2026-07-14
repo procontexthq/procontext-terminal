@@ -10,6 +10,7 @@ import {
   markTabBell,
   selectAdjacentTerminalTab,
   selectTerminalTab,
+  updateTabFromSession,
 } from "../../src/renderer/terminal-tabs";
 
 describe("terminal tabs model", () => {
@@ -91,6 +92,45 @@ describe("terminal tabs model", () => {
 
     expect(state.activeTabId).toBe(activeTabId);
     expect(state.tabs.at(-1)?.sessionId).toBe("session-agent");
+  });
+
+  it("updates cwd metadata from canonical session updates", () => {
+    let state = addAttachedTerminalTab(createInitialTerminalTabs(), createSummary(), {
+      reusePlaceholder: true,
+    });
+
+    state = updateTabFromSession(state, {
+      ...createSummary(),
+      cwd: "/repo/packages/session-core",
+      shellIntegration: {
+        status: "available",
+        capabilities: {
+          prompt: true,
+          commandStart: true,
+          commandFinish: true,
+          commandLine: true,
+          exitCode: true,
+          cwd: true,
+        },
+      },
+      command: { state: "idle" },
+    });
+
+    expect(state.tabs[0]).toMatchObject({
+      cwd: "/repo/packages/session-core",
+      status: "running",
+    });
+  });
+
+  it("applies buffered session metadata before a placeholder receives its session id", () => {
+    const initial = createInitialTerminalTabs();
+    const state = updateTabFromSession(initial, createSummary(), initial.activeTabId);
+
+    expect(state.tabs[0]).toMatchObject({
+      sessionId: null,
+      cwd: "/repo",
+      shell: "/bin/zsh",
+    });
   });
 });
 

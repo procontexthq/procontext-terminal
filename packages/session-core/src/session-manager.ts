@@ -28,6 +28,10 @@ import {
   type PtyHost,
   type ResolvedShell,
 } from "@terminal/pty-host";
+import {
+  SHELL_INTEGRATION_INITIALIZATION_TIMEOUT_MS,
+  prepareShellIntegrationLaunch,
+} from "@terminal/shell-integration";
 
 import { ManagedTerminalSession, type TerminalRecorder } from "./managed-session.js";
 
@@ -42,6 +46,7 @@ export type TerminalSessionManagerOptions = {
   recorder?: TerminalRecorder;
   scrollback?: number;
   closeTimeoutMs?: number;
+  shellIntegrationInitializationTimeoutMs?: number;
 };
 
 export type CreateCommandSessionRequest = {
@@ -74,11 +79,19 @@ export class TerminalSessionManager {
     const cwd = request.cwd ?? this.options.defaultCwd?.() ?? process.cwd();
     try {
       const shell = resolveShell({ shell: request.shell, cwd, env: request.env });
-      return await this.spawnSession(sessionId, shell, {
-        cols: request.cols ?? 80,
-        rows: request.rows ?? 24,
-        createdBy: request.createdBy ?? "human",
-      });
+      const prepared = prepareShellIntegrationLaunch(shell);
+      try {
+        return await this.spawnSession(sessionId, prepared.launch, {
+          cols: request.cols ?? 80,
+          rows: request.rows ?? 24,
+          createdBy: request.createdBy ?? "human",
+          ...(prepared.nonce ? { shellIntegrationNonce: prepared.nonce } : {}),
+          cleanupShellIntegration: () => prepared.cleanup(),
+        });
+      } catch (error: unknown) {
+        prepared.cleanup();
+        throw error;
+      }
     } catch (error: unknown) {
       throw normalizeSpawnError(error, sessionId);
     }
@@ -224,6 +237,8 @@ export class TerminalSessionManager {
       rows: number;
       createdBy: "human" | "agent" | "system";
       outputLimitBytes?: number;
+      shellIntegrationNonce?: string;
+      cleanupShellIntegration?: () => void;
     },
   ): Promise<TerminalSessionSummary> {
     const pty = await this.ptyHost.spawn({
@@ -244,6 +259,15 @@ export class TerminalSessionManager {
       recorder: this.options.recorder,
       emit: (event) => this.emit(event),
       closeTimeoutMs: this.options.closeTimeoutMs ?? 5_000,
+      shellIntegrationInitializationTimeoutMs:
+        this.options.shellIntegrationInitializationTimeoutMs ??
+        SHELL_INTEGRATION_INITIALIZATION_TIMEOUT_MS,
+      ...(options.shellIntegrationNonce
+        ? { shellIntegrationNonce: options.shellIntegrationNonce }
+        : {}),
+      ...(options.cleanupShellIntegration
+        ? { cleanupShellIntegration: options.cleanupShellIntegration }
+        : {}),
       ...(options.outputLimitBytes === undefined
         ? {}
         : { outputLimitBytes: options.outputLimitBytes }),

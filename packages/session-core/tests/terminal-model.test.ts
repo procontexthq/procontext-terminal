@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { createSessionId } from "@terminal/protocol";
+import {
+  encodeShellIntegrationMarker,
+  formatShellIntegrationOsc,
+  fullShellIntegrationCapabilities,
+} from "@terminal/shell-integration";
 
 import { TerminalModel } from "../src/terminal-model";
 
@@ -74,4 +79,68 @@ describe("TerminalModel", () => {
 
     expect(model.serialize()).toContain("serialized state");
   });
+
+  it("commits trusted shell markers with terminal output as one observation version", async () => {
+    const nonce = "AQEBAQEBAQEBAQEBAQEBAQ";
+    const model = new TerminalModel({
+      cols: 80,
+      rows: 24,
+      scrollback: 5_000,
+      cwd: "/workspace",
+      shellIntegrationNonce: nonce,
+      now: () => new Date("2026-07-14T10:00:00.000Z"),
+    });
+    model.setLifecycle("running");
+    const initialVersion = model.version;
+
+    await model.write(
+      [
+        "visible",
+        osc(nonce, "ready", "", JSON.stringify(fullShellIntegrationCapabilities)),
+        osc(nonce, "prompt", "", "/workspace/packages"),
+      ].join(""),
+    );
+
+    expect(model.version).toBe(initialVersion + 1);
+    const observation = model.observe(createSessionId("session-integration"));
+    expect(observation).toMatchObject({
+      cwd: "/workspace/packages",
+      shellIntegration: { status: "available" },
+      command: { state: "idle" },
+    });
+    expect(observation.viewport.rows[0]).toMatchObject({ text: "visible" });
+  });
+
+  it("ignores nested markers with another nonce", async () => {
+    const nonce = "AQEBAQEBAQEBAQEBAQEBAQ";
+    const model = new TerminalModel({
+      cols: 80,
+      rows: 24,
+      scrollback: 5_000,
+      cwd: "/workspace",
+      shellIntegrationNonce: nonce,
+    });
+    model.setLifecycle("running");
+
+    await model.write(
+      osc("AgICAgICAgICAgICAgICAg", "ready", "", JSON.stringify(fullShellIntegrationCapabilities)),
+    );
+
+    expect(model.observe(createSessionId("session-nested"))).toMatchObject({
+      cwd: "/workspace",
+      shellIntegration: { status: "initializing" },
+      command: { state: "unknown" },
+    });
+  });
 });
+
+function osc(
+  nonce: string,
+  event: "ready" | "prompt" | "command-start" | "command-finish",
+  commandId: string,
+  payload: string,
+): string {
+  return formatShellIntegrationOsc(
+    encodeShellIntegrationMarker({ nonce, event, commandId, payload }),
+  );
+}

@@ -47,6 +47,7 @@ The architecture source of truth is [Terminal Architecture Spec](./specs/termina
 |-- packages/
 |   |-- protocol/
 |   |-- pty-host/
+|   |-- shell-integration/
 |   |-- session-core/
 |   |-- agent-gateway/
 |   |-- recorder/
@@ -86,6 +87,7 @@ The architecture specs describe components. The repository structure groups some
 | Captured process host | `packages/session-core` |
 | PTY host | `packages/pty-host` |
 | Shell resolver | `packages/pty-host` |
+| Shell integration | `packages/shell-integration` |
 | Agent gateway | `packages/agent-gateway` |
 | Policy engine | `packages/policy-engine` |
 | Canonical observation | Headless xterm model in `packages/session-core`; renderer xterm is a projection |
@@ -355,6 +357,32 @@ Good delegation tasks:
 - Add PTY spawn failure mapping.
 - Add resize behavior.
 - Add tests around PTY output and exit events.
+
+## `packages/shell-integration`
+
+Best-effort persistent-shell instrumentation.
+
+Responsibilities:
+
+- Detect supported Bash, Zsh, Fish, and PowerShell launches.
+- Generate startup hooks after normal user configuration.
+- Validate private versioned OSC markers with a per-session nonce.
+- Reduce trusted prompt, cwd, command lifecycle, command line, and exit status.
+- Own private temporary startup resources and cleanup.
+
+Must not:
+
+- Spawn or own PTYs.
+- Handle raw terminal input.
+- Import Electron or renderer code.
+- Treat unsupported or degraded integration as a shell failure.
+- Log nonces, command lines, marker payloads, or environment values.
+
+Good delegation tasks:
+
+- Improve one shell bootstrap.
+- Add a marker validation case.
+- Add real-shell compatibility coverage.
 
 ## `packages/session-core`
 

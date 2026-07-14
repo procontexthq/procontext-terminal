@@ -36,6 +36,9 @@ export type ManagedSessionOptions = {
   emit: (event: RendererSessionEvent) => void;
   closeTimeoutMs: number;
   outputLimitBytes?: number;
+  shellIntegrationNonce?: string;
+  shellIntegrationInitializationTimeoutMs?: number;
+  cleanupShellIntegration?: () => void;
   now?: () => Date;
 };
 
@@ -48,6 +51,7 @@ export class ManagedTerminalSession {
   private readonly recording: SessionRecording;
   private readonly runOutput: BoundedOutputJournal | undefined;
   private outputQueue = Promise.resolve();
+  private shellIntegrationTimeout: ReturnType<typeof setTimeout> | undefined;
   private sequence = 0;
   private createdAt: string;
   private updatedAt: string;
@@ -64,6 +68,11 @@ export class ManagedTerminalSession {
       cols: options.cols,
       rows: options.rows,
       scrollback: options.scrollback,
+      cwd: options.cwd,
+      ...(options.shellIntegrationNonce
+        ? { shellIntegrationNonce: options.shellIntegrationNonce }
+        : {}),
+      ...(options.now ? { now: options.now } : {}),
       onBell: () =>
         options.emit({ type: "session.bell", payload: { sessionId: options.sessionId } }),
     });
@@ -91,7 +100,17 @@ export class ManagedTerminalSession {
       options.pty.onData((data) => this.acceptOutput(data)),
       options.pty.onExit((event) => this.acceptExit(event)),
     );
+    if (options.cleanupShellIntegration) {
+      this.cleanup.push(options.cleanupShellIntegration);
+    }
     this.model.setLifecycle("running");
+    if (options.shellIntegrationNonce) {
+      this.shellIntegrationTimeout = setTimeout(() => {
+        if (!this.model.markShellIntegrationTimedOut()) return;
+        this.touch();
+        this.notifyState();
+      }, options.shellIntegrationInitializationTimeoutMs ?? 10_000);
+    }
     void this.recording.append({
       type: "session.created",
       sessionId: options.sessionId,
@@ -105,7 +124,7 @@ export class ManagedTerminalSession {
       sessionId: this.options.sessionId,
       lifecycle: this.model.currentLifecycle,
       shell: this.options.shell,
-      cwd: this.options.cwd,
+      cwd: this.model.currentCwd,
       dimensions: this.model.dimensions,
       title: this.model.currentTitle,
       createdBy: this.options.createdBy,
@@ -288,6 +307,7 @@ export class ManagedTerminalSession {
   }
 
   dispose(): void {
+    if (this.shellIntegrationTimeout) clearTimeout(this.shellIntegrationTimeout);
     for (const cleanup of this.cleanup) cleanup();
     this.waiters.dispose();
     this.model.dispose();
@@ -295,7 +315,15 @@ export class ManagedTerminalSession {
 
   private acceptOutput(data: string): void {
     this.outputQueue = this.outputQueue.then(async () => {
-      const { titleChanged } = await this.model.write(data);
+      const { titleChanged, shellIntegrationChanged } = await this.model.write(data);
+      if (
+        shellIntegrationChanged &&
+        this.model.currentShellIntegration.status !== "initializing" &&
+        this.shellIntegrationTimeout
+      ) {
+        clearTimeout(this.shellIntegrationTimeout);
+        this.shellIntegrationTimeout = undefined;
+      }
       this.sequence += 1;
       this.runOutput?.append(this.sequence, data);
       this.touch();
@@ -309,13 +337,19 @@ export class ManagedTerminalSession {
         type: "session.output",
         payload: { sessionId: this.options.sessionId, sequence: this.sequence, data },
       });
-      if (titleChanged) this.options.emit({ type: "session.updated", payload: this.summary });
+      if (titleChanged || shellIntegrationChanged) {
+        this.options.emit({ type: "session.updated", payload: this.summary });
+      }
       this.waiters.notify();
     });
   }
 
   private acceptExit(event: PtyExitEvent): void {
     this.outputQueue = this.outputQueue.then(async () => {
+      if (this.shellIntegrationTimeout) {
+        clearTimeout(this.shellIntegrationTimeout);
+        this.shellIntegrationTimeout = undefined;
+      }
       const exitedAt = this.now().toISOString();
       this.exitedAt = exitedAt;
       this.exitCode = event.exitCode;

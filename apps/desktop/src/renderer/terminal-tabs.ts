@@ -54,6 +54,8 @@ export function addAttachedTerminalTab(
         tab.id === existingTab.id
           ? {
               ...tab,
+              cwd: snapshot.cwd,
+              shell: snapshot.shell,
               title: snapshot.title,
               status: snapshot.lifecycle,
               hasUnreadBell: false,
@@ -181,6 +183,27 @@ export function updateTabStatus(
   return {
     ...state,
     tabs: state.tabs.map((tab) => (tab.id === tabId ? { ...tab, status } : tab)),
+  };
+}
+
+export function updateTabFromSession(
+  state: TerminalTabsState,
+  session: TerminalSessionSummary,
+  tabId?: string,
+): TerminalTabsState {
+  return {
+    ...state,
+    tabs: state.tabs.map((tab) =>
+      tab.id === tabId || tab.sessionId === session.sessionId
+        ? {
+            ...tab,
+            cwd: session.cwd,
+            shell: session.shell,
+            title: session.title,
+            status: session.lifecycle,
+          }
+        : tab,
+    ),
   };
 }
 

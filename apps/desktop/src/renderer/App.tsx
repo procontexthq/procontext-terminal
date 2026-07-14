@@ -29,6 +29,7 @@ import {
   selectTerminalTab,
   setTabSessionId,
   terminalTabLabel,
+  updateTabFromSession,
   updateTabStatus,
   type TerminalTab,
   type TerminalTabsState,
@@ -114,6 +115,9 @@ export function App(): ReactElement {
       const tab = current.tabs.find((candidate) => candidate.id === tabId);
       if (!tab) {
         return current;
+      }
+      if (event.type === "session.updated") {
+        return updateTabFromSession(current, event.payload, tabId);
       }
       return updateTabStatus(current, tabId, nextTerminalStatus(tab.status, event));
     });

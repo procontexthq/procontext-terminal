@@ -72,6 +72,7 @@ describe("terminal protocol", () => {
       sessionId,
       version: 7,
       lifecycle: "running",
+      cwd: "/workspace",
       dimensions: { cols: 80, rows: 24 },
       viewport: {
         rows: [{ row: 0, text: "hello", wrapped: false }],
@@ -105,6 +106,7 @@ describe("terminal protocol", () => {
     } as const;
 
     expect(parseTerminalObservation(observation)).toEqual(observation);
+    expect(() => parseTerminalObservation({ ...observation, cwd: "" })).toThrow();
     expect(() => parseTerminalObservation({ ...observation, version: -1 })).toThrow();
     expect(() =>
       parseTerminalObservation({

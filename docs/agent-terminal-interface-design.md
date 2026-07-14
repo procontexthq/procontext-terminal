@@ -11,8 +11,8 @@ defined by the documents under `docs/specs/`.
 The current release implements persistent-session lifecycle, raw input,
 canonical observation, shared viewport control, close, recording, and headless
 one-shot execution plus automated headless, background, and foreground
-presentation. Shell integration follows in a later implementation phase
-without changing the model defined here.
+presentation. Persistent supported shells also expose trusted integration
+capability, current cwd, prompt state, and top-level command lifecycle.
 
 ## Purpose
 
@@ -597,6 +597,7 @@ type TerminalObservation = {
   sessionId: SessionId;
   version: TerminalObservationVersion;
   lifecycle: TerminalLifecycleState;
+  cwd: string;
 
   dimensions: {
     rows: number;
@@ -640,6 +641,7 @@ including:
 - Command state.
 - Presentation state.
 - Session lifecycle.
+- Current integrated working directory.
 
 The agent runtime should replace its previous observation for a session instead
 of appending each complete screen to conversation history.
@@ -1089,8 +1091,8 @@ Implementation follows these ownership boundaries:
 - Markers use a private, versioned OSC payload with a `PCT` prefix, a
   per-session 128-bit nonce, event kind, command ID, and bounded base64url
   payload.
-- The bootstrap reads the nonce into non-exported shell state and removes it
-  from the inherited environment before commands run.
+- Private bootstrap content reads the nonce into non-exported shell state
+  without adding it to the shell's inherited environment.
 - Unsupported shells report `unavailable`. Partial activation reports
   `degraded`. Hook or marker failure never prevents normal shell use.
 - Markers from nested or remote shells without the matching nonce are ignored.

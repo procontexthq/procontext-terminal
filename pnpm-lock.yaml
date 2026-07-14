@@ -184,12 +184,21 @@ importers:
       '@terminal/pty-host':
         specifier: workspace:*
         version: link:../pty-host
+      '@terminal/shell-integration':
+        specifier: workspace:*
+        version: link:../shell-integration
       '@xterm/addon-serialize':
         specifier: 0.14.0
         version: 0.14.0
       '@xterm/headless':
         specifier: 6.0.0
         version: 6.0.0
+
+  packages/shell-integration:
+    dependencies:
+      '@terminal/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/test-fixtures: {}
 

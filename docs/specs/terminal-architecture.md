@@ -42,6 +42,7 @@ flowchart LR
   Main --> Operations["Terminal operation manager"]
   Operations --> Sessions
   Operations --> Captured["Captured process host"]
+  Sessions --> Integration["Shell integration"]
   Sessions --> PTY["PTY host / node-pty"]
   Sessions --> Model["Headless xterm model"]
   Sessions --> Recorder["Recorder"]
@@ -63,6 +64,12 @@ schemas. It contains no process or UI logic.
 
 Resolves and validates shells and wraps node-pty. It exposes spawn, input,
 resize, termination, output, and exit without leaking node-pty types.
+
+### Shell integration
+
+Detects supported persistent shells, prepares best-effort startup hooks, parses
+private nonce-authenticated OSC markers, and reduces trusted prompt, cwd, and
+top-level command state. It does not own PTY lifecycle or terminal input.
 
 ### Session core
 
@@ -88,7 +95,7 @@ Owns loopback transport, authentication, fixed protocol-version validation,
 exclusive agent attachment, policy checks, audit metadata, request dispatch,
 and disconnect cleanup. It calls one narrow terminal service.
 
-## Agent Contract Through Phase 3
+## Agent Contract Through Phase 4
 
 ```ts
 type AgentTerminalCommand =
@@ -127,6 +134,11 @@ temporary command PTY that reuses the canonical session model. Temporary and
 persistent PTYs support headless, background, and foreground presentation
 through correlated renderer commands. Renderer failure changes presentation
 state without changing PTY lifecycle or agent attachment.
+
+Persistent supported shells additionally expose trusted integration capability,
+current cwd, prompt state, and top-level command lifecycle through session
+summaries and canonical observations. Integration failure never changes PTY
+lifecycle or raw shell behavior.
 
 ## Session Lifecycle
 
@@ -216,7 +228,6 @@ is unchanged; keys intended for the application remain terminal input.
 
 ## Subsequent Phases
 
-- Automatic shell integration and semantic top-level command state.
 - Panes, search, links, settings UI, and release packaging improvements.
 
 The subsequent-phase contracts are already fixed in the agent interface design
