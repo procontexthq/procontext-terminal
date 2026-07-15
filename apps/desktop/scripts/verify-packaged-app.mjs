@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { access, readFile, readdir, stat } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -36,6 +36,9 @@ for (const nativeModule of nativeModules) {
   }
 }
 
+const windowsBundledConpty =
+  process.platform === "win32" ? await assertWindowsBundledConpty(nativeModules) : null;
+
 console.log(
   JSON.stringify(
     {
@@ -45,11 +48,42 @@ console.log(
       appIcon: join(layout.resourcesDir, "icon.png"),
       bundleMetadata,
       nodePtyNativeModules: nativeModules,
+      windowsBundledConpty,
     },
     null,
     2,
   ),
 );
+
+async function assertWindowsBundledConpty(nativeModules) {
+  const separator = pathSeparator();
+  const selectedPrebuildMarker =
+    `${separator}prebuilds${separator}win32-${process.arch}${separator}`.toLowerCase();
+  const selectedConptyModule = nativeModules.find((path) => {
+    return (
+      basename(path).toLowerCase() === "conpty.node" &&
+      path.toLowerCase().includes(selectedPrebuildMarker)
+    );
+  });
+
+  if (!selectedConptyModule) {
+    throw new Error(
+      `Packaged resources do not contain the selected win32-${process.arch} ConPTY native module.`,
+    );
+  }
+
+  const bundledConptyDir = join(dirname(selectedConptyModule), "conpty");
+  const conptyDll = join(bundledConptyDir, "conpty.dll");
+  const openConsole = join(bundledConptyDir, "OpenConsole.exe");
+  await assertFile(conptyDll, `packaged win32-${process.arch} bundled ConPTY DLL`);
+  await assertFile(openConsole, `packaged win32-${process.arch} bundled OpenConsole executable`);
+
+  return {
+    nativeModule: selectedConptyModule,
+    conptyDll,
+    openConsole,
+  };
+}
 
 async function resolvePackagedLayout(root, platform) {
   const entries = await directoryEntries(root);

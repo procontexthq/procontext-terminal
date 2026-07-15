@@ -18,7 +18,7 @@ jobs:
   verify:
     name: Verify (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     strategy:
       fail-fast: false
@@ -65,6 +65,9 @@ jobs:
           pnpm electron:install
           pnpm electron:verify
 
+      - name: Verify PowerShell Core
+        run: pwsh --version
+
       - name: Reject npm lockfile
         run: |
           if [ -f package-lock.json ]; then
@@ -94,3 +97,21 @@ jobs:
       - name: Electron E2E tests with virtual display
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" pnpm test:e2e
+
+      - name: Build unpacked packaged app
+        run: |
+          pnpm --filter @terminal/desktop package:clean
+          pnpm --filter @terminal/desktop exec electron-builder --dir --publish never
+
+      - name: Verify packaged native PTY layout
+        run: pnpm package:verify
+
+      - name: Packaged app smoke
+        if: runner.os != 'Linux'
+        working-directory: apps/desktop
+        run: pnpm exec vitest run -c vitest.package.config.ts
+
+      - name: Packaged app smoke with virtual display
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" pnpm exec vitest run -c vitest.package.config.ts

@@ -576,6 +576,19 @@ body {
   background-clip: padding-box;
 }
 
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider:hover,
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider.active {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
 .session-card {
   margin-bottom: 8px;
   padding: 10px;

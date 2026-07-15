@@ -11,8 +11,9 @@ import type { TerminalController } from "../../src/renderer/terminal-controller"
 import { TerminalTabView } from "../../src/renderer/terminal-tab-view";
 import type { TerminalTab } from "../../src/renderer/terminal-tabs";
 
-const { createTerminalSessionMock } = vi.hoisted(() => ({
+const { createTerminalSessionMock, terminalConstructorMock } = vi.hoisted(() => ({
   createTerminalSessionMock: vi.fn(),
+  terminalConstructorMock: vi.fn(),
 }));
 
 const controller: TerminalController = {
@@ -36,7 +37,11 @@ vi.mock("../../src/renderer/font-loading", () => ({
 }));
 
 vi.mock("@xterm/xterm", () => ({
-  Terminal: class {},
+  Terminal: class {
+    constructor(options: unknown) {
+      terminalConstructorMock(options);
+    }
+  },
 }));
 
 vi.mock("@xterm/addon-fit", () => ({
@@ -50,6 +55,7 @@ describe("TerminalTabView", () => {
     ).IS_REACT_ACT_ENVIRONMENT = true;
     createTerminalSessionMock.mockReset();
     createTerminalSessionMock.mockResolvedValue(controller);
+    terminalConstructorMock.mockReset();
     vi.mocked(controller.dispose).mockClear();
     vi.mocked(controller.resize).mockClear();
     vi.mocked(controller.setFocused).mockClear();
@@ -94,6 +100,28 @@ describe("TerminalTabView", () => {
     act(() => {
       root.unmount();
     });
+  });
+
+  it("configures xterm with the compact shared scrollbar width", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(createElement(TerminalTabView, createProps(createTab("/workspace"))));
+    });
+    await act(() => Promise.resolve());
+
+    const sessionOptions = createTerminalSessionMock.mock.calls[0]?.[0] as
+      | { createTerminal(): unknown }
+      | undefined;
+    sessionOptions?.createTerminal();
+
+    expect(terminalConstructorMock).toHaveBeenCalledWith(
+      expect.objectContaining({ overviewRuler: { width: 8 } }),
+    );
+
+    act(() => root.unmount());
   });
 
   it("keeps an exited bootstrap in the exited UI state", async () => {

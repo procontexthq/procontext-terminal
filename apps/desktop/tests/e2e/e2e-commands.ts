@@ -16,6 +16,19 @@ export function interruptFixtureCommand(readyMarker: string, handledMarker: stri
   );
 }
 
+export function inputGateFixtureCommand(readyMarker: string, handledMarker: string): string {
+  return nodeEvalCommand(
+    [
+      `process.stdout.write(${JSON.stringify(`${readyMarker}\n`)});`,
+      'process.stdin.once("data", () => {',
+      `  process.stdout.write(${JSON.stringify(`${handledMarker}\n`)}, () => {`,
+      "    process.exit(0);",
+      "  });",
+      "});",
+    ].join("\n"),
+  );
+}
+
 export function alternateScreenCommand(marker: string): string {
   return nodeEvalCommand(
     [

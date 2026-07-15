@@ -7,6 +7,8 @@ import pty from "node-pty";
 
 import { createTerminalError, type SessionId, type TerminalError } from "@terminal/protocol";
 
+import { WindowsConptyStartupHandshake } from "./windows-conpty-startup-handshake";
+
 const require = createRequire(import.meta.url);
 
 export type PtyExitEvent = {
@@ -111,12 +113,12 @@ export class NodePtyHost implements PtyHost {
         rows: request.rows,
         ...(process.platform === "win32"
           ? {
-              useConpty: true,
+              useConptyDll: true,
             }
           : {}),
       });
 
-      return Promise.resolve(new NodePtySession(processHandle));
+      return Promise.resolve(new NodePtySession(processHandle, process.platform === "win32"));
     } catch (error: unknown) {
       return Promise.reject(mapSpawnError(error, request.sessionId, shell.executable));
     }
@@ -124,12 +126,31 @@ export class NodePtyHost implements PtyHost {
 }
 
 class NodePtySession implements PtySession {
+  private readonly dataSubscriptions = new Set<{ handler: (data: string) => void }>();
   private exited = false;
+  private initialOutputBuffer: string[] | null;
   private killRequested = false;
+  private readonly startupHandshake: WindowsConptyStartupHandshake | null;
 
-  constructor(private readonly processHandle: pty.IPty) {
+  constructor(
+    private readonly processHandle: pty.IPty,
+    normalizeWindowsConptyStartup: boolean,
+  ) {
+    this.startupHandshake = normalizeWindowsConptyStartup
+      ? new WindowsConptyStartupHandshake()
+      : null;
+    this.initialOutputBuffer = this.startupHandshake ? [] : null;
+    if (this.startupHandshake) {
+      this.processHandle.onData((data) => {
+        this.handleProcessData(data);
+      });
+    }
     this.processHandle.onExit(() => {
       this.exited = true;
+      const trailingOutput = this.startupHandshake?.finish();
+      if (trailingOutput) {
+        this.emitData(trailingOutput);
+      }
     });
   }
 
@@ -153,8 +174,27 @@ class NodePtySession implements PtySession {
   }
 
   onData(handler: (data: string) => void): () => void {
-    const disposable = this.processHandle.onData(handler);
-    return () => disposable.dispose();
+    if (!this.startupHandshake) {
+      const disposable = this.processHandle.onData(handler);
+      return () => disposable.dispose();
+    }
+
+    const subscription = { handler };
+    this.dataSubscriptions.add(subscription);
+    const initialOutput = this.initialOutputBuffer;
+    this.initialOutputBuffer = null;
+    if (initialOutput) {
+      for (const data of initialOutput) {
+        handler(data);
+      }
+    }
+
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.dataSubscriptions.delete(subscription);
+    };
   }
 
   onExit(handler: (event: PtyExitEvent) => void): () => void {
@@ -165,6 +205,30 @@ class NodePtySession implements PtySession {
       });
     });
     return () => disposable.dispose();
+  }
+
+  private handleProcessData(data: string): void {
+    const result = this.startupHandshake?.accept(data) ?? { output: data };
+    if (result.response) {
+      this.processHandle.write(result.response);
+    }
+    if (result.output) {
+      this.emitData(result.output);
+    }
+  }
+
+  private emitData(data: string): void {
+    if (this.initialOutputBuffer) {
+      this.initialOutputBuffer.push(data);
+      return;
+    }
+    this.dispatchData(data);
+  }
+
+  private dispatchData(data: string): void {
+    for (const { handler } of [...this.dataSubscriptions]) {
+      handler(data);
+    }
   }
 }
 

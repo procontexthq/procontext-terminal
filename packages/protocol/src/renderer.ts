@@ -63,7 +63,11 @@ export type TerminalViewBootstrap = {
 
 export type OpenTerminalViewRequest = { sessionId: SessionId };
 export type CloseTerminalViewRequest = { sessionId: SessionId };
-export type ReportTerminalViewportRequest = { sessionId: SessionId; viewportY: number };
+export type ReportTerminalViewportRequest = {
+  sessionId: SessionId;
+  viewportY: number;
+  atBottom: boolean;
+};
 export type ReportTerminalViewFocusRequest = { sessionId: SessionId; focused: boolean };
 export type RendererPresentationAction = "open" | "focus" | "hide" | "close";
 export type RendererPresentationCommand = {
@@ -119,10 +123,20 @@ export type PermissionResolvedEvent = {
   outcome: PermissionResolutionOutcome;
 };
 
+export type TerminalResponseResult = {
+  data: string;
+  status: "returned" | "failed";
+};
+
 export type RendererSessionEvent =
   | {
       type: "session.output";
-      payload: { sessionId: SessionId; sequence: number; data: string };
+      payload: {
+        sessionId: SessionId;
+        sequence: number;
+        data: string;
+        terminalResponses?: TerminalResponseResult[];
+      };
     }
   | {
       type: "session.viewport";
@@ -313,7 +327,11 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("session.reportViewport"),
     requestId: requestIdSchema,
-    payload: z.object({ sessionId: sessionIdSchema, viewportY: z.number().int().nonnegative() }),
+    payload: z.object({
+      sessionId: sessionIdSchema,
+      viewportY: z.number().int().nonnegative(),
+      atBottom: z.boolean(),
+    }),
   }),
   z.object({
     type: z.literal("session.reportViewFocus"),
@@ -452,7 +470,15 @@ export function isRendererSessionEvent(value: unknown): value is RendererSession
       return (
         typeof value.payload.sessionId === "string" &&
         typeof value.payload.sequence === "number" &&
-        typeof value.payload.data === "string"
+        typeof value.payload.data === "string" &&
+        (value.payload.terminalResponses === undefined ||
+          (Array.isArray(value.payload.terminalResponses) &&
+            value.payload.terminalResponses.every(
+              (response) =>
+                isObject(response) &&
+                typeof response.data === "string" &&
+                (response.status === "returned" || response.status === "failed"),
+            )))
       );
     case "session.viewport":
       return (

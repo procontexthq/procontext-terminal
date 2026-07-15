@@ -141,7 +141,7 @@ export class TerminalSessionManager {
   }
 
   async reportViewport(request: ReportTerminalViewportRequest): Promise<boolean> {
-    return await this.get(request.sessionId).reportViewport(request.viewportY);
+    return await this.get(request.sessionId).reportViewport(request.viewportY, request.atBottom);
   }
 
   observe(request: ObserveTerminalRequest, signal?: AbortSignal): Promise<ObserveTerminalResult> {
