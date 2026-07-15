@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
@@ -25,7 +26,12 @@ import {
   type TerminalSessionSummary,
 } from "@terminal/protocol";
 
-import { alternateScreenCommand, interruptFixtureCommand, nodeEvalCommand } from "./e2e-commands";
+import {
+  alternateScreenCommand,
+  inputGateFixtureCommand,
+  interruptFixtureCommand,
+  nodeEvalCommand,
+} from "./e2e-commands";
 import { terminalUiTimeoutMs } from "./e2e-timeouts";
 
 const require = createRequire(import.meta.url);
@@ -82,6 +88,34 @@ describe("desktop terminal smoke", () => {
     await page.getByTestId("terminal-exit-message").waitFor({ timeout: e2eUiTimeoutMs });
   });
 
+  it("keeps a live-bottom renderer viewport on the settled end of bursty output", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    const sessionId = await activeSessionId(page);
+    const marker = "BURST_OUTPUT_SETTLED_AT_BOTTOM";
+    const command = nodeEvalCommand(
+      [
+        "let line = 0;",
+        "const emit = () => {",
+        "  if (line < 160) {",
+        '    process.stdout.write(`burst-${String(line).padStart(3, "0")}\\n`, () => {',
+        "      line += 1;",
+        "      setImmediate(emit);",
+        "    });",
+        "    return;",
+        "  }",
+        `  process.stdout.write(${JSON.stringify(`${marker}\n`)});`,
+        "};",
+        "emit();",
+      ].join("\n"),
+    );
+
+    await writeRendererInput(page, sessionId, `${command}\r`);
+    await waitForTerminalText(page, marker);
+  });
+
   it("terminates a live session when the human confirms tab close", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
@@ -103,6 +137,21 @@ describe("desktop terminal smoke", () => {
       await page.getByTestId("new-tab-button").click();
     }
     await expectTabCount(page, 8);
+    await page.waitForFunction(
+      () => {
+        const strip = document.querySelector<HTMLElement>('[data-testid="terminal-tab-strip"]');
+        const activeTab = strip?.querySelector<HTMLElement>(".tab-item.is-active");
+        if (!strip || !activeTab) return false;
+        const stripBounds = strip.getBoundingClientRect();
+        const activeTabBounds = activeTab.getBoundingClientRect();
+        return (
+          activeTabBounds.left >= stripBounds.left - 1 &&
+          activeTabBounds.right <= stripBounds.right + 1
+        );
+      },
+      undefined,
+      { timeout: terminalUiTimeoutMs(process.platform) },
+    );
     await page.getByTestId("terminal-status").waitFor({ state: "visible" });
     if ((await page.locator(".titlebar-status .terminal-state").count()) !== 0) {
       throw new Error("Expected terminal lifecycle to appear only in the active tab.");
@@ -117,6 +166,51 @@ describe("desktop terminal smoke", () => {
     await page.getByTestId("session-sidebar").waitFor({ state: "hidden" });
     await sidebarToggle.click();
     await page.getByTestId("session-sidebar").waitFor({ state: "visible" });
+
+    const terminalScrollbar = await page.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>(".app-shell");
+      const track = document.querySelector<HTMLElement>(
+        ".terminal-host .xterm-scrollable-element > .scrollbar.vertical",
+      );
+      const slider = track?.querySelector<HTMLElement>(":scope > .slider");
+      if (!shell || !track || !slider) return null;
+      const probe = document.createElement("div");
+      probe.style.background = "var(--scrollbar-thumb)";
+      probe.style.border = "2px solid transparent";
+      shell.append(probe);
+      const probeStyle = getComputedStyle(probe);
+      const tokenColor = probeStyle.backgroundColor;
+      const tokenBorderWidth = probeStyle.borderTopWidth;
+      probe.remove();
+      const sliderStyle = getComputedStyle(slider);
+      return {
+        trackWidth: track.getBoundingClientRect().width,
+        color: sliderStyle.backgroundColor,
+        tokenColor,
+        tokenBorderWidth,
+        borderRadius: sliderStyle.borderRadius,
+        borderWidth: sliderStyle.borderTopWidth,
+        backgroundClip: sliderStyle.backgroundClip,
+      };
+    });
+    if (!terminalScrollbar) throw new Error("Expected xterm's custom terminal scrollbar.");
+    if (Math.round(terminalScrollbar.trackWidth) !== 8) {
+      throw new Error(`Expected an 8px terminal scrollbar, got ${terminalScrollbar.trackWidth}px.`);
+    }
+    if (terminalScrollbar.color !== terminalScrollbar.tokenColor) {
+      throw new Error(
+        `Expected shared scrollbar color ${terminalScrollbar.tokenColor}, got ${terminalScrollbar.color}.`,
+      );
+    }
+    if (
+      terminalScrollbar.borderRadius !== "999px" ||
+      terminalScrollbar.borderWidth !== terminalScrollbar.tokenBorderWidth ||
+      terminalScrollbar.backgroundClip !== "padding-box"
+    ) {
+      throw new Error(
+        `Expected compact pill scrollbar styling: ${JSON.stringify(terminalScrollbar)}`,
+      );
+    }
 
     const tabStrip = page.getByTestId("terminal-tab-strip");
     const before = await tabStrip.evaluate((element) => element.scrollLeft);
@@ -345,8 +439,9 @@ describe("desktop terminal smoke", () => {
         agent.request(
           createAgentCommand("terminal.input", {
             sessionId: created.sessionId,
-            input: `${nodeEvalCommand(
-              'process.stdout.write("SHELL_INTEGRATION_OK\\\\n"); setTimeout(() => {}, 300);',
+            input: `${inputGateFixtureCommand(
+              "SHELL_INTEGRATION_INPUT_READY",
+              "SHELL_INTEGRATION_OK",
             )}\r`,
           }),
         ),
@@ -354,7 +449,19 @@ describe("desktop terminal smoke", () => {
       await waitForObservation(
         agent,
         created.sessionId,
-        (observation) => observation.command.state === "running",
+        (observation) =>
+          observation.command.state === "running" &&
+          observation.viewport.rows.some((row) =>
+            row.text.includes("SHELL_INTEGRATION_INPUT_READY"),
+          ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.input", {
+            sessionId: created.sessionId,
+            input: "continue\r",
+          }),
+        ),
       );
       await waitForObservation(
         agent,
@@ -376,9 +483,10 @@ describe("desktop terminal smoke", () => {
       const changedDirectory = await waitForObservation(
         agent,
         created.sessionId,
-        (observation) => observation.command.state === "idle" && observation.cwd === userDataDir,
+        (observation) =>
+          observation.command.state === "idle" && sameCanonicalPath(observation.cwd, userDataDir),
       );
-      if (changedDirectory.cwd !== userDataDir) {
+      if (!sameCanonicalPath(changedDirectory.cwd, userDataDir)) {
         throw new Error(`Expected integrated cwd ${userDataDir}, got ${changedDirectory.cwd}.`);
       }
       await expectAgentOk(
@@ -591,7 +699,7 @@ describe("desktop terminal smoke", () => {
     }
   });
 
-  it("observes alternate-screen TUI state from the canonical headless model", async () => {
+  it("observes alternate-screen TUI contents from the canonical headless model", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
     const descriptor = await waitForAgentDescriptor(userDataDir);
@@ -617,6 +725,9 @@ describe("desktop terminal smoke", () => {
           current.alternateScreen &&
           current.viewport.rows.some((row) => row.text.includes("CANONICAL_ALT_SCREEN")),
       );
+      if (!observation.alternateScreen) {
+        throw new Error("Expected the alternate-screen buffer to remain observable.");
+      }
       if (!observation.cursor.visible) {
         throw new Error("Expected alternate-screen cursor visibility to remain observable.");
       }
@@ -763,6 +874,14 @@ async function authenticatedAgent(descriptor: AgentGatewayDescriptor): Promise<E
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function sameCanonicalPath(left: string, right: string): boolean {
+  const canonicalLeft = realpathSync.native(left);
+  const canonicalRight = realpathSync.native(right);
+  return process.platform === "win32"
+    ? canonicalLeft.toLowerCase() === canonicalRight.toLowerCase()
+    : canonicalLeft === canonicalRight;
 }
 
 async function waitForObservation(

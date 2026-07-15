@@ -125,7 +125,7 @@ export function prepareShellIntegrationLaunch(
       encoding: "utf8",
       mode: 0o600,
     });
-    args = [...args, "-NoExit", "-File", bootstrapFile];
+    args = [...args, "-NoExit", "-Command", `. ${powershellQuote(bootstrapFile)}`];
   }
 
   return {
@@ -159,6 +159,10 @@ function forwardStartupFile(path: string): string {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function powershellQuote(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
 }
 
 function cloneLaunch(launch: ShellLaunchConfiguration): ShellLaunchConfiguration {

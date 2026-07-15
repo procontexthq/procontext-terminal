@@ -271,6 +271,29 @@ Status: implemented.
 
 - Expand PTY, shell-integration, TUI, reconnect, renderer-loss, and shutdown
   coverage across macOS, Linux, Windows, ConPTY, and supported shells.
+- Require PowerShell Core in the macOS, Linux, and Windows pull-request matrix so
+  the same real-PTY negotiation and command-lifecycle contract is exercised on
+  every supported desktop platform.
+- Preserve canonical alternate-buffer identity on Windows with the bundled
+  ConPTY transport. Handle its one-shot startup device-attribute query at the
+  PTY boundary, remove that transport handshake before terminal models can
+  answer it again, and verify both PowerShell startup and exact alternate-buffer
+  state.
+- Return subsequent terminal-generated protocol responses from the canonical
+  emulator on every platform, including for headless sessions, and annotate
+  renderer output with ordered per-response outcomes so projections cannot echo
+  successful responses or misassociate partial write failures.
+- Prepare `node-pty` for the target platform during dependency installation.
+  Electron Builder must preserve that Node-API-compatible platform artifact
+  instead of rebuilding the dependency a second time during packaging.
+- In pull-request CI, build the unpacked desktop application on every target
+  operating system, verify the packaged native PTY layout, and launch a packaged
+  smoke session that exercises both human and agent terminal operations. Package
+  from the verified Electron distribution installed for the current host rather
+  than extracting a second archive into the output directory; this avoids the
+  Windows atomic staging-directory rename race without retrying compilation or
+  runtime assertions. Release workflows additionally build and verify the
+  distributable installers.
 - Verify packaged native PTY behavior, installers, artifact generation,
   signing or notarization inputs, and release provenance.
 

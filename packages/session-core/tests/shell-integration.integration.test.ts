@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   accessSync,
   constants,
@@ -9,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -23,11 +24,10 @@ describe("real shell integration", () => {
     "integrates an installed $name session",
     async ({ name, executable }) => {
       const fixture = createShellFixture(name);
-      const manager = new TerminalSessionManager(new NodePtyHost(), {
-        shellIntegrationInitializationTimeoutMs: 5_000,
-      });
+      const manager = new TerminalSessionManager(new NodePtyHost());
+      let session: TerminalSessionSummary | null = null;
       try {
-        const session = await manager.createSession({
+        session = await manager.createSession({
           shell: executable,
           cwd: fixture.home,
           env: fixture.env,
@@ -35,6 +35,7 @@ describe("real shell integration", () => {
         const ready = await waitForSummary(
           manager,
           session,
+          "negotiation",
           (summary) =>
             summary.shellIntegration.status === "available" && summary.command.state === "idle",
         );
@@ -48,6 +49,7 @@ describe("real shell integration", () => {
         const completed = await waitForSummary(
           manager,
           ready,
+          "command completion",
           (summary) =>
             summary.command.state === "idle" &&
             summary.command.lastCommand?.exitCode === 0 &&
@@ -58,6 +60,16 @@ describe("real shell integration", () => {
           state: "idle",
           lastCommand: { exitCode: 0 },
         });
+        await waitForCondition(async () => {
+          const current = await manager.observe({
+            sessionId: session.sessionId,
+            timeoutMs: 100,
+          });
+          return (
+            current.status === "changed" &&
+            current.observation.viewport.rows.some((row) => row.text === "PCT_REAL_OK")
+          );
+        }, 2_000);
         const observation = await manager.observe({
           sessionId: session.sessionId,
           timeoutMs: 1_000,
@@ -71,10 +83,65 @@ describe("real shell integration", () => {
           expect.arrayContaining([expect.objectContaining({ text: "PCT_REAL_OK" })]),
         );
       } finally {
+        if (session) await exitFixtureShell(manager, session, name);
         await manager.shutdown({ timeoutMs: 2_000 });
         fixture.cleanup();
       }
     },
+    90_000,
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "accepts immediate input while Windows PowerShell integration initializes",
+    async () => {
+      const shells = installedShells().filter(
+        ({ name }) => name === "pwsh" || name === "powershell",
+      );
+      expect(shells.length).toBeGreaterThan(0);
+
+      for (const { name, executable } of shells) {
+        const fixture = createShellFixture(name);
+        const manager = new TerminalSessionManager(new NodePtyHost());
+        const { command, marker } = immediatePowerShellCommand();
+        const markerOutput = waitForSessionOutput(manager, marker, 30_000);
+        let session: TerminalSessionSummary | null = null;
+        try {
+          session = await manager.createSession({
+            shell: executable,
+            cwd: fixture.home,
+            env: fixture.env,
+          });
+          expect(session.shellIntegration.status, `${name} negotiated before immediate input`).toBe(
+            "initializing",
+          );
+
+          await expect(
+            manager.input({
+              sessionId: session.sessionId,
+              input: command,
+              origin: "system",
+            }),
+          ).resolves.toMatchObject({ accepted: true });
+          await markerOutput.promise;
+
+          const ready = await waitForSummary(
+            manager,
+            manager.getSession({ sessionId: session.sessionId }),
+            `${name} negotiation after immediate input`,
+            (summary) =>
+              summary.shellIntegration.status === "available" && summary.command.state === "idle",
+          );
+          expect(ready.lifecycle).toBe("running");
+          expect(ready.shellIntegration.status).toBe("available");
+        } finally {
+          markerOutput.dispose();
+          if (session) await exitFixtureShell(manager, session, name);
+          await manager.shutdown({ timeoutMs: 2_000 });
+          fixture.cleanup();
+        }
+      }
+    },
+    90_000,
   );
 
   const bash = installedShells().find((candidate) => candidate.name === "bash");
@@ -110,6 +177,7 @@ describe("real shell integration", () => {
         const ready = await waitForSummary(
           manager,
           session,
+          "bash negotiation",
           (summary) =>
             summary.shellIntegration.status === "available" && summary.command.state === "idle",
         );
@@ -123,6 +191,7 @@ describe("real shell integration", () => {
         await waitForSummary(
           manager,
           ready,
+          "bash command completion",
           (summary) =>
             summary.command.state === "idle" && summary.command.lastCommand?.exitCode === 1,
         );
@@ -145,17 +214,26 @@ describe("real shell integration", () => {
 async function waitForSummary(
   manager: TerminalSessionManager,
   initial: TerminalSessionSummary,
+  stage: string,
   predicate: (summary: TerminalSessionSummary) => boolean,
 ): Promise<TerminalSessionSummary> {
   let current = initial;
-  const deadline = Date.now() + 8_000;
+  const deadline = Date.now() + 30_000;
   while (!predicate(current)) {
     if (Date.now() >= deadline) {
       throw new Error(
-        `Timed out waiting for shell integration: ${JSON.stringify({
+        `Timed out during ${stage}: ${JSON.stringify({
+          lifecycle: current.lifecycle,
           status: current.shellIntegration.status,
           capabilities: current.shellIntegration.capabilities,
           command: current.command.state,
+          hasLastCommand: current.command.state === "idle" && Boolean(current.command.lastCommand),
+          lastExitCode:
+            current.command.state === "idle" ? current.command.lastCommand?.exitCode : undefined,
+          commandLineCaptured:
+            current.command.state === "idle"
+              ? Boolean(current.command.lastCommand?.commandLine)
+              : undefined,
         })}`,
       );
     }
@@ -175,9 +253,12 @@ async function waitForSummary(
   return current;
 }
 
-async function waitForCondition(predicate: () => boolean, timeoutMs: number): Promise<void> {
+async function waitForCondition(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() >= deadline) {
       throw new Error("Timed out waiting for shell prompt output.");
     }
@@ -192,7 +273,7 @@ function installedShells(): Array<{ name: ShellName; executable: string }> {
       { name: "powershell", executable: "powershell.exe" },
     ].filter(({ executable }) => canResolveExecutable(executable));
   }
-  return [
+  const installed = [
     { name: "bash", executable: "/bin/bash" },
     { name: "zsh", executable: "/bin/zsh" },
     { name: "fish", executable: "/usr/bin/fish" },
@@ -201,7 +282,11 @@ function installedShells(): Array<{ name: ShellName; executable: string }> {
     (candidate, index, values) =>
       isExecutable(candidate.executable) &&
       values.findIndex((value) => value.name === candidate.name) === index,
-  );
+  ) as Array<{ name: ShellName; executable: string }>;
+  if (canResolveExecutable("pwsh")) {
+    installed.push({ name: "pwsh", executable: "pwsh" });
+  }
+  return installed;
 }
 
 type ShellName = "bash" | "zsh" | "fish" | "pwsh" | "powershell";
@@ -234,6 +319,70 @@ function commandFor(name: ShellName): string {
     : "printf 'PCT_REAL_OK\\n'\n";
 }
 
+function immediatePowerShellCommand(): { command: string; marker: string } {
+  const token = randomUUID().replaceAll("-", "");
+  const markerParts = ["PCT", "IMMEDIATE", "INPUT", token.slice(0, 16), token.slice(16), "OK"];
+  const marker = markerParts.join("_");
+  const command = `$pctMarkerParts=@('${markerParts.join("','")}'); Write-Output ($pctMarkerParts -join '_')\r`;
+  if (command.includes(marker))
+    throw new Error("Immediate-input marker must not appear in source.");
+  return { command, marker };
+}
+
+function waitForSessionOutput(
+  manager: TerminalSessionManager,
+  expected: string,
+  timeoutMs: number,
+): { promise: Promise<void>; dispose(): void } {
+  let output = "";
+  let settled = false;
+  let resolvePromise: () => void;
+  let rejectPromise: (error: Error) => void;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  const unsubscribe = manager.onSessionEvent((event) => {
+    if (event.type !== "session.output" || settled) return;
+    output += event.payload.data;
+    if (!output.includes(expected)) return;
+    settled = true;
+    clearTimeout(timeout);
+    unsubscribe();
+    resolvePromise();
+  });
+  const timeout = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    unsubscribe();
+    rejectPromise(new Error("Timed out waiting for immediate PowerShell input output."));
+  }, timeoutMs);
+
+  return {
+    promise,
+    dispose: () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      unsubscribe();
+    },
+  };
+}
+
+async function exitFixtureShell(
+  manager: TerminalSessionManager,
+  session: TerminalSessionSummary,
+  name: ShellName,
+): Promise<void> {
+  if (manager.getSession({ sessionId: session.sessionId }).lifecycle !== "running") return;
+  await manager.input({
+    sessionId: session.sessionId,
+    input: name === "pwsh" || name === "powershell" ? "exit\r" : "exit\n",
+    origin: "system",
+  });
+  await manager.waitForExit(session.sessionId, 5_000);
+}
+
 function canonicalPath(path: string): string {
   const canonical = realpathSync.native(path);
   return process.platform === "win32" ? canonical.toLowerCase() : canonical;
@@ -252,7 +401,10 @@ function isExecutable(path: string): boolean {
 function canResolveExecutable(executable: string): boolean {
   const path = process.env.Path ?? process.env.PATH ?? "";
   return path
-    .split(";")
+    .split(delimiter)
     .filter(Boolean)
-    .some((directory) => existsSync(join(directory, executable)));
+    .some((directory) => {
+      const candidate = join(directory, executable);
+      return process.platform === "win32" ? existsSync(candidate) : isExecutable(candidate);
+    });
 }

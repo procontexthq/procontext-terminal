@@ -304,18 +304,59 @@ describe("terminal protocol", () => {
       parseRendererCommand({
         type: "session.reportViewport",
         requestId,
-        payload: { sessionId, viewportY: 12 },
+        payload: { sessionId, viewportY: 12, atBottom: true },
       }),
-    ).toMatchObject({ type: "session.reportViewport" });
+    ).toMatchObject({
+      type: "session.reportViewport",
+      payload: { sessionId, viewportY: 12, atBottom: true },
+    });
     expect(
       createRendererCommand("session.reportViewFocus", { sessionId, focused: true }, requestId),
     ).toMatchObject({ type: "session.reportViewFocus" });
     expect(
       isRendererSessionEvent({
         type: "session.output",
-        payload: { sessionId, sequence: 4, data: "output" },
+        payload: {
+          sessionId,
+          sequence: 4,
+          data: "output\u001b[6n",
+          terminalResponses: [{ data: "\u001b[1;7R", status: "returned" }],
+        },
       }),
     ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "session.output",
+        payload: {
+          sessionId,
+          sequence: 4,
+          data: "output\u001b[6n",
+          terminalResponses: [{ data: "\u001b[1;7R", status: "failed" }],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "session.output",
+        payload: {
+          sessionId,
+          sequence: 4,
+          data: "output",
+          terminalResponses: [{ data: "\u001b[1;7R", status: "unknown" }],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRendererSessionEvent({
+        type: "session.output",
+        payload: {
+          sessionId,
+          sequence: 4,
+          data: "output",
+          terminalResponses: [{ data: 42, status: "returned" }],
+        },
+      }),
+    ).toBe(false);
     expect(
       isRendererSessionEvent({
         type: "session.viewport",

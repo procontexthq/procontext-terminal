@@ -83,6 +83,98 @@ describe("TerminalSessionManager", () => {
     });
   });
 
+  it("returns canonical terminal protocol responses to the PTY", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host);
+    const events: RendererSessionEvent[] = [];
+    const unsubscribe = manager.onSessionEvent((event) => events.push(event));
+    const summary = await manager.createSession(request);
+
+    host.pty.emitData("abc\u001b[6n");
+    await manager.observe({
+      sessionId: summary.sessionId,
+      afterVersion: summary.observationVersion,
+      timeoutMs: 100,
+    });
+
+    expect(host.pty.write).toHaveBeenCalledExactlyOnceWith("\u001b[1;4R");
+    expect(events).toContainEqual({
+      type: "session.output",
+      payload: {
+        sessionId: summary.sessionId,
+        sequence: 1,
+        data: "abc\u001b[6n",
+        terminalResponses: [{ data: "\u001b[1;4R", status: "returned" }],
+      },
+    });
+    unsubscribe();
+  });
+
+  it("marks a terminal response as failed when the PTY write fails", async () => {
+    const host = new FakePtyHost();
+    host.pty.write.mockImplementationOnce(() => {
+      throw new Error("write failed");
+    });
+    const manager = new TerminalSessionManager(host);
+    const events: RendererSessionEvent[] = [];
+    const unsubscribe = manager.onSessionEvent((event) => events.push(event));
+    const summary = await manager.createSession(request);
+
+    host.pty.emitData("\u001b[6n");
+    await manager.observe({
+      sessionId: summary.sessionId,
+      afterVersion: summary.observationVersion,
+      timeoutMs: 100,
+    });
+
+    expect(events).toContainEqual({
+      type: "session.output",
+      payload: {
+        sessionId: summary.sessionId,
+        sequence: 1,
+        data: "\u001b[6n",
+        terminalResponses: [{ data: "\u001b[1;1R", status: "failed" }],
+      },
+    });
+    const errorEvent = events.find((event) => event.type === "session.error");
+    expect(errorEvent?.payload).toMatchObject({ type: "session_input_failed" });
+    unsubscribe();
+  });
+
+  it("preserves response positions when only a later PTY write succeeds", async () => {
+    const host = new FakePtyHost();
+    host.pty.write
+      .mockImplementationOnce(() => {
+        throw new Error("write failed");
+      })
+      .mockImplementationOnce(() => undefined);
+    const manager = new TerminalSessionManager(host);
+    const events: RendererSessionEvent[] = [];
+    const unsubscribe = manager.onSessionEvent((event) => events.push(event));
+    const summary = await manager.createSession(request);
+
+    host.pty.emitData("\u001b[6n\r\nx\u001b[6n");
+    await manager.observe({
+      sessionId: summary.sessionId,
+      afterVersion: summary.observationVersion,
+      timeoutMs: 100,
+    });
+
+    expect(events).toContainEqual({
+      type: "session.output",
+      payload: {
+        sessionId: summary.sessionId,
+        sequence: 1,
+        data: "\u001b[6n\r\nx\u001b[6n",
+        terminalResponses: [
+          { data: "\u001b[1;1R", status: "failed" },
+          { data: "\u001b[2;2R", status: "returned" },
+        ],
+      },
+    });
+    unsubscribe();
+  });
+
   it("uses resolved shell and default working-directory metadata", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host, { defaultCwd: () => "/Users/tester" });
@@ -418,11 +510,45 @@ describe("TerminalSessionManager", () => {
     const reported = await manager.reportViewport({
       sessionId: summary.sessionId,
       viewportY: 0,
+      atBottom: false,
     });
 
     expect(scrolled.status).toBe("changed");
     expect(reported).toBe(true);
     expect((await currentObservation(manager, summary.sessionId)).viewport.atBottom).toBe(false);
+  });
+
+  it("resolves a stale renderer bottom report against the current canonical bottom", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host, { scrollback: 5_000 });
+    const summary = await manager.createSession({ ...request, rows: 2 });
+    host.pty.emitData("one\r\ntwo\r\nthree");
+    const first = await manager.observe({
+      sessionId: summary.sessionId,
+      afterVersion: summary.observationVersion,
+      timeoutMs: 100,
+    });
+    if (first.status !== "changed") throw new Error("Expected initial terminal output.");
+    const staleBottomY = first.observation.viewport.scrollbackRows;
+
+    host.pty.emitData("\r\nfour\r\nfive\r\nsix");
+    const advanced = await manager.observe({
+      sessionId: summary.sessionId,
+      afterVersion: first.observation.version,
+      timeoutMs: 100,
+    });
+    if (advanced.status !== "changed") throw new Error("Expected advanced terminal output.");
+    expect(advanced.observation.viewport).toMatchObject({ atBottom: true });
+    expect(advanced.observation.viewport.scrollbackRows).toBeGreaterThan(staleBottomY);
+
+    const reported = await manager.reportViewport({
+      sessionId: summary.sessionId,
+      viewportY: staleBottomY,
+      atBottom: true,
+    });
+
+    expect(reported).toBe(false);
+    expect((await currentObservation(manager, summary.sessionId)).viewport.atBottom).toBe(true);
   });
 
   it("times out observation without repeating the viewport", async () => {
@@ -732,6 +858,10 @@ function shellIntegrationNonce(request: PtySpawnRequest | undefined): string {
   const sources = [...request.shell.args];
   for (const argument of request.shell.args) {
     if (existsSync(argument)) sources.push(readFileSync(argument, "utf8"));
+    const dotSourcedPath = argument.match(/^\. '((?:[^']|'')+)'$/)?.[1]?.replaceAll("''", "'");
+    if (dotSourcedPath && existsSync(dotSourcedPath)) {
+      sources.push(readFileSync(dotSourcedPath, "utf8"));
+    }
   }
   const match = sources
     .join("\n")

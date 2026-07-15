@@ -110,18 +110,22 @@ describe("terminal command handler", () => {
   it("accepts viewport reports only from the renderer that owns the view", async () => {
     const base = createServices();
     const denied = await handleRendererCommandPayload(
-      createRendererCommand("session.reportViewport", { sessionId, viewportY: 4 }),
+      createRendererCommand("session.reportViewport", { sessionId, viewportY: 4, atBottom: false }),
       base,
     );
     base.presentationRegistry.open(sessionId, 11);
     const allowed = await handleRendererCommandPayload(
-      createRendererCommand("session.reportViewport", { sessionId, viewportY: 4 }),
+      createRendererCommand("session.reportViewport", { sessionId, viewportY: 4, atBottom: false }),
       base,
     );
 
     expect(denied).toMatchObject({ ok: false, error: { type: "view_unavailable" } });
     expect(allowed).toMatchObject({ ok: true });
-    expect(base.sessionManager.reportViewport).toHaveBeenCalledWith({ sessionId, viewportY: 4 });
+    expect(base.sessionManager.reportViewport).toHaveBeenCalledWith({
+      sessionId,
+      viewportY: 4,
+      atBottom: false,
+    });
   });
 
   it("keeps canonical presentation aligned with the owning renderer's focused tab", async () => {

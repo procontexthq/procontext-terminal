@@ -20,6 +20,8 @@ import {
   type TerminalSessionSummary,
 } from "@terminal/protocol";
 
+import { alternateScreenCommand } from "../e2e/e2e-commands";
+
 const desktopRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 let appProcess: ChildProcessWithoutNullStreams | null = null;
@@ -56,7 +58,7 @@ describe("packaged desktop terminal smoke", () => {
       );
     }
 
-    await writeTerminalInput(page, sessionId, `${platformPrintCommand("PHASE5_PACKAGE_PTY")}\r`);
+    await writeHumanTerminalCommand(page, platformPrintCommand("PHASE5_PACKAGE_PTY"));
     await waitForVisibleOutput(page, "PHASE5_PACKAGE_PTY");
 
     const descriptor = await waitForAgentDescriptor(userDataDir);
@@ -84,6 +86,23 @@ describe("packaged desktop terminal smoke", () => {
         throw new Error("Expected packaged canonical observation to include agent output.");
       }
       await waitForVisibleOutput(page, "PHASE5_PACKAGE_AGENT");
+
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.input", {
+            sessionId,
+            input: `${alternateScreenCommand("PHASE5_PACKAGE_ALT_SCREEN")}\r`,
+          }),
+        ),
+      );
+      const alternateObservation = await waitForAgentObservation(
+        agent,
+        sessionId,
+        "PHASE5_PACKAGE_ALT_SCREEN",
+      );
+      if (!alternateObservation.alternateScreen) {
+        throw new Error("Expected packaged canonical observation to use the alternate screen.");
+      }
     } finally {
       agent.close();
     }
@@ -232,15 +251,10 @@ async function activeSessionId(page: Page): Promise<SessionId> {
   return sessionId as SessionId;
 }
 
-async function writeTerminalInput(page: Page, sessionId: SessionId, data: string): Promise<void> {
-  await page.evaluate(
-    ({ activeSessionId, input }) =>
-      window.terminalApi.input({
-        sessionId: activeSessionId,
-        input,
-      }),
-    { activeSessionId: sessionId, input: data },
-  );
+async function writeHumanTerminalCommand(page: Page, command: string): Promise<void> {
+  await page.locator("[data-testid='terminal-ready'] .xterm-screen").click();
+  await page.keyboard.type(command);
+  await page.keyboard.press("Enter");
 }
 
 async function getSession(page: Page, sessionId: SessionId): Promise<TerminalSessionSummary> {

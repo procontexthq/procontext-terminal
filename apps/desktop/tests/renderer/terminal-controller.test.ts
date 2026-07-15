@@ -50,11 +50,80 @@ describe("terminal controller", () => {
     });
   });
 
+  it("suppresses a correlated cursor report without swallowing later identical input", async () => {
+    const terminal = new FakeTerminal();
+    terminal.responsesByWrite.set("abc\u001b[6n", ["\u001b[2;11R"]);
+    const { api, emit } = createApi();
+    await createController(api, terminal);
+    terminal.deferWrites = true;
+
+    emit(outputEvent(1, "abc\u001b[6n", [{ data: "\u001b[1;4R", status: "returned" }]));
+    terminal.emitData("\u001b[1;4R");
+    terminal.flushWrites();
+
+    expect(api.input).toHaveBeenCalledExactlyOnceWith({
+      sessionId,
+      input: "\u001b[1;4R",
+    });
+  });
+
+  it("forwards unmatched input after an output response scope settles", async () => {
+    const terminal = new FakeTerminal();
+    const { api, emit } = createApi();
+    await createController(api, terminal);
+
+    emit(
+      outputEvent(1, "query without a projection response", [
+        { data: "\u001b[1;1R", status: "returned" },
+      ]),
+    );
+    terminal.emitData("\u001b[1;1R");
+
+    expect(api.input).toHaveBeenCalledExactlyOnceWith({
+      sessionId,
+      input: "\u001b[1;1R",
+    });
+  });
+
+  it("forwards a projection response when canonical output was not answered", async () => {
+    const terminal = new FakeTerminal();
+    terminal.responsesByWrite.set("\u001b[6n", ["\u001b[2;11R"]);
+    const { api, emit } = createApi();
+    await createController(api, terminal);
+
+    emit(outputEvent(1, "\u001b[6n"));
+
+    expect(api.input).toHaveBeenCalledExactlyOnceWith({
+      sessionId,
+      input: "\u001b[2;11R",
+    });
+  });
+
+  it("associates mixed PTY write outcomes with their original query occurrences", async () => {
+    const terminal = new FakeTerminal();
+    terminal.responsesByWrite.set("\u001b[6n\r\n\u001b[6n", ["\u001b[3;1R", "\u001b[4;1R"]);
+    const { api, emit } = createApi();
+    await createController(api, terminal);
+
+    emit(
+      outputEvent(1, "\u001b[6n\r\n\u001b[6n", [
+        { data: "\u001b[1;1R", status: "failed" },
+        { data: "\u001b[2;1R", status: "returned" },
+      ]),
+    );
+
+    expect(api.input).toHaveBeenCalledExactlyOnceWith({
+      sessionId,
+      input: "\u001b[3;1R",
+    });
+  });
+
   it("reports human scrolling and applies canonical agent scrolling without feedback", async () => {
     const terminal = new FakeTerminal();
     const { api, emit } = createApi();
     await createController(api, terminal);
 
+    terminal.buffer.active.baseY = 8;
     terminal.emitScroll(5);
     emit({
       type: "session.viewport",
@@ -64,8 +133,33 @@ describe("terminal controller", () => {
     await Promise.resolve();
 
     expect(api.reportViewport).toHaveBeenCalledTimes(1);
-    expect(api.reportViewport).toHaveBeenCalledWith({ sessionId, viewportY: 5 });
+    expect(api.reportViewport).toHaveBeenCalledWith({
+      sessionId,
+      viewportY: 5,
+      atBottom: false,
+    });
     expect(terminal.scrollToLine).toHaveBeenCalledWith(2);
+  });
+
+  it("reports the live bottom semantically instead of as a stale absolute row", async () => {
+    const terminal = new FakeTerminal();
+    const { api } = createApi();
+    await createController(api, terminal);
+
+    terminal.buffer.active.baseY = 12;
+    terminal.emitScroll(12);
+    terminal.emitScroll(7);
+
+    expect(api.reportViewport).toHaveBeenNthCalledWith(1, {
+      sessionId,
+      viewportY: 12,
+      atBottom: true,
+    });
+    expect(api.reportViewport).toHaveBeenNthCalledWith(2, {
+      sessionId,
+      viewportY: 7,
+      atBottom: false,
+    });
   });
 
   it("reports whether its renderer view is foreground or background", async () => {
@@ -132,20 +226,66 @@ describe("terminal controller", () => {
 
 class FakeTerminal implements TerminalLike {
   readonly writes: string[] = [];
+  readonly responsesByWrite = new Map<string, string[]>();
   readonly scrollToLine = vi.fn<(line: number) => void>();
   readonly dispose = vi.fn();
   readonly focus = vi.fn();
   readonly refresh = vi.fn();
+  deferWrites = false;
   options = {};
+  buffer = { active: { baseY: 0, viewportY: 0 } };
   rows = 24;
   private dataHandler: (data: string) => void = () => undefined;
   private scrollHandler: (viewportY: number) => void = () => undefined;
+  private readonly pendingWrites: Array<() => void> = [];
+  private readonly csiHandlers: Array<{
+    id: { prefix?: string; final: string };
+    handler: (params: Array<number | number[]>) => boolean | Promise<boolean>;
+  }> = [];
+  readonly parser = {
+    registerCsiHandler: (
+      id: { prefix?: string; final: string },
+      handler: (params: Array<number | number[]>) => boolean | Promise<boolean>,
+    ) => {
+      const entry = { id, handler };
+      this.csiHandlers.push(entry);
+      return {
+        dispose: () => {
+          const index = this.csiHandlers.indexOf(entry);
+          if (index >= 0) this.csiHandlers.splice(index, 1);
+        },
+      };
+    },
+  };
 
   open(): void {}
 
   write(data: string, callback?: () => void): void {
     this.writes.push(data);
-    callback?.();
+    const processWrite = () => {
+      const responses = this.responsesByWrite.get(data) ?? [];
+      const queryCount = data.split("\u001b[6n").length - 1;
+      if (queryCount === 0) {
+        for (const response of responses) this.emitData(response);
+      } else {
+        for (let index = 0; index < queryCount; index += 1) {
+          const response = responses[index];
+          if (!this.handleCsi("n", [6]) && response !== undefined) {
+            this.emitData(response);
+          }
+        }
+      }
+      callback?.();
+    };
+    if (this.deferWrites) {
+      this.pendingWrites.push(processWrite);
+      return;
+    }
+    processWrite();
+  }
+
+  flushWrites(): void {
+    for (const write of this.pendingWrites.splice(0)) write();
   }
 
   onData(handler: (data: string) => void): { dispose: () => void } {
@@ -165,7 +305,19 @@ class FakeTerminal implements TerminalLike {
   }
 
   emitScroll(viewportY: number): void {
+    this.buffer.active.viewportY = viewportY;
     this.scrollHandler(viewportY);
+  }
+
+  private handleCsi(final: string, params: Array<number | number[]>): boolean {
+    for (const { id, handler } of [...this.csiHandlers].reverse()) {
+      if (id.final !== final || id.prefix !== undefined) continue;
+      const result = handler(params);
+      if (result instanceof Promise)
+        throw new Error("Fake CSI handlers must settle synchronously.");
+      if (result) return true;
+    }
+    return false;
   }
 }
 
@@ -251,10 +403,17 @@ function createApi(): {
   return { api, emit: (event) => subscriber(event) };
 }
 
-function outputEvent(sequence: number, data: string): RendererSessionEvent {
+function outputEvent(
+  sequence: number,
+  data: string,
+  terminalResponses?: Array<{
+    data: string;
+    status: "returned" | "failed";
+  }>,
+): RendererSessionEvent {
   return {
     type: "session.output",
-    payload: { sessionId, sequence, data },
+    payload: { sessionId, sequence, data, ...(terminalResponses ? { terminalResponses } : {}) },
   };
 }
 
