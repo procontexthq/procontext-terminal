@@ -25,16 +25,21 @@ describe("terminal tabs model", () => {
     });
   });
 
-  it("adds, selects, closes, and retains one fallback tab", () => {
+  it("allows the last presented view to close without creating a replacement terminal", () => {
     let state = createInitialTerminalTabs();
     state = addTerminalTab(state, { cwd: "/work/new", shell: null });
     const first = state.tabs[0]?.id ?? "";
     state = selectTerminalTab(state, first);
     state = closeTerminalTab(state, first);
-    state = closeTerminalTab(state, state.activeTabId);
+    const last = state.activeTabId;
+    if (!last) throw new Error("Expected an active terminal tab before final removal.");
+    state = closeTerminalTab(state, last);
 
+    expect(state).toEqual({ tabs: [], activeTabId: null });
+
+    state = addTerminalTab(state);
     expect(state.tabs).toHaveLength(1);
-    expect(state.tabs[0]).toMatchObject({ sessionId: null, cwd: null, shell: null });
+    expect(state.activeTabId).toBe(state.tabs[0]?.id);
   });
 
   it("wraps adjacent tab selection and tracks unread bells", () => {

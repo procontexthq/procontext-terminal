@@ -17,7 +17,7 @@ export type TerminalTab = TerminalTabLaunchMetadata & {
 
 export type TerminalTabsState = {
   tabs: TerminalTab[];
-  activeTabId: string;
+  activeTabId: string | null;
 };
 
 let nextTabIndex = 1;
@@ -124,10 +124,9 @@ export function closeTerminalTab(state: TerminalTabsState, tabId: string): Termi
 
   const remainingTabs = state.tabs.filter((tab) => tab.id !== tabId);
   if (remainingTabs.length === 0) {
-    const replacement = createTerminalTab(defaultTab());
     return {
-      tabs: [replacement],
-      activeTabId: replacement.id,
+      tabs: [],
+      activeTabId: null,
     };
   }
 
@@ -189,7 +188,7 @@ export function updateTabStatus(
 export function updateTabFromSession(
   state: TerminalTabsState,
   session: TerminalSessionSummary,
-  tabId?: string,
+  tabId?: string | null,
 ): TerminalTabsState {
   return {
     ...state,

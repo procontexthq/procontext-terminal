@@ -57,8 +57,10 @@ describe("TerminalTabView", () => {
     createTerminalSessionMock.mockResolvedValue(controller);
     terminalConstructorMock.mockReset();
     vi.mocked(controller.dispose).mockClear();
+    vi.mocked(controller.focus).mockClear();
     vi.mocked(controller.resize).mockClear();
     vi.mocked(controller.setFocused).mockClear();
+    vi.mocked(controller.setTheme).mockClear();
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
     globalThis.ResizeObserver = class {
       observe(): void {}
@@ -102,13 +104,14 @@ describe("TerminalTabView", () => {
     });
   });
 
-  it("configures xterm with the compact shared scrollbar width", async () => {
+  it("configures a compact scrollbar without a contrasting overview-ruler edge", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
+    const props = createProps(createTab("/workspace"));
 
     act(() => {
-      root.render(createElement(TerminalTabView, createProps(createTab("/workspace"))));
+      root.render(createElement(TerminalTabView, props));
     });
     await act(() => Promise.resolve());
 
@@ -117,8 +120,24 @@ describe("TerminalTabView", () => {
       | undefined;
     sessionOptions?.createTerminal();
 
-    expect(terminalConstructorMock).toHaveBeenCalledWith(
-      expect.objectContaining({ overviewRuler: { width: 8 } }),
+    const terminalOptions = terminalConstructorMock.mock.calls[0]?.[0] as
+      | {
+          overviewRuler?: { width?: number };
+          theme?: { overviewRulerBorder?: string };
+        }
+      | undefined;
+    expect(terminalOptions?.overviewRuler).toEqual({ width: 8 });
+    expect(terminalOptions?.theme?.overviewRulerBorder).toBe(props.terminalTheme.background);
+
+    const nextTheme = { ...props.terminalTheme, background: "#050607" };
+    act(() => {
+      root.render(createElement(TerminalTabView, { ...props, terminalTheme: nextTheme }));
+    });
+    await act(() => Promise.resolve());
+    expect(controller.setTheme).toHaveBeenCalledWith(
+      expect.objectContaining({
+        overviewRulerBorder: nextTheme.background,
+      }),
     );
 
     act(() => root.unmount());
@@ -194,6 +213,33 @@ describe("TerminalTabView", () => {
     act(() => root.unmount());
   });
 
+  it("refocuses the active terminal after a human tab-close request", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const tab = createTab("/workspace");
+    const props = createProps(tab);
+
+    act(() => {
+      root.render(createElement(TerminalTabView, props));
+    });
+    await act(() => Promise.resolve());
+    vi.mocked(controller.focus).mockClear();
+
+    act(() => {
+      root.render(
+        createElement(TerminalTabView, {
+          ...props,
+          focusRequestVersion: props.focusRequestVersion + 1,
+        }),
+      );
+    });
+    await act(() => Promise.resolve());
+
+    expect(controller.focus).toHaveBeenCalledOnce();
+    act(() => root.unmount());
+  });
+
   it("terminates a newly created session when its tab unmounts before startup completes", async () => {
     const container = document.createElement("div");
     document.body.append(container);
@@ -252,6 +298,7 @@ function createProps(tab: TerminalTab): Parameters<typeof TerminalTabView>[0] {
     terminalFontFamily: config.terminal.fontFamily,
     fontLoadDescriptors: [],
     terminalTheme: config.terminal.theme,
+    focusRequestVersion: 0,
     registerController: vi.fn(),
     setStatus: vi.fn(),
     onSessionEvent: vi.fn(),

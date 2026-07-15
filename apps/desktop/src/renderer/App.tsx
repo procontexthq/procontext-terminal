@@ -51,6 +51,7 @@ import { keyboardEventShortcutInput, rendererShortcutPlatform } from "./renderer
 export function App(): ReactElement {
   const [config, setConfig] = useState<TerminalConfig | null>(null);
   const [tabsState, setTabsState] = useState<TerminalTabsState | null>(null);
+  const [focusRequestVersion, setFocusRequestVersion] = useState(0);
   const [agentActive, setAgentActive] = useState(false);
   const [uiTheme, setUiTheme] = useState<UiThemePreference>("default");
   const controllers = useRef(new Map<string, TerminalController>());
@@ -236,6 +237,7 @@ export function App(): ReactElement {
             return;
           }
           setTabsState((current) => (current ? closeTerminalTab(current, tab.id) : current));
+          setFocusRequestVersion((current) => current + 1);
         },
       });
     },
@@ -298,56 +300,68 @@ export function App(): ReactElement {
 
   return (
     <main className="app-shell" data-theme={uiTheme} style={appStyle}>
-      <header className="titlebar">
-        <SessionSidebarToggle
-          open={collaboration.sidebarOpen}
-          onToggle={collaboration.toggleSidebar}
-        />
-        <TerminalTabStrip
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onSelect={selectTab}
-          onClose={closeTab}
-          onAdd={addTab}
-        />
-        <div className="titlebar-status">
-          <label className="theme-picker">
-            <span>Theme</span>
-            <select
-              data-testid="theme-select"
-              value={uiTheme}
-              onChange={(event) => {
-                const nextTheme = parseUiTheme(event.target.value);
-                setUiTheme(nextTheme);
-                void window.terminalApi
-                  .saveUiTheme(nextTheme)
-                  .then((savedConfig) => {
-                    setConfig(savedConfig);
-                    setUiTheme(savedConfig.ui.theme);
-                  })
-                  .catch(reportError);
-              }}
+      <header className="titlebar" data-testid="window-titlebar">
+        <div className="titlebar-content">
+          <SessionSidebarToggle
+            open={collaboration.sidebarOpen}
+            onToggle={collaboration.toggleSidebar}
+          />
+          <TerminalTabStrip
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onSelect={selectTab}
+            onClose={closeTab}
+            onAdd={addTab}
+          />
+          <div className="titlebar-status">
+            <label className="theme-picker">
+              <span className="titlebar-control-label" aria-hidden="true">
+                Theme
+              </span>
+              <select
+                data-testid="theme-select"
+                aria-label="Theme"
+                value={uiTheme}
+                onChange={(event) => {
+                  const nextTheme = parseUiTheme(event.target.value);
+                  setUiTheme(nextTheme);
+                  void window.terminalApi
+                    .saveUiTheme(nextTheme)
+                    .then((savedConfig) => {
+                      setConfig(savedConfig);
+                      setUiTheme(savedConfig.ui.theme);
+                    })
+                    .catch(reportError);
+                }}
+              >
+                <option value="default">Default</option>
+                <option value="coder">Coder</option>
+                <option value="gamer">Gamer</option>
+                <option value="classic">Classic</option>
+              </select>
+            </label>
+            {config ? (
+              <AgentPolicySettings
+                policy={config.agentPolicy}
+                onSave={(policy: AgentPolicyConfig) => {
+                  void window.terminalApi
+                    .saveAgentPolicy(policy)
+                    .then(setConfig)
+                    .catch(reportError);
+                }}
+              />
+            ) : null}
+            <span
+              className={`agent-activity${agentActive ? " is-active" : ""}`}
+              data-testid="agent-activity"
+              role="status"
+              title={agentActive ? "Agent active" : "Agent idle"}
             >
-              <option value="default">Default</option>
-              <option value="coder">Coder</option>
-              <option value="gamer">Gamer</option>
-              <option value="classic">Classic</option>
-            </select>
-          </label>
-          {config ? (
-            <AgentPolicySettings
-              policy={config.agentPolicy}
-              onSave={(policy: AgentPolicyConfig) => {
-                void window.terminalApi.saveAgentPolicy(policy).then(setConfig).catch(reportError);
-              }}
-            />
-          ) : null}
-          <span
-            className={`agent-activity${agentActive ? " is-active" : ""}`}
-            data-testid="agent-activity"
-          >
-            {agentActive ? "Agent active" : "Agent idle"}
-          </span>
+              <span className="titlebar-control-label">
+                {agentActive ? "Agent active" : "Agent idle"}
+              </span>
+            </span>
+          </div>
         </div>
       </header>
       <section className={`workspace-shell${collaboration.sidebarOpen ? " has-sidebar" : ""}`}>
@@ -369,6 +383,7 @@ export function App(): ReactElement {
                   terminalFontFamily={fonts.terminalFontFamily}
                   fontLoadDescriptors={fontLoadDescriptors}
                   terminalTheme={terminalTheme}
+                  focusRequestVersion={focusRequestVersion}
                   registerController={registerController}
                   setStatus={setTabStatus}
                   onSessionEvent={updateStatusFromEvent}
@@ -378,6 +393,16 @@ export function App(): ReactElement {
                 />
               ))
             : null}
+          {config && tabsState && !activeTab ? (
+            <div className="terminal-empty-state" data-testid="terminal-empty-state" role="status">
+              <strong>{tabs.length === 0 ? "No visible terminals" : "No active terminal"}</strong>
+              <span>
+                {tabs.length === 0
+                  ? "Open a new tab or reveal a session from Sessions."
+                  : "Select a tab to show its terminal."}
+              </span>
+            </div>
+          ) : null}
         </section>
       </section>
       <NotificationCenter
