@@ -74,8 +74,10 @@ The first multi-session milestone supports tabs only.
 - Closing a running tab requires user confirmation before termination.
 - Closing an exited or failed tab releases the session record immediately.
 - Closing the final tab from the tab close button closes the app window instead
-  of silently replacing it with another terminal. The tab model can still create
-  a fallback tab as an internal invalid-state guard.
+  of silently replacing it with another terminal. Removing the final presented
+  view through session or presentation controls leaves an intentional empty tab
+  model with no active tab; it must never synthesize a replacement PTY. The
+  new-tab action and session Reveal action remain available from that state.
 - Tab keyboard shortcuts must operate on the renderer tab model, not on the
   Electron window. On macOS, `Cmd+T` creates a tab, `Cmd+W` closes the active
   tab, and `Cmd+Shift+[` / `Cmd+Shift+]` switch to the previous/next tab. On
@@ -94,12 +96,25 @@ The first multi-session milestone supports tabs only.
   new-tab action remain reachable outside the scrollable tab viewport.
 - The session-list toggle uses a recognizable sidebar icon with an accessible
   label instead of consuming header width with a persistent text label.
+- The header is the app's in-window titlebar. Its empty regions drag the native
+  window, while tabs, tab actions, settings, popovers, selects, and buttons are
+  explicitly non-draggable and remain fully interactive.
+- Header content uses `titlebar-area-x`, `titlebar-area-width`, and
+  `titlebar-area-height` environment values, with full-width fallbacks, so it
+  never overlaps macOS traffic lights or Windows/Linux window controls on
+  either side. At narrow supported widths, labels may compact visually while
+  every action and its accessible name remain available.
 - Terminal lifecycle is shown in each tab; the titlebar does not repeat the
   active tab lifecycle as a second status badge.
 - Scrollable terminal and session-list surfaces use the same theme-aware,
   compact scrollbar treatment. The terminal treatment targets xterm.js's
   rendered scrollbar control and keeps its configured geometry aligned with
-  its visible track and thumb.
+  its visible track and thumb. xterm's legacy native viewport scrollbar remains
+  hidden so it cannot reserve a second gutter. The overview-ruler border used
+  to configure that compact scrollbar width resolves to the terminal background
+  so an otherwise empty ruler cannot render a contrasting one-pixel edge line.
+  Text padding must not offset the custom vertical scrollbar track from the
+  terminal workspace's right edge.
 - Header popovers keep labels and controls within their bounds at supported
   window widths, including when a theme uses wider display or monospace fonts.
 - Canonical bell events mark inactive tabs unread; activating the tab clears
@@ -121,6 +136,9 @@ The first multi-session milestone supports tabs only.
 - Background presentation opens a tab without selecting it. Foreground
   presentation selects the tab and focuses its xterm instance. Headless
   presentation removes the view without terminating the PTY.
+- After a confirmed human tab close leaves another tab active, keyboard focus
+  returns to that terminal even when its active-tab identity did not change.
+  Background presentation changes must not steal focus from the human.
 - Startup creates one default human terminal tab. Human tab count, tab order,
   active tab, cwd, and shell launch metadata are not persisted or restored from
   settings across app restarts.
@@ -178,3 +196,6 @@ palette are explicitly out of scope.
 - Closing a tab follows the configured detach or terminate behavior.
 - Renderer settings and window geometry persistence never include tabs,
   sessions, PTYs, or terminal output.
+- The titlebar exposes a draggable region, every interactive descendant is
+  non-draggable, and the active tab plus all persistent header actions remain
+  reachable inside the native-controls safe area at the minimum window width.

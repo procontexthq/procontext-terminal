@@ -20,6 +20,15 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
   replace the stock Electron Dock image as soon as the app is ready, but must
   not override the packaged multi-resolution `.icns` resource at runtime.
 - Configure secure renderer settings.
+- Configure a hidden native titlebar and a 44-pixel Window Controls Overlay
+  safe area on every platform. Keep macOS traffic lights and expose native
+  Windows and Linux controls through a transparent overlay.
+- Remove the Electron application menu on Windows and Linux so its menu row and
+  generic accelerators cannot intercept terminal input. Install a minimal
+  native macOS menu for app lifecycle, terminal tabs, clipboard selection, and
+  window actions.
+- Preserve the product name as the document and accessible window title even
+  when the visible native title is hidden.
 - Register typed IPC handlers.
 - Start and stop the local agent gateway.
 - Own Electron app lifecycle events.
@@ -79,3 +88,9 @@ The main process must not:
 - Main-process services can be wired without renderer imports or circular dependencies.
 - Packaged app verification checks native product name, identifier, executable,
   and icon metadata in addition to checking that icon files exist.
+- Platform window options retain native controls without a fully frameless
+  window, Windows and Linux explicitly receive a null application menu, and
+  the macOS menu contains no generic File, View, reload, development-tool, or
+  browser-zoom commands. Its New Terminal item restores a window after the last
+  macOS window closes, and its Window menu remains registered with the native
+  multi-window system.

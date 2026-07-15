@@ -17,6 +17,7 @@ export function TerminalTabView({
   terminalFontFamily,
   fontLoadDescriptors,
   terminalTheme,
+  focusRequestVersion,
   registerController,
   setStatus,
   onSessionEvent,
@@ -30,6 +31,7 @@ export function TerminalTabView({
   terminalFontFamily: string;
   fontLoadDescriptors: readonly string[];
   terminalTheme: TerminalTheme;
+  focusRequestVersion: number;
   registerController: (tabId: string, controller: TerminalController | null) => void;
   setStatus: (tabId: string, status: TerminalUiStatus) => void;
   onSessionEvent: (tabId: string, event: RendererSessionEvent) => void;
@@ -72,7 +74,7 @@ export function TerminalTabView({
               fontFamily: terminalFontFamily,
               fontSize: config.terminal.fontSize,
               scrollback: config.terminal.scrollback,
-              theme: terminalTheme,
+              theme: themeForXterm(terminalTheme),
               cursorBlink: true,
               overviewRuler: { width: 8 },
             }),
@@ -124,7 +126,7 @@ export function TerminalTabView({
 
   useEffect(() => {
     controller.current?.setFontFamily(terminalFontFamily);
-    controller.current?.setTheme(terminalTheme);
+    controller.current?.setTheme(themeForXterm(terminalTheme));
     if (active) {
       void controller.current?.resize();
     }
@@ -174,7 +176,7 @@ export function TerminalTabView({
       window.removeEventListener("focus", reportFocus);
       window.removeEventListener("blur", reportFocus);
     };
-  }, [active]);
+  }, [active, focusRequestVersion]);
 
   return (
     <div
@@ -201,4 +203,11 @@ export function TerminalTabView({
       ) : null}
     </div>
   );
+}
+
+function themeForXterm(theme: TerminalTheme): TerminalTheme & { overviewRulerBorder: string } {
+  return {
+    ...theme,
+    overviewRulerBorder: theme.background,
+  };
 }

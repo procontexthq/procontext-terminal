@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog, nativeImage } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeImage } from "electron";
 
 import {
   resolveAgentGatewayDescriptorPath,
@@ -22,7 +22,7 @@ import {
   TerminalOperationManager,
   TerminalSessionManager,
 } from "@terminal/session-core";
-import type { TerminalConfig } from "@terminal/protocol";
+import type { AppShortcutAction, TerminalConfig } from "@terminal/protocol";
 
 import {
   broadcastRendererEvent,
@@ -39,6 +39,11 @@ import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
 import { createTerminalPresentationRegistry } from "./presentation-registry";
 import { createTerminalPresentationController } from "./presentation-controller";
 import { waitForInitialHumanSessionSettled } from "./startup-session";
+import {
+  createApplicationMenuTemplate,
+  dispatchApplicationMenuShortcut,
+  resolveWindowChromeOptions,
+} from "./window-chrome";
 import { attachWindowCloseSessionCleanup } from "./window-lifecycle";
 
 app.setName(PRODUCT_NAME);
@@ -128,6 +133,7 @@ async function createMainWindow(options: { show?: boolean } = {}): Promise<Brows
     height: 700,
     minWidth: 640,
     minHeight: 420,
+    ...resolveWindowChromeOptions(process.platform),
     backgroundColor: terminalConfig.terminal.theme.background,
     show: options.show ?? true,
     ...(appIconPath ? { icon: appIconPath } : {}),
@@ -138,6 +144,7 @@ async function createMainWindow(options: { show?: boolean } = {}): Promise<Brows
       sandbox: true,
     },
   });
+  window.accessibleTitle = PRODUCT_NAME;
   attachWindowCloseSessionCleanup({
     window,
     sessionManager,
@@ -284,6 +291,7 @@ void app
       saveConfig,
       ...collaborationServices.renderer,
     });
+    installApplicationMenu();
     let startupWindowCreated = false;
     await createMainWindow()
       .then(() => {
@@ -410,6 +418,29 @@ function applyDevelopmentDockIcon(): void {
   if (appIconPath) {
     app.dock.setIcon(nativeImage.createFromPath(appIconPath));
   }
+}
+
+function installApplicationMenu(): void {
+  const template = createApplicationMenuTemplate(
+    process.platform,
+    PRODUCT_NAME,
+    dispatchAppShortcut,
+  );
+  Menu.setApplicationMenu(template ? Menu.buildFromTemplate(template) : null);
+}
+
+function dispatchAppShortcut(action: AppShortcutAction): void {
+  void dispatchApplicationMenuShortcut(action, {
+    channel: IPC_CHANNELS.appShortcut,
+    getFocusedWindow: () => BrowserWindow.getFocusedWindow(),
+    getAllWindows: () => BrowserWindow.getAllWindows(),
+    createWindow: () => createMainWindow(),
+  }).catch((error: unknown) => {
+    logger.warn("window", "menu_shortcut_failed", {
+      action,
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 function appShortcutPlatform(): AppShortcutPlatform | null {

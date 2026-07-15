@@ -39,6 +39,36 @@ Window restoration is limited to validated size, position, and display
 placement. It must not restore terminal sessions, tabs, operations, PTY runtime
 state, or workspace layouts.
 
+## Platform Window Chrome
+
+The terminal header is the single in-window title and command surface. Native
+window controls remain owned and rendered by the operating system.
+
+- Every platform uses Electron's hidden titlebar style and a 44-pixel Window
+  Controls Overlay safe area so the renderer header occupies the titlebar area.
+  macOS retains its native traffic-light controls. Windows and Linux restore
+  their native controls through the overlay rather than renderer-built
+  minimize, maximize, or close buttons.
+- Windows and Linux do not install an Electron application menu. This removes
+  the redundant persistent menu row and prevents generic browser accelerators
+  such as `Ctrl+W`, `Ctrl+Z`, `Ctrl+A`, and `Ctrl+R` from stealing terminal
+  input. App-defined tab shortcuts continue through the typed shortcut event.
+- macOS retains a native global application menu, limited to conventional app
+  lifecycle actions, terminal-tab actions, clipboard selection actions, and
+  native window actions, including fullscreen and multi-window registration.
+  New Terminal restores a usable window when none is open. Generic File, View,
+  development, reload, and browser zoom commands are not exposed.
+- The renderer reserves the Window Controls Overlay safe area instead of
+  assuming controls are on a particular side. The overlay and renderer header
+  use the same height.
+- The document and accessible window titles remain the product name for task
+  switchers and assistive technology even though the visible native title is
+  hidden.
+
+Custom HTML window-control buttons and fully frameless windows are out of scope
+because native controls preserve platform accessibility, snapping, resizing,
+fullscreen, and window-manager behavior.
+
 ## Close Behavior
 
 Window close handling must preserve the distinction between closing a view and ending a session.
@@ -61,3 +91,8 @@ Window close handling must preserve the distinction between closing a view and e
 - Closing a window does not implicitly terminate a session unless settings or
   explicit user action require it.
 - Restored window state is validated before use.
+- Window chrome options preserve native controls on macOS, Windows, and Linux,
+  and the renderer titlebar stays inside the operating-system-provided safe
+  area at supported window widths.
+- Windows and Linux have no application menu or generic menu accelerators;
+  macOS exposes only the documented native menu groups.
