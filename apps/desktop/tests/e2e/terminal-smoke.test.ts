@@ -26,7 +26,12 @@ import {
   type TerminalSessionSummary,
 } from "@terminal/protocol";
 
-import { alternateScreenCommand, interruptFixtureCommand, nodeEvalCommand } from "./e2e-commands";
+import {
+  alternateScreenCommand,
+  inputGateFixtureCommand,
+  interruptFixtureCommand,
+  nodeEvalCommand,
+} from "./e2e-commands";
 import { terminalUiTimeoutMs } from "./e2e-timeouts";
 
 const require = createRequire(import.meta.url);
@@ -104,6 +109,21 @@ describe("desktop terminal smoke", () => {
       await page.getByTestId("new-tab-button").click();
     }
     await expectTabCount(page, 8);
+    await page.waitForFunction(
+      () => {
+        const strip = document.querySelector<HTMLElement>('[data-testid="terminal-tab-strip"]');
+        const activeTab = strip?.querySelector<HTMLElement>(".tab-item.is-active");
+        if (!strip || !activeTab) return false;
+        const stripBounds = strip.getBoundingClientRect();
+        const activeTabBounds = activeTab.getBoundingClientRect();
+        return (
+          activeTabBounds.left >= stripBounds.left - 1 &&
+          activeTabBounds.right <= stripBounds.right + 1
+        );
+      },
+      undefined,
+      { timeout: terminalUiTimeoutMs(process.platform) },
+    );
     await page.getByTestId("terminal-status").waitFor({ state: "visible" });
     if ((await page.locator(".titlebar-status .terminal-state").count()) !== 0) {
       throw new Error("Expected terminal lifecycle to appear only in the active tab.");
@@ -346,8 +366,9 @@ describe("desktop terminal smoke", () => {
         agent.request(
           createAgentCommand("terminal.input", {
             sessionId: created.sessionId,
-            input: `${nodeEvalCommand(
-              'process.stdout.write("SHELL_INTEGRATION_OK\\\\n"); setTimeout(() => {}, 300);',
+            input: `${inputGateFixtureCommand(
+              "SHELL_INTEGRATION_INPUT_READY",
+              "SHELL_INTEGRATION_OK",
             )}\r`,
           }),
         ),
@@ -355,7 +376,19 @@ describe("desktop terminal smoke", () => {
       await waitForObservation(
         agent,
         created.sessionId,
-        (observation) => observation.command.state === "running",
+        (observation) =>
+          observation.command.state === "running" &&
+          observation.viewport.rows.some((row) =>
+            row.text.includes("SHELL_INTEGRATION_INPUT_READY"),
+          ),
+      );
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.input", {
+            sessionId: created.sessionId,
+            input: "continue\r",
+          }),
+        ),
       );
       await waitForObservation(
         agent,
@@ -616,11 +649,10 @@ describe("desktop terminal smoke", () => {
         agent,
         created.sessionId,
         (current) =>
-          (process.platform === "win32" || current.alternateScreen) &&
+          current.alternateScreen &&
           current.viewport.rows.some((row) => row.text.includes("CANONICAL_ALT_SCREEN")),
       );
-      // OS ConPTY consumes the buffer switch and emits its rendered screen update.
-      if (process.platform !== "win32" && !observation.alternateScreen) {
+      if (!observation.alternateScreen) {
         throw new Error("Expected the alternate-screen buffer to remain observable.");
       }
       if (!observation.cursor.visible) {

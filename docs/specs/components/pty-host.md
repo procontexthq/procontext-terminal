@@ -44,9 +44,12 @@ a direct app-code import.
 
 - macOS and Linux use Unix PTY behavior through node-pty.
 - Windows uses ConPTY through node-pty.
-- Windows uses the operating-system ConPTY backend. The bundled ConPTY DLL is
-  not forced because it can change startup output delivery for interactive
-  PowerShell sessions.
+- Windows uses node-pty's bundled ConPTY backend so raw terminal control
+  sequences, including alternate-buffer transitions, reach the canonical
+  emulator. The PTY adapter answers and removes the bundled console's one-shot
+  startup device-attribute query before forwarding output. This bounded
+  transport handshake must not depend on a renderer window or allow a second
+  terminal model to answer the same query.
 - Shell paths, arguments, environment handling, and newline behavior must be platform-aware.
 - PTY termination is idempotent and becomes a no-op after an observed process
   exit.
@@ -73,8 +76,12 @@ The package boundary should expose terminal-domain operations, not node-pty impl
 - Temporary command launches use the resolved platform-specific invocation and
   exit when the supplied shell input finishes.
 - Spawn failures are mapped to typed terminal-domain errors.
-- Windows spawn options select ConPTY without forcing the bundled DLL, and
-  repeated or post-exit termination does not call the native PTY kill path
-  again.
-- A Windows-only real PTY test verifies that OSC control sequences survive the
-  selected ConPTY transport.
+- Windows spawn options select the bundled ConPTY DLL, and repeated or post-exit
+  termination does not call the native PTY kill path again.
+- The bundled ConPTY startup handshake handles a query split across output
+  chunks, writes exactly one xterm-compatible response, removes only that
+  initial query from forwarded output, and then becomes a transparent pass-
+  through.
+- Windows-only real PTY tests write to interactive PowerShell after spawn and
+  verify output, OSC control sequences, alternate-buffer transitions, and clean
+  exit through the selected ConPTY transport.

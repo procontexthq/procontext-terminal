@@ -84,8 +84,8 @@ importers:
         specifier: ^6.0.0
         version: 6.0.0
       node-pty:
-        specifier: ^1.1.0
-        version: 1.1.0
+        specifier: ^1.2.0-beta.14
+        version: 1.2.0-beta.14
       react:
         specifier: ^19.2.6
         version: 19.2.6
@@ -167,8 +167,8 @@ importers:
         specifier: workspace:*
         version: link:../protocol
       node-pty:
-        specifier: ^1.1.0
-        version: 1.1.0
+        specifier: ^1.2.0-beta.14
+        version: 1.2.0-beta.14
 
   packages/recorder:
     dependencies:
@@ -2335,8 +2335,8 @@ packages:
   node-int64@0.4.0:
     resolution: {integrity: sha512-O5lz91xSOeoXP6DulyHfllpq+Eg00MWitZIbtPfoSEvqIHdl5gfcY6hYzDWnj0qD5tz52PI08u9qUvSVeUBeHw==}
 
-  node-pty@1.1.0:
-    resolution: {integrity: sha512-20JqtutY6JPXTUnL0ij1uad7Qe1baT46lyolh2sSENDd4sTzKZ4nmAFkeAARDKwmlLjPx6XKRlwRUxwjOy+lUg==}
+  node-pty@1.2.0-beta.14:
+    resolution: {integrity: sha512-XORU9BQgpxVgqr7WivjJ17mLenOHUgKKWzuZZNaw3NDYgHc/wPJQMSaoLDrpEgqV6aU1nNwil1o/OqYj6lWmUA==}
 
   node-releases@2.0.38:
     resolution: {integrity: sha512-3qT/88Y3FbH/Kx4szpQQ4HzUbVrHPKTLVpVocKiLfoYvw9XSGOX2FmD2d6DrXbVYyAQTF2HeF6My8jmzx7/CRw==}
@@ -5223,7 +5223,7 @@ snapshots:
 
   node-int64@0.4.0: {}
 
-  node-pty@1.1.0:
+  node-pty@1.2.0-beta.14:
     dependencies:
       node-addon-api: 7.1.1
 

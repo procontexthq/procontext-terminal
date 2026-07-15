@@ -109,8 +109,12 @@ maps cmdlet success or failure to `0` or `1`.
   shell-exit transitions are deterministic.
 - Unsupported, nested, remote, malformed, and temporary-shell cases cannot
   produce trusted command state.
-- Real PTY tests cover each installed supported shell, with deterministic
-  bootstrap tests for shells unavailable on the current platform.
+- Real PTY tests cover each installed supported shell, including PowerShell
+  Core on every CI platform where it is installed, with deterministic
+  bootstrap tests for shells unavailable on the current platform. These tests
+  use the production ten-second initialization contract and event-driven,
+  bounded waits for eventual negotiation and command completion; they do not
+  impose a stricter shell-startup performance requirement.
 - PowerShell launch tests verify generated bootstrap cleanup and repeated
   capability advertisement. They also verify that the previous prompt cannot
   recurse through the replacement and that command validation has an active
