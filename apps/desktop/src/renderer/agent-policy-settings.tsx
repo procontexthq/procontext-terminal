@@ -34,11 +34,16 @@ export function AgentPolicySettings({
       <button
         type="button"
         className={`agent-policy-toggle${open ? " is-active" : ""}`}
+        aria-label="Agent policy"
         aria-expanded={open}
+        title="Agent policy"
         data-testid="agent-policy-toggle"
         onClick={() => setOpen((current) => !current)}
       >
-        Agent policy
+        <span className="titlebar-control-label">Agent policy</span>
+        <span className="titlebar-control-label-compact" aria-hidden="true">
+          Policy
+        </span>
       </button>
       {open ? (
         <section className="agent-policy-popover" aria-label="Agent policy settings">

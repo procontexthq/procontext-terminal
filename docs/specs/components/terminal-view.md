@@ -31,6 +31,10 @@ but does not define terminal truth.
 - Follow live output when the viewport is at the bottom while preserving a
   human-selected historical viewport.
 - Preserve selection, copy, paste, mouse reporting, accessibility, and focus.
+- Render xterm.js's compact custom scrollbar as the sole terminal scrollbar;
+  its legacy native viewport scrollbar must not reserve a platform-specific
+  gutter, its empty overview ruler must not show a contrasting edge artifact,
+  and terminal text padding must not inset the scrollbar from the right edge.
 
 The canonical model derives title, bell, cursor, wrapping, and alternate-screen
 state from PTY output. The renderer does not report those values back to main.
@@ -61,3 +65,8 @@ exists, but do not forward input or PTY resize operations.
   original query occurrences.
 - Human and agent scrolling remain synchronized without feedback loops.
 - Exited sessions stay visible and reject input.
+- A successful human tab close restores focus and the blinking cursor in the
+  surviving active terminal, including when an inactive tab was closed.
+- The terminal has one compact scrollbar with no second native viewport gutter
+  and no visible empty overview-ruler border. Its track stays aligned to the
+  terminal workspace's right edge while content retains its left-side padding.

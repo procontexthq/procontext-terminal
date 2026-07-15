@@ -64,7 +64,7 @@ describe("desktop terminal smoke", () => {
 
     await writeRendererInput(page, sessionId, `${platformPrintCommand("HUMAN_READY")}\r`);
     await waitForTerminalText(page, "HUMAN_READY");
-    await page.setViewportSize({ width: 960, height: 640 });
+    await setNativeWindowSize(page, 960, 640);
 
     const interruptReady = "HUMAN_INTERRUPT_READY";
     const interruptHandled = "HUMAN_INTERRUPT_HANDLED";
@@ -86,6 +86,182 @@ describe("desktop terminal smoke", () => {
     await writeRendererInput(page, sessionId, "exit\r");
     await waitForStatus(page, "exited");
     await page.getByTestId("terminal-exit-message").waitFor({ timeout: e2eUiTimeoutMs });
+  });
+
+  it("keeps the integrated titlebar safe, interactive, and transparent to terminal keys", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    await setNativeWindowSize(page, 640, 560);
+
+    const chrome = await page.evaluate(() => {
+      const titlebar = document.querySelector<HTMLElement>('[data-testid="window-titlebar"]');
+      const content = titlebar?.querySelector<HTMLElement>(".titlebar-content");
+      const tabStrip = titlebar?.querySelector<HTMLElement>('[data-testid="terminal-tab-strip"]');
+      const activeTab = tabStrip?.querySelector<HTMLElement>(".tab-item.is-active");
+      const controlSelectors = [
+        ["sidebar", '[data-testid="session-sidebar-toggle"]'],
+        ["new-tab", '[data-testid="new-tab-button"]'],
+        ["theme", '[data-testid="theme-select"]'],
+        ["policy", '[data-testid="agent-policy-toggle"]'],
+        ["agent-status", '[data-testid="agent-activity"]'],
+      ] as const;
+      const controls = controlSelectors.map(([name, selector]) => ({
+        name,
+        element: titlebar?.querySelector<HTMLElement>(selector) ?? null,
+      }));
+      if (
+        !titlebar ||
+        !content ||
+        !tabStrip ||
+        !activeTab ||
+        controls.some((item) => !item.element)
+      ) {
+        return null;
+      }
+
+      const overlay = (
+        navigator as Navigator & {
+          windowControlsOverlay?: {
+            visible: boolean;
+            getTitlebarAreaRect: () => DOMRect;
+          };
+        }
+      ).windowControlsOverlay;
+      const overlayRect = overlay?.getTitlebarAreaRect();
+      const bounds = (element: HTMLElement) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+      };
+      const persistentControls = [
+        { name: "active-tab", element: activeTab },
+        ...controls.map(({ name, element }) => ({ name, element: element! })),
+      ];
+      const inspectedControls = persistentControls.map(({ name, element }) => {
+        const rect = element.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const hitTarget = document.elementFromPoint(centerX, centerY);
+        const style = getComputedStyle(element);
+        return {
+          name,
+          ...bounds(element),
+          width: rect.width,
+          height: rect.height,
+          visible:
+            style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0",
+          hit: Boolean(hitTarget && (hitTarget === element || element.contains(hitTarget))),
+        };
+      });
+      const overlaps: string[] = [];
+      for (let left = 0; left < inspectedControls.length; left += 1) {
+        for (let right = left + 1; right < inspectedControls.length; right += 1) {
+          const first = inspectedControls[left]!;
+          const second = inspectedControls[right]!;
+          if (
+            Math.min(first.right, second.right) - Math.max(first.left, second.left) > 1 &&
+            Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top) > 1
+          ) {
+            overlaps.push(`${first.name}:${second.name}`);
+          }
+        }
+      }
+
+      return {
+        viewportWidth: window.innerWidth,
+        titlebar: bounds(titlebar),
+        content: bounds(content),
+        tabStrip: bounds(tabStrip),
+        activeTab: bounds(activeTab),
+        controls: inspectedControls,
+        overlaps,
+        dragRegion: getComputedStyle(titlebar).getPropertyValue("app-region").trim(),
+        tabStripRegion: getComputedStyle(tabStrip).getPropertyValue("app-region").trim(),
+        controlRegions: controls.map(({ element }) =>
+          getComputedStyle(element!).getPropertyValue("app-region").trim(),
+        ),
+        overlay: overlayRect
+          ? {
+              visible: overlay?.visible ?? false,
+              left: overlayRect.x,
+              right: overlayRect.x + overlayRect.width,
+              height: overlayRect.height,
+            }
+          : null,
+      };
+    });
+
+    if (!chrome) throw new Error("Expected the complete integrated titlebar.");
+    if (Math.round(chrome.titlebar.bottom - chrome.titlebar.top) !== 44) {
+      throw new Error(`Expected a 44px titlebar: ${JSON.stringify(chrome.titlebar)}`);
+    }
+    if (
+      chrome.dragRegion !== "drag" ||
+      chrome.tabStripRegion !== "drag" ||
+      chrome.controlRegions.some((value) => value !== "no-drag")
+    ) {
+      throw new Error(`Expected drag-safe titlebar controls: ${JSON.stringify(chrome)}`);
+    }
+    if (
+      chrome.activeTab.left < chrome.tabStrip.left - 1 ||
+      chrome.activeTab.right > chrome.tabStrip.right + 1 ||
+      chrome.content.right > chrome.titlebar.right + 1 ||
+      chrome.content.right > chrome.viewportWidth + 1 ||
+      chrome.controls.some(
+        (control) =>
+          control.width <= 0 ||
+          control.height <= 0 ||
+          !control.visible ||
+          !control.hit ||
+          control.left < chrome.content.left - 1 ||
+          control.right > chrome.content.right + 1 ||
+          control.left < -1 ||
+          control.right > chrome.viewportWidth + 1,
+      ) ||
+      chrome.overlaps.length > 0
+    ) {
+      throw new Error(
+        `Expected all titlebar actions inside the safe area: ${JSON.stringify(chrome)}`,
+      );
+    }
+    if (!chrome.overlay?.visible) {
+      throw new Error(`Expected native window-controls overlay: ${JSON.stringify(chrome)}`);
+    }
+    if (
+      Math.round(chrome.overlay.height) !== 44 ||
+      chrome.content.left < chrome.overlay.left - 1 ||
+      chrome.content.right > chrome.overlay.right + 1
+    ) {
+      throw new Error(
+        `Expected titlebar content inside the overlay safe area: ${JSON.stringify(chrome)}`,
+      );
+    }
+
+    if (process.platform !== "darwin") {
+      const readyMarker = "TERMINAL_CTRL_W_INPUT_READY";
+      const handledMarker = "TERMINAL_CTRL_W_INPUT_HANDLED";
+      const sessionId = await activeSessionId(page);
+      const command = nodeEvalCommand(
+        [
+          "process.stdin.setRawMode(true);",
+          "process.stdin.resume();",
+          `process.stdout.write(${JSON.stringify(`${readyMarker}\n`)});`,
+          "process.stdin.once('data', (data) => {",
+          "  const handled = data.includes(0x17);",
+          "  process.stdin.setRawMode(false);",
+          `  if (handled) process.stdout.write(${JSON.stringify(`${handledMarker}\n`)});`,
+          "  process.exit(handled ? 0 : 1);",
+          "});",
+        ].join("\n"),
+      );
+      await writeRendererInput(page, sessionId, `${command}\r`);
+      await waitForTerminalText(page, readyMarker);
+      const terminalInput = page.locator(".xterm-helper-textarea");
+      await terminalInput.focus();
+      await page.keyboard.press("Control+W");
+      await waitForTerminalText(page, handledMarker);
+    }
   });
 
   it("keeps a live-bottom renderer viewport on the settled end of bursty output", async () => {
@@ -126,12 +302,69 @@ describe("desktop terminal smoke", () => {
     await Promise.all([page.waitForEvent("close"), page.getByTestId("close-tab-0").click()]);
   });
 
+  it("restores terminal focus after closing an inactive tab", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+
+    await page.getByTestId("new-tab-button").click();
+    await expectTabCount(page, 2);
+    await waitForTerminalReady(page);
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByTestId("close-tab-0").click();
+    await expectTabCount(page, 1);
+    await page.waitForFunction(
+      () => {
+        const terminal = document.querySelector<HTMLElement>(
+          "[data-testid='terminal-ready'] .xterm",
+        );
+        const input = terminal?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+        return terminal?.classList.contains("focus") && document.activeElement === input;
+      },
+      undefined,
+      { timeout: e2eUiTimeoutMs },
+    );
+
+    const marker = "FOCUS_AFTER_INACTIVE_TAB_CLOSE";
+    await page.keyboard.insertText(platformPrintCommand(marker));
+    await page.keyboard.press("Enter");
+    await waitForTerminalText(page, marker);
+  });
+
+  it("allows the only visible session to be hidden or terminated without replacement", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    const sessionId = await activeSessionId(page);
+    const card = page.getByTestId(`session-card-${sessionId}`);
+
+    await card.getByRole("button", { name: "Hide" }).click();
+    await expectTabCount(page, 0);
+    await page.getByTestId("terminal-empty-state").waitFor({ timeout: e2eUiTimeoutMs });
+    await card.getByText("headless", { exact: true }).waitFor({ timeout: e2eUiTimeoutMs });
+
+    await card.getByRole("button", { name: "Reveal" }).click();
+    await expectTabCount(page, 1);
+    await waitForActiveSession(page, sessionId);
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await card.getByRole("button", { name: "Terminate" }).click();
+    await card.waitFor({ state: "detached", timeout: e2eUiTimeoutMs });
+    await expectTabCount(page, 0);
+    await page.getByTestId("terminal-empty-state").waitFor({ timeout: e2eUiTimeoutMs });
+    if (page.isClosed())
+      throw new Error("Expected sidebar termination to keep the app window open.");
+  });
+
   it("keeps tab and session navigation reachable in a narrow window", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
     const page = await firstPage(browser);
     await waitForTerminalReady(page);
-    await page.setViewportSize({ width: 720, height: 560 });
+    await setNativeWindowSize(page, 720, 560);
 
     for (let index = 0; index < 7; index += 1) {
       await page.getByTestId("new-tab-button").click();
@@ -169,11 +402,16 @@ describe("desktop terminal smoke", () => {
 
     const terminalScrollbar = await page.evaluate(() => {
       const shell = document.querySelector<HTMLElement>(".app-shell");
-      const track = document.querySelector<HTMLElement>(
-        ".terminal-host .xterm-scrollable-element > .scrollbar.vertical",
+      const host = document.querySelector<HTMLElement>("[data-testid='terminal-ready']");
+      const track = host?.querySelector<HTMLElement>(
+        ".xterm-scrollable-element > .scrollbar.vertical",
       );
       const slider = track?.querySelector<HTMLElement>(":scope > .slider");
-      if (!shell || !track || !slider) return null;
+      const viewport = host?.querySelector<HTMLElement>(".xterm-viewport");
+      const overviewRuler = host?.querySelector<HTMLCanvasElement>(
+        ".xterm-decoration-overview-ruler",
+      );
+      if (!shell || !host || !track || !slider || !viewport || !overviewRuler) return null;
       const probe = document.createElement("div");
       probe.style.background = "var(--scrollbar-thumb)";
       probe.style.border = "2px solid transparent";
@@ -183,8 +421,30 @@ describe("desktop terminal smoke", () => {
       const tokenBorderWidth = probeStyle.borderTopWidth;
       probe.remove();
       const sliderStyle = getComputedStyle(slider);
+      const hostBounds = host.getBoundingClientRect();
+      const trackBounds = track.getBoundingClientRect();
+      const terminal = host.querySelector<HTMLElement>(":scope > .xterm");
+      if (!terminal) return null;
+      const terminalStyle = getComputedStyle(terminal);
+      const rulerContext = overviewRuler.getContext("2d", { willReadFrequently: true });
+      const colorProbe = document.createElement("canvas");
+      colorProbe.width = 1;
+      colorProbe.height = 1;
+      const colorProbeContext = colorProbe.getContext("2d", { willReadFrequently: true });
+      if (!rulerContext || !colorProbeContext) return null;
+      colorProbeContext.fillStyle = getComputedStyle(host).backgroundColor;
+      colorProbeContext.fillRect(0, 0, 1, 1);
       return {
         trackWidth: track.getBoundingClientRect().width,
+        trackRightGap: hostBounds.right - trackBounds.right,
+        terminalPaddingLeft: terminalStyle.paddingLeft,
+        terminalPaddingRight: terminalStyle.paddingRight,
+        nativeViewportGutter: viewport.offsetWidth - viewport.clientWidth,
+        nativeScrollbarWidth: getComputedStyle(viewport).scrollbarWidth,
+        overviewRulerBorderPixel: Array.from(
+          rulerContext.getImageData(0, Math.floor(overviewRuler.height / 2), 1, 1).data,
+        ),
+        terminalBackgroundPixel: Array.from(colorProbeContext.getImageData(0, 0, 1, 1).data),
         color: sliderStyle.backgroundColor,
         tokenColor,
         tokenBorderWidth,
@@ -196,6 +456,31 @@ describe("desktop terminal smoke", () => {
     if (!terminalScrollbar) throw new Error("Expected xterm's custom terminal scrollbar.");
     if (Math.round(terminalScrollbar.trackWidth) !== 8) {
       throw new Error(`Expected an 8px terminal scrollbar, got ${terminalScrollbar.trackWidth}px.`);
+    }
+    if (
+      Math.abs(terminalScrollbar.trackRightGap) > 1 ||
+      terminalScrollbar.terminalPaddingLeft !== "12px" ||
+      terminalScrollbar.terminalPaddingRight !== "0px"
+    ) {
+      throw new Error(
+        `Expected terminal content padding without a right-edge scrollbar gap: ${JSON.stringify(terminalScrollbar)}.`,
+      );
+    }
+    if (
+      terminalScrollbar.nativeViewportGutter !== 0 ||
+      terminalScrollbar.nativeScrollbarWidth !== "none"
+    ) {
+      throw new Error(
+        `Expected no duplicate native terminal scrollbar: ${JSON.stringify(terminalScrollbar)}.`,
+      );
+    }
+    if (
+      terminalScrollbar.overviewRulerBorderPixel.join(",") !==
+      terminalScrollbar.terminalBackgroundPixel.join(",")
+    ) {
+      throw new Error(
+        `Expected no contrasting overview-ruler edge: ${JSON.stringify(terminalScrollbar)}.`,
+      );
     }
     if (terminalScrollbar.color !== terminalScrollbar.tokenColor) {
       throw new Error(
@@ -229,7 +514,7 @@ describe("desktop terminal smoke", () => {
     browser = await launchApp(userDataDir);
     const page = await firstPage(browser);
     await waitForTerminalReady(page);
-    await page.setViewportSize({ width: 720, height: 640 });
+    await setNativeWindowSize(page, 720, 640);
 
     for (const theme of ["classic", "gamer"]) {
       await page.getByTestId("theme-select").selectOption(theme);
@@ -1022,6 +1307,22 @@ async function firstPage(connectedBrowser: Browser): Promise<Page> {
     await delay(100);
   }
   throw new Error("Timed out waiting for Electron page.");
+}
+
+async function setNativeWindowSize(page: Page, width: number, height: number): Promise<void> {
+  await page.evaluate(({ nextWidth, nextHeight }) => window.resizeTo(nextWidth, nextHeight), {
+    nextWidth: width,
+    nextHeight: height,
+  });
+  await page.waitForFunction(
+    ({ expectedWidth, expectedHeight }) =>
+      window.innerWidth <= expectedWidth &&
+      window.innerWidth >= expectedWidth - 32 &&
+      window.innerHeight <= expectedHeight &&
+      window.innerHeight >= expectedHeight - 80,
+    { expectedWidth: width, expectedHeight: height },
+    { timeout: e2eUiTimeoutMs },
+  );
 }
 
 async function waitForTerminalReady(page: Page): Promise<void> {
