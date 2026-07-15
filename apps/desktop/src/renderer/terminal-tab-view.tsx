@@ -74,6 +74,7 @@ export function TerminalTabView({
               scrollback: config.terminal.scrollback,
               theme: terminalTheme,
               cursorBlink: true,
+              overviewRuler: { width: 8 },
             }),
           createFitAddon: () => new FitAddon(),
           onSessionEvent: (event) => onSessionEvent(tab.id, event),

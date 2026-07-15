@@ -10,6 +10,12 @@ import type {
 } from "@terminal/protocol";
 
 export type TerminalLike = {
+  buffer: {
+    active: {
+      baseY: number;
+      viewportY: number;
+    };
+  };
   options?: {
     fontFamily?: string;
     fontSize?: number;
@@ -157,7 +163,13 @@ export async function createTerminalSession(
     );
     const scrollSubscription = terminal.onScroll?.((viewportY) => {
       if (suppressViewportReport || !sessionId) return;
-      void options.api.reportViewport({ sessionId, viewportY }).catch(options.onError);
+      void options.api
+        .reportViewport({
+          sessionId,
+          viewportY,
+          atBottom: terminal.buffer.active.baseY === viewportY,
+        })
+        .catch(options.onError);
     });
     if (scrollSubscription) subscriptions.push(scrollSubscription);
 

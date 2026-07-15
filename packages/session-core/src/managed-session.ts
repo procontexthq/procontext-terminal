@@ -200,10 +200,10 @@ export class ManagedTerminalSession {
     });
   }
 
-  async reportViewport(viewportY: number): Promise<boolean> {
+  async reportViewport(viewportY: number, atBottom: boolean): Promise<boolean> {
     return await this.enqueue(() => {
       this.requireRunningOrExited("session.reportViewport");
-      const changed = this.model.reportViewport(viewportY);
+      const changed = this.model.reportViewport(viewportY, atBottom);
       if (changed) this.notifyViewport();
       return changed;
     });

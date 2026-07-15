@@ -18,6 +18,7 @@ export function TerminalTabStrip({
 }): ReactElement {
   const stripRef = useRef<HTMLDivElement>(null);
   const tabItemRefs = useRef(new Map<string, HTMLDivElement>());
+  const tabOrderKey = tabs.map((tab) => tab.id).join("\u0000");
   const [overflow, setOverflow] = useState({
     present: false,
     previous: false,
@@ -70,11 +71,11 @@ export function TerminalTabStrip({
       observer?.disconnect();
       window.removeEventListener("resize", refreshLayout);
     };
-  }, [refreshLayout, tabs]);
+  }, [refreshLayout, tabOrderKey]);
 
   useLayoutEffect(() => {
     refreshLayout();
-  }, [refreshLayout, tabs]);
+  }, [refreshLayout, tabOrderKey]);
 
   const scroll = useCallback(
     (direction: "previous" | "next") => {

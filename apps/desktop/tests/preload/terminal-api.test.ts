@@ -26,7 +26,7 @@ describe("renderer terminal api", () => {
     await expect(api.getSession({ sessionId })).resolves.toBe("session.get");
     await expect(api.input({ sessionId, input: "\u0003" })).resolves.toBe("session.input");
     await expect(api.openView({ sessionId })).resolves.toBe("session.openView");
-    await expect(api.reportViewport({ sessionId, viewportY: 4 })).resolves.toBe(
+    await expect(api.reportViewport({ sessionId, viewportY: 4, atBottom: false })).resolves.toBe(
       "session.reportViewport",
     );
     await expect(api.reportViewFocus({ sessionId, focused: true })).resolves.toBe(

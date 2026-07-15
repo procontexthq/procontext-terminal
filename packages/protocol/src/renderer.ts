@@ -63,7 +63,11 @@ export type TerminalViewBootstrap = {
 
 export type OpenTerminalViewRequest = { sessionId: SessionId };
 export type CloseTerminalViewRequest = { sessionId: SessionId };
-export type ReportTerminalViewportRequest = { sessionId: SessionId; viewportY: number };
+export type ReportTerminalViewportRequest = {
+  sessionId: SessionId;
+  viewportY: number;
+  atBottom: boolean;
+};
 export type ReportTerminalViewFocusRequest = { sessionId: SessionId; focused: boolean };
 export type RendererPresentationAction = "open" | "focus" | "hide" | "close";
 export type RendererPresentationCommand = {
@@ -313,7 +317,11 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("session.reportViewport"),
     requestId: requestIdSchema,
-    payload: z.object({ sessionId: sessionIdSchema, viewportY: z.number().int().nonnegative() }),
+    payload: z.object({
+      sessionId: sessionIdSchema,
+      viewportY: z.number().int().nonnegative(),
+      atBottom: z.boolean(),
+    }),
   }),
   z.object({
     type: z.literal("session.reportViewFocus"),

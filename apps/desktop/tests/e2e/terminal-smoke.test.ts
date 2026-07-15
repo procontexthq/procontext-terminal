@@ -88,6 +88,34 @@ describe("desktop terminal smoke", () => {
     await page.getByTestId("terminal-exit-message").waitFor({ timeout: e2eUiTimeoutMs });
   });
 
+  it("keeps a live-bottom renderer viewport on the settled end of bursty output", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    const sessionId = await activeSessionId(page);
+    const marker = "BURST_OUTPUT_SETTLED_AT_BOTTOM";
+    const command = nodeEvalCommand(
+      [
+        "let line = 0;",
+        "const emit = () => {",
+        "  if (line < 160) {",
+        '    process.stdout.write(`burst-${String(line).padStart(3, "0")}\\n`, () => {',
+        "      line += 1;",
+        "      setImmediate(emit);",
+        "    });",
+        "    return;",
+        "  }",
+        `  process.stdout.write(${JSON.stringify(`${marker}\n`)});`,
+        "};",
+        "emit();",
+      ].join("\n"),
+    );
+
+    await writeRendererInput(page, sessionId, `${command}\r`);
+    await waitForTerminalText(page, marker);
+  });
+
   it("terminates a live session when the human confirms tab close", async () => {
     const userDataDir = await createTempUserDataDir();
     browser = await launchApp(userDataDir);
@@ -138,6 +166,51 @@ describe("desktop terminal smoke", () => {
     await page.getByTestId("session-sidebar").waitFor({ state: "hidden" });
     await sidebarToggle.click();
     await page.getByTestId("session-sidebar").waitFor({ state: "visible" });
+
+    const terminalScrollbar = await page.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>(".app-shell");
+      const track = document.querySelector<HTMLElement>(
+        ".terminal-host .xterm-scrollable-element > .scrollbar.vertical",
+      );
+      const slider = track?.querySelector<HTMLElement>(":scope > .slider");
+      if (!shell || !track || !slider) return null;
+      const probe = document.createElement("div");
+      probe.style.background = "var(--scrollbar-thumb)";
+      probe.style.border = "2px solid transparent";
+      shell.append(probe);
+      const probeStyle = getComputedStyle(probe);
+      const tokenColor = probeStyle.backgroundColor;
+      const tokenBorderWidth = probeStyle.borderTopWidth;
+      probe.remove();
+      const sliderStyle = getComputedStyle(slider);
+      return {
+        trackWidth: track.getBoundingClientRect().width,
+        color: sliderStyle.backgroundColor,
+        tokenColor,
+        tokenBorderWidth,
+        borderRadius: sliderStyle.borderRadius,
+        borderWidth: sliderStyle.borderTopWidth,
+        backgroundClip: sliderStyle.backgroundClip,
+      };
+    });
+    if (!terminalScrollbar) throw new Error("Expected xterm's custom terminal scrollbar.");
+    if (Math.round(terminalScrollbar.trackWidth) !== 8) {
+      throw new Error(`Expected an 8px terminal scrollbar, got ${terminalScrollbar.trackWidth}px.`);
+    }
+    if (terminalScrollbar.color !== terminalScrollbar.tokenColor) {
+      throw new Error(
+        `Expected shared scrollbar color ${terminalScrollbar.tokenColor}, got ${terminalScrollbar.color}.`,
+      );
+    }
+    if (
+      terminalScrollbar.borderRadius !== "999px" ||
+      terminalScrollbar.borderWidth !== terminalScrollbar.tokenBorderWidth ||
+      terminalScrollbar.backgroundClip !== "padding-box"
+    ) {
+      throw new Error(
+        `Expected compact pill scrollbar styling: ${JSON.stringify(terminalScrollbar)}`,
+      );
+    }
 
     const tabStrip = page.getByTestId("terminal-tab-strip");
     const before = await tabStrip.evaluate((element) => element.scrollLeft);

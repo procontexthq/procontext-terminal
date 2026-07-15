@@ -55,6 +55,7 @@ describe("terminal controller", () => {
     const { api, emit } = createApi();
     await createController(api, terminal);
 
+    terminal.buffer.active.baseY = 8;
     terminal.emitScroll(5);
     emit({
       type: "session.viewport",
@@ -64,8 +65,33 @@ describe("terminal controller", () => {
     await Promise.resolve();
 
     expect(api.reportViewport).toHaveBeenCalledTimes(1);
-    expect(api.reportViewport).toHaveBeenCalledWith({ sessionId, viewportY: 5 });
+    expect(api.reportViewport).toHaveBeenCalledWith({
+      sessionId,
+      viewportY: 5,
+      atBottom: false,
+    });
     expect(terminal.scrollToLine).toHaveBeenCalledWith(2);
+  });
+
+  it("reports the live bottom semantically instead of as a stale absolute row", async () => {
+    const terminal = new FakeTerminal();
+    const { api } = createApi();
+    await createController(api, terminal);
+
+    terminal.buffer.active.baseY = 12;
+    terminal.emitScroll(12);
+    terminal.emitScroll(7);
+
+    expect(api.reportViewport).toHaveBeenNthCalledWith(1, {
+      sessionId,
+      viewportY: 12,
+      atBottom: true,
+    });
+    expect(api.reportViewport).toHaveBeenNthCalledWith(2, {
+      sessionId,
+      viewportY: 7,
+      atBottom: false,
+    });
   });
 
   it("reports whether its renderer view is foreground or background", async () => {
@@ -137,6 +163,7 @@ class FakeTerminal implements TerminalLike {
   readonly focus = vi.fn();
   readonly refresh = vi.fn();
   options = {};
+  buffer = { active: { baseY: 0, viewportY: 0 } };
   rows = 24;
   private dataHandler: (data: string) => void = () => undefined;
   private scrollHandler: (viewportY: number) => void = () => undefined;
@@ -165,6 +192,7 @@ class FakeTerminal implements TerminalLike {
   }
 
   emitScroll(viewportY: number): void {
+    this.buffer.active.viewportY = viewportY;
     this.scrollHandler(viewportY);
   }
 }

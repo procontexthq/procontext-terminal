@@ -418,11 +418,45 @@ describe("TerminalSessionManager", () => {
     const reported = await manager.reportViewport({
       sessionId: summary.sessionId,
       viewportY: 0,
+      atBottom: false,
     });
 
     expect(scrolled.status).toBe("changed");
     expect(reported).toBe(true);
     expect((await currentObservation(manager, summary.sessionId)).viewport.atBottom).toBe(false);
+  });
+
+  it("resolves a stale renderer bottom report against the current canonical bottom", async () => {
+    const host = new FakePtyHost();
+    const manager = new TerminalSessionManager(host, { scrollback: 5_000 });
+    const summary = await manager.createSession({ ...request, rows: 2 });
+    host.pty.emitData("one\r\ntwo\r\nthree");
+    const first = await manager.observe({
+      sessionId: summary.sessionId,
+      afterVersion: summary.observationVersion,
+      timeoutMs: 100,
+    });
+    if (first.status !== "changed") throw new Error("Expected initial terminal output.");
+    const staleBottomY = first.observation.viewport.scrollbackRows;
+
+    host.pty.emitData("\r\nfour\r\nfive\r\nsix");
+    const advanced = await manager.observe({
+      sessionId: summary.sessionId,
+      afterVersion: first.observation.version,
+      timeoutMs: 100,
+    });
+    if (advanced.status !== "changed") throw new Error("Expected advanced terminal output.");
+    expect(advanced.observation.viewport).toMatchObject({ atBottom: true });
+    expect(advanced.observation.viewport.scrollbackRows).toBeGreaterThan(staleBottomY);
+
+    const reported = await manager.reportViewport({
+      sessionId: summary.sessionId,
+      viewportY: staleBottomY,
+      atBottom: true,
+    });
+
+    expect(reported).toBe(false);
+    expect((await currentObservation(manager, summary.sessionId)).viewport.atBottom).toBe(true);
   });
 
   it("times out observation without repeating the viewport", async () => {
