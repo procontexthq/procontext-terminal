@@ -17,8 +17,12 @@ but does not define terminal truth.
 - Apply later output events in sequence without duplication.
 - Forward xterm-generated input bytes through the preload bridge.
 - Fit the terminal and request canonical resize.
-- Report human viewport scrolling.
+- Report a viewport at the live bottom semantically as bottom, rather than as
+  an absolute row that can become stale while output is in flight. Report an
+  absolute row only for a historical viewport selected by the human.
 - Apply canonical viewport changes requested by an agent.
+- Follow live output when the viewport is at the bottom while preserving a
+  human-selected historical viewport.
 - Preserve selection, copy, paste, mouse reporting, accessibility, and focus.
 
 The canonical model derives title, bell, cursor, wrapping, and alternate-screen
@@ -39,6 +43,9 @@ exists, but do not forward input or PTY resize operations.
 - Bootstrap and live output produce the same visible state as the canonical
   model.
 - Attach races lose and duplicate no output.
+- Output-driven scrolling does not feed stale absolute viewport positions back
+  into the canonical model, and a live-bottom viewport follows bursty output to
+  its settled bottom.
 - Human input reaches the shared raw input operation.
 - Human and agent scrolling remain synchronized without feedback loops.
 - Exited sessions stay visible and reject input.

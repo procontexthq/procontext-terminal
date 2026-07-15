@@ -139,11 +139,13 @@ describe("TerminalTabStrip", () => {
     expect(scrollIntoView.mock.contexts).toContain(activeItem);
 
     scrollIntoView.mockClear();
-    const relaidOutTabs = tabs();
-    relaidOutTabs[0] = {
-      ...relaidOutTabs[0]!,
-      title: "A much wider terminal title that changes the tab-strip layout",
-    };
+    const relaidOutTabs = [
+      ...tabs(),
+      {
+        ...tabs()[0]!,
+        id: "tab-4",
+      },
+    ];
     act(() => {
       root.render(render(relaidOutTabs));
     });
@@ -152,6 +154,49 @@ describe("TerminalTabStrip", () => {
       block: "nearest",
       inline: "nearest",
     });
+
+    act(() => root.unmount());
+  });
+
+  it("does not undo manual overflow navigation for status-only tab updates", () => {
+    const scrollIntoView = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    );
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value: scrollIntoView,
+    });
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const render = (nextTabs: TerminalTab[]) =>
+      createElement(TerminalTabStrip, {
+        tabs: nextTabs,
+        activeTabId: "tab-3",
+        onSelect: vi.fn(),
+        onClose: vi.fn(),
+        onAdd: vi.fn(),
+      });
+
+    act(() => {
+      root.render(render(tabs()));
+    });
+    scrollIntoView.mockClear();
+    const updatedTabs = tabs();
+    updatedTabs[0] = { ...updatedTabs[0]!, status: "exited" };
+    act(() => {
+      root.render(render(updatedTabs));
+    });
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
 
     act(() => root.unmount());
   });

@@ -166,10 +166,11 @@ export class TerminalModel {
     return this.commitViewportChange(before);
   }
 
-  reportViewport(viewportY: number): boolean {
+  reportViewport(viewportY: number, atBottom: boolean): boolean {
     if (this.terminal.buffer.active.type === "alternate") return false;
     const before = this.viewportY;
-    this.terminal.scrollToLine(viewportY);
+    if (atBottom) this.terminal.scrollToBottom();
+    else this.terminal.scrollToLine(viewportY);
     return this.commitViewportChange(before);
   }
 

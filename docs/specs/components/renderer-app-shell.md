@@ -97,7 +97,9 @@ The first multi-session milestone supports tabs only.
 - Terminal lifecycle is shown in each tab; the titlebar does not repeat the
   active tab lifecycle as a second status badge.
 - Scrollable terminal and session-list surfaces use the same theme-aware,
-  compact scrollbar treatment.
+  compact scrollbar treatment. The terminal treatment targets xterm.js's
+  rendered scrollbar control and keeps its configured geometry aligned with
+  its visible track and thumb.
 - Header popovers keep labels and controls within their bounds at supported
   window widths, including when a theme uses wider display or monospace fonts.
 - Canonical bell events mark inactive tabs unread; activating the tab clears

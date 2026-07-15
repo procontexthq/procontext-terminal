@@ -304,9 +304,12 @@ describe("terminal protocol", () => {
       parseRendererCommand({
         type: "session.reportViewport",
         requestId,
-        payload: { sessionId, viewportY: 12 },
+        payload: { sessionId, viewportY: 12, atBottom: true },
       }),
-    ).toMatchObject({ type: "session.reportViewport" });
+    ).toMatchObject({
+      type: "session.reportViewport",
+      payload: { sessionId, viewportY: 12, atBottom: true },
+    });
     expect(
       createRendererCommand("session.reportViewFocus", { sessionId, focused: true }, requestId),
     ).toMatchObject({ type: "session.reportViewFocus" });
