@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   alternateScreenCommand,
+  inputGateFixtureCommand,
   interruptFixtureCommand,
   nodeEvalCommand,
 } from "./e2e/e2e-commands";
@@ -21,6 +22,15 @@ describe("Electron E2E command fixtures", () => {
     expect(source).toContain('process.on("SIGINT"');
     expect(source).toContain("INTERRUPT_READY");
     expect(source).toContain("INTERRUPT_HANDLED");
+    expect(source).toContain("process.exit(0)");
+  });
+
+  it("waits for explicit input before reporting that it was handled", () => {
+    const source = decodeNodeEvalCommand(inputGateFixtureCommand("INPUT_READY", "INPUT_HANDLED"));
+
+    expect(source).toContain("INPUT_READY");
+    expect(source).toContain('process.stdin.once("data"');
+    expect(source).toContain("INPUT_HANDLED");
     expect(source).toContain("process.exit(0)");
   });
 

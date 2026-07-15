@@ -17,6 +17,7 @@ extraResources:
 
 asar: false
 
+electronDist: node_modules/electron/dist
 npmRebuild: false
 nodeGypRebuild: false
 buildDependenciesFromSource: false
