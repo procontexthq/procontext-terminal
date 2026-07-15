@@ -17,7 +17,7 @@ export function TerminalTabStrip({
   onAdd: () => void;
 }): ReactElement {
   const stripRef = useRef<HTMLDivElement>(null);
-  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const tabItemRefs = useRef(new Map<string, HTMLDivElement>());
   const [overflow, setOverflow] = useState({
     present: false,
     previous: false,
@@ -28,35 +28,53 @@ export function TerminalTabStrip({
     const strip = stripRef.current;
     if (!strip) return;
     const maximum = Math.max(0, strip.scrollWidth - strip.clientWidth);
-    setOverflow({
+    const nextOverflow = {
       present: maximum > 1,
       previous: strip.scrollLeft > 1,
       next: strip.scrollLeft < maximum - 1,
-    });
+    };
+    setOverflow((current) =>
+      current.present === nextOverflow.present &&
+      current.previous === nextOverflow.previous &&
+      current.next === nextOverflow.next
+        ? current
+        : nextOverflow,
+    );
   }, []);
+
+  const alignActiveTab = useCallback(() => {
+    if (!activeTabId) return;
+    tabItemRefs.current.get(activeTabId)?.scrollIntoView?.({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [activeTabId]);
+
+  const refreshLayout = useCallback(() => {
+    alignActiveTab();
+    updateOverflow();
+  }, [alignActiveTab, updateOverflow]);
 
   useEffect(() => {
     const strip = stripRef.current;
     if (!strip) return undefined;
     const observer =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateOverflow);
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(refreshLayout);
     observer?.observe(strip);
-    window.addEventListener("resize", updateOverflow);
-    updateOverflow();
+    for (const tabItem of tabItemRefs.current.values()) {
+      observer?.observe(tabItem);
+    }
+    window.addEventListener("resize", refreshLayout);
+    refreshLayout();
     return () => {
       observer?.disconnect();
-      window.removeEventListener("resize", updateOverflow);
+      window.removeEventListener("resize", refreshLayout);
     };
-  }, [tabs.length, updateOverflow]);
+  }, [refreshLayout, tabs]);
 
   useLayoutEffect(() => {
-    if (!activeTabId) return;
-    tabRefs.current.get(activeTabId)?.scrollIntoView?.({
-      block: "nearest",
-      inline: "nearest",
-    });
-    updateOverflow();
-  }, [activeTabId, tabs.length, updateOverflow]);
+    refreshLayout();
+  }, [refreshLayout, tabs]);
 
   const scroll = useCallback(
     (direction: "previous" | "next") => {
@@ -105,12 +123,15 @@ export function TerminalTabStrip({
         onWheel={handleWheel}
       >
         {tabs.map((tab, index) => (
-          <div className={`tab-item${tab.id === activeTabId ? " is-active" : ""}`} key={tab.id}>
+          <div
+            ref={(element) => {
+              if (element) tabItemRefs.current.set(tab.id, element);
+              else tabItemRefs.current.delete(tab.id);
+            }}
+            className={`tab-item${tab.id === activeTabId ? " is-active" : ""}`}
+            key={tab.id}
+          >
             <button
-              ref={(element) => {
-                if (element) tabRefs.current.set(tab.id, element);
-                else tabRefs.current.delete(tab.id);
-              }}
               type="button"
               role="tab"
               className={`tab-button${tab.id === activeTabId ? " is-active" : ""}`}

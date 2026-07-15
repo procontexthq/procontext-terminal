@@ -87,9 +87,11 @@ The first multi-session milestone supports tabs only.
 - Tab labels prefer canonical session title events and fall back to cwd, shell,
   or a numbered terminal label. Shell-provided titles are not restored after
   app restart.
-- The active tab is kept visible when tab count exceeds the available header
-  width. Compact previous/next overflow controls and the new-tab action remain
-  reachable outside the scrollable tab viewport.
+- The complete active tab item, including its close action, is kept visible when
+  tab count exceeds the available header width. The strip realigns the active
+  item after tab layout changes and observed or window-level resizes, not only
+  when the active tab changes. Compact previous/next overflow controls and the
+  new-tab action remain reachable outside the scrollable tab viewport.
 - The session-list toggle uses a recognizable sidebar icon with an accessible
   label instead of consuming header width with a persistent text label.
 - Terminal lifecycle is shown in each tab; the titlebar does not repeat the
