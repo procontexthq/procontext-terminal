@@ -72,6 +72,15 @@ describe("TerminalModel", () => {
     expect(model.version).toBe(initial + 1);
   });
 
+  it("returns terminal protocol responses generated while parsing output", async () => {
+    const model = new TerminalModel({ cols: 80, rows: 24, scrollback: 5_000 });
+    model.setLifecycle("running");
+
+    const result = await model.write("abc\u001b[6n");
+
+    expect(result.terminalResponses).toEqual(["\u001b[1;4R"]);
+  });
+
   it("serializes a restorable framebuffer", async () => {
     const model = new TerminalModel({ cols: 80, rows: 24, scrollback: 5_000 });
     model.setLifecycle("running");

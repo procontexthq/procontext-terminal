@@ -39,6 +39,7 @@ export class TerminalModel {
   private presentation: TerminalPresentation = headlessPresentation;
   private readonly shellIntegration: ShellIntegrationTracker;
   private shellIntegrationChangedDuringWrite = false;
+  private terminalResponsesDuringWrite: string[] | null = null;
   private recording: TerminalRecordingStatus = { state: "inactive" };
   private observationVersion = 0;
 
@@ -61,6 +62,9 @@ export class TerminalModel {
       this.title = title;
     });
     this.terminal.onBell(() => options.onBell?.());
+    this.terminal.onData((data) => {
+      this.terminalResponsesDuringWrite?.push(data);
+    });
     this.terminal.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
       if (params.includes(25)) this.cursorVisible = true;
       return false;
@@ -119,15 +123,22 @@ export class TerminalModel {
   async write(data: string): Promise<{
     titleChanged: boolean;
     shellIntegrationChanged: boolean;
+    terminalResponses: string[];
   }> {
     const buffer = this.terminal.buffer.active;
     const wasAtBottom = buffer.viewportY === buffer.baseY;
     const previousBaseY = buffer.baseY;
     const previousTitle = this.title;
+    const terminalResponses: string[] = [];
     this.shellIntegrationChangedDuringWrite = false;
-    await new Promise<void>((resolve) => {
-      this.terminal.write(data, resolve);
-    });
+    this.terminalResponsesDuringWrite = terminalResponses;
+    try {
+      await new Promise<void>((resolve) => {
+        this.terminal.write(data, resolve);
+      });
+    } finally {
+      this.terminalResponsesDuringWrite = null;
+    }
     const nextBuffer = this.terminal.buffer.active;
     if (!wasAtBottom && nextBuffer.type === "normal") {
       this.unseenRows += Math.max(0, nextBuffer.baseY - previousBaseY);
@@ -139,6 +150,7 @@ export class TerminalModel {
     return {
       titleChanged: previousTitle !== this.title,
       shellIntegrationChanged: this.shellIntegrationChangedDuringWrite,
+      terminalResponses,
     };
   }
 

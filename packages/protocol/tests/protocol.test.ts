@@ -316,9 +316,47 @@ describe("terminal protocol", () => {
     expect(
       isRendererSessionEvent({
         type: "session.output",
-        payload: { sessionId, sequence: 4, data: "output" },
+        payload: {
+          sessionId,
+          sequence: 4,
+          data: "output\u001b[6n",
+          terminalResponses: [{ data: "\u001b[1;7R", status: "returned" }],
+        },
       }),
     ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "session.output",
+        payload: {
+          sessionId,
+          sequence: 4,
+          data: "output\u001b[6n",
+          terminalResponses: [{ data: "\u001b[1;7R", status: "failed" }],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isRendererSessionEvent({
+        type: "session.output",
+        payload: {
+          sessionId,
+          sequence: 4,
+          data: "output",
+          terminalResponses: [{ data: "\u001b[1;7R", status: "unknown" }],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isRendererSessionEvent({
+        type: "session.output",
+        payload: {
+          sessionId,
+          sequence: 4,
+          data: "output",
+          terminalResponses: [{ data: 42, status: "returned" }],
+        },
+      }),
+    ).toBe(false);
     expect(
       isRendererSessionEvent({
         type: "session.viewport",
