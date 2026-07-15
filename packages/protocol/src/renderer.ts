@@ -123,10 +123,20 @@ export type PermissionResolvedEvent = {
   outcome: PermissionResolutionOutcome;
 };
 
+export type TerminalResponseResult = {
+  data: string;
+  status: "returned" | "failed";
+};
+
 export type RendererSessionEvent =
   | {
       type: "session.output";
-      payload: { sessionId: SessionId; sequence: number; data: string };
+      payload: {
+        sessionId: SessionId;
+        sequence: number;
+        data: string;
+        terminalResponses?: TerminalResponseResult[];
+      };
     }
   | {
       type: "session.viewport";
@@ -460,7 +470,15 @@ export function isRendererSessionEvent(value: unknown): value is RendererSession
       return (
         typeof value.payload.sessionId === "string" &&
         typeof value.payload.sequence === "number" &&
-        typeof value.payload.data === "string"
+        typeof value.payload.data === "string" &&
+        (value.payload.terminalResponses === undefined ||
+          (Array.isArray(value.payload.terminalResponses) &&
+            value.payload.terminalResponses.every(
+              (response) =>
+                isObject(response) &&
+                typeof response.data === "string" &&
+                (response.status === "returned" || response.status === "failed"),
+            )))
       );
     case "session.viewport":
       return (

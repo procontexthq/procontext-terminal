@@ -11,6 +11,7 @@ import {
   type SessionId,
   type TerminalInputResult,
   type TerminalPresentation,
+  type TerminalResponseResult,
   type TerminalSessionSummary,
   type TerminalViewBootstrap,
 } from "@terminal/protocol";
@@ -329,7 +330,9 @@ export class ManagedTerminalSession {
 
   private acceptOutput(data: string): void {
     void this.enqueue(async () => {
-      const { titleChanged, shellIntegrationChanged } = await this.model.write(data);
+      const { titleChanged, shellIntegrationChanged, terminalResponses } =
+        await this.model.write(data);
+      const terminalResponseResults = this.returnTerminalResponses(terminalResponses);
       if (
         shellIntegrationChanged &&
         this.model.currentShellIntegration.status !== "initializing" &&
@@ -349,7 +352,14 @@ export class ManagedTerminalSession {
       });
       this.options.emit({
         type: "session.output",
-        payload: { sessionId: this.options.sessionId, sequence: this.sequence, data },
+        payload: {
+          sessionId: this.options.sessionId,
+          sequence: this.sequence,
+          data,
+          ...(terminalResponseResults.length > 0
+            ? { terminalResponses: terminalResponseResults }
+            : {}),
+        },
       });
       if (titleChanged || shellIntegrationChanged) {
         this.options.emit({ type: "session.updated", payload: this.summary });
@@ -361,6 +371,23 @@ export class ManagedTerminalSession {
         payload: this.wrap(error, "observation_failed", "processTerminalOutput"),
       });
     });
+  }
+
+  private returnTerminalResponses(responses: string[]): TerminalResponseResult[] {
+    const results: TerminalResponseResult[] = [];
+    for (const response of responses) {
+      try {
+        this.options.pty.write(response);
+        results.push({ data: response, status: "returned" });
+      } catch (error: unknown) {
+        results.push({ data: response, status: "failed" });
+        this.options.emit({
+          type: "session.error",
+          payload: this.wrap(error, "session_input_failed", "terminal.response"),
+        });
+      }
+    }
+    return results;
   }
 
   private acceptExit(event: PtyExitEvent): void {

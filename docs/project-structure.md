@@ -279,6 +279,10 @@ Responsibilities:
 - Capture keyboard, paste, selection, focus, resize, and mouse interactions.
 - Bootstrap from canonical serialized terminal state and report human viewport
   movement.
+- Coordinate terminal queries already answered by the canonical emulator so a
+  renderer projection does not echo protocol responses or swallow colliding
+  keyboard input. Preserve per-query returned-or-failed outcome order when a
+  canonical output chunk produces multiple responses.
 
 Must not:
 

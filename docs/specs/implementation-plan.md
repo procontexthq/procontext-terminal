@@ -279,6 +279,10 @@ Status: implemented.
   PTY boundary, remove that transport handshake before terminal models can
   answer it again, and verify both PowerShell startup and exact alternate-buffer
   state.
+- Return subsequent terminal-generated protocol responses from the canonical
+  emulator on every platform, including for headless sessions, and annotate
+  renderer output with ordered per-response outcomes so projections cannot echo
+  successful responses or misassociate partial write failures.
 - Prepare `node-pty` for the target platform during dependency installation.
   Electron Builder must preserve that Node-API-compatible platform artifact
   instead of rebuilding the dependency a second time during packaging.

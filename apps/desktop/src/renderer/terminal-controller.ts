@@ -5,9 +5,15 @@ import type {
   RendererTerminalApi,
   SessionId,
   TerminalLifecycleState,
+  TerminalResponseResult,
   TerminalTheme,
   Unsubscribe,
 } from "@terminal/protocol";
+
+import {
+  createTerminalResponseCoordinator,
+  type TerminalParserLike,
+} from "./terminal-response-coordinator";
 
 export type TerminalLike = {
   buffer: {
@@ -21,6 +27,7 @@ export type TerminalLike = {
     fontSize?: number;
     theme?: Partial<TerminalTheme>;
   };
+  parser?: TerminalParserLike;
   rows?: number;
   open(element: HTMLElement): void;
   write(data: string, callback?: () => void): void;
@@ -74,6 +81,8 @@ export async function createTerminalSession(
   const terminal = options.createTerminal();
   const fitAddon = options.createFitAddon();
   const subscriptions: Array<{ dispose(): void }> = [];
+  const responseCoordinator = createTerminalResponseCoordinator(terminal.parser);
+  subscriptions.push(responseCoordinator);
   let eventSubscription: Unsubscribe | null = null;
   let sessionId: SessionId | null = null;
   let lifecycle: TerminalLifecycleState = "creating";
@@ -84,6 +93,13 @@ export async function createTerminalSession(
   let bufferedEvents: RendererSessionEvent[] = [];
   let suppressViewportReport = false;
 
+  const writeProjectionOutput = (
+    data: string,
+    terminalResponses: TerminalResponseResult[] = [],
+  ): void => {
+    terminal.write(data, responseCoordinator.beginOutput(terminalResponses));
+  };
+
   const processEvent = (event: RendererSessionEvent): void => {
     if (!sessionId || !eventMatchesSession(event, sessionId)) return;
     options.onSessionEvent?.(event);
@@ -91,7 +107,7 @@ export async function createTerminalSession(
       case "session.output":
         if (event.payload.sequence <= lastOutputSequence) return;
         lastOutputSequence = event.payload.sequence;
-        terminal.write(event.payload.data);
+        writeProjectionOutput(event.payload.data, event.payload.terminalResponses);
         break;
       case "session.viewport":
         suppressViewportReport = true;
@@ -157,6 +173,7 @@ export async function createTerminalSession(
 
     subscriptions.push(
       terminal.onData((input) => {
+        if (responseCoordinator.consumeInput(input)) return;
         if (lifecycle !== "running" || !sessionId) return;
         void options.api.input({ sessionId, input }).catch(options.onError);
       }),
