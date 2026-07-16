@@ -74,9 +74,12 @@ pnpm package:verify
 pnpm test:package
 ```
 
-`package:current` builds the unpacked packaged app for the current OS. Platform
-release artifacts are built on matching CI runners through `package:mac`,
-`package:linux`, and `package:win`.
+`package:current` builds the unpacked packaged app for the current OS. The
+`package:mac`, `package:linux`, and `package:win` scripts build unsigned local
+artifacts. Credentialed production jobs use the corresponding `package:release`
+scripts; tag requirements, signing and notarization secrets, installer checks,
+and provenance verification are documented in
+[`docs/development/releasing.md`](docs/development/releasing.md).
 
 Development logs are mirrored to stderr and app diagnostics persist as JSONL in
 `main.log` under the platform Electron logs directory. Terminal PTY output and

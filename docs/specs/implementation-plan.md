@@ -271,6 +271,9 @@ Status: implemented.
 
 ### Release hardening
 
+Status: implementation complete; credentialed verification requires the first
+tagged release.
+
 - Expand PTY, shell-integration, TUI, reconnect, renderer-loss, and shutdown
   coverage across macOS, Linux, Windows, ConPTY, and supported shells.
 - Require PowerShell Core in the macOS, Linux, and Windows pull-request matrix so
@@ -298,6 +301,17 @@ Status: implemented.
   distributable installers.
 - Verify packaged native PTY behavior, installers, artifact generation,
   signing or notarization inputs, and release provenance.
+- Keep local and pull-request packaging explicitly unsigned. Tagged and manual
+  release runs must target the package version tag and fail before packaging
+  when platform signing, macOS notarization, or provenance inputs are missing.
+- Validate the generated DMG, NSIS, AppImage, and deb artifacts with native
+  platform tools before upload. Verify installed or extracted application
+  layout and native PTY content, launch each mounted, installed, or extracted
+  application, then verify GitHub's generated provenance attestation for every
+  uploaded installer.
+- On Windows, require valid Authenticode signatures on both the NSIS wrapper and
+  the installed application executable; report only the artifact role and
+  signature status when validation fails.
 
 ### Explicitly out of scope
 

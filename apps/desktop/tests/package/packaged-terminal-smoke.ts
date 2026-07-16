@@ -111,6 +111,76 @@ describe("packaged desktop terminal smoke", () => {
       throw new Error("Packaged app diagnostics must not write the agent token to stdio.");
     }
   });
+
+  it("closes a packaged renderer only after its active PTY is shut down", async () => {
+    const executable = await resolvePackagedExecutable();
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchPackagedApp(executable, userDataDir);
+    const page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    await writeHumanTerminalCommand(page, platformPrintCommand("PHASE5_PACKAGE_SHUTDOWN"));
+    await waitForVisibleOutput(page, "PHASE5_PACKAGE_SHUTDOWN");
+
+    const closed = page.waitForEvent("close", { timeout: 10000 });
+    await page
+      .evaluate(() => window.close())
+      .catch((error: unknown) => {
+        if (!page.isClosed()) throw error;
+      });
+    await closed;
+
+    if (appOutput.includes("shutdown_failed") || appOutput.includes("shutdown_kill_timeout")) {
+      throw new Error(`Packaged renderer shutdown reported a failure.\n${appOutput}`);
+    }
+  });
+
+  it("keeps the shared PTY agent-operable after the packaged renderer crashes", async () => {
+    const executable = await resolvePackagedExecutable();
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchPackagedApp(executable, userDataDir);
+    const page = await firstPage(browser);
+    await page.waitForSelector("[data-testid='terminal-ready']");
+    const sessionId = await activeSessionId(page);
+    const descriptor = await waitForAgentDescriptor(userDataDir);
+    const agent = await E2EAgentClient.connect(descriptor.url);
+    try {
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("agent.authenticate", {
+            token: descriptor.token,
+            protocolVersion: TERMINAL_PROTOCOL_VERSION,
+          }),
+        ),
+      );
+      await expectAgentOk(agent.request(createAgentCommand("terminal.attach", { sessionId })));
+
+      const cdpSession = await page.context().newCDPSession(page);
+      const crashed = page.waitForEvent("crash", { timeout: 10000 });
+      const crashCommand = cdpSession.send("Page.crash").catch(() => undefined);
+      await crashed;
+      await settleWithin(crashCommand, 1000);
+
+      const summary = (await expectAgentOk(
+        agent.request(createAgentCommand("terminal.get", { sessionId })),
+      )) as TerminalSessionSummary;
+      if (summary.presentation.state !== "headless") {
+        throw new Error(
+          `Expected renderer loss to preserve a headless PTY, got ${summary.presentation.state}.`,
+        );
+      }
+      await expectAgentOk(
+        agent.request(
+          createAgentCommand("terminal.input", {
+            sessionId,
+            input: `${platformPrintCommand("PHASE5_PACKAGE_CRASH_RECOVERY")}\r`,
+          }),
+        ),
+      );
+      await waitForAgentObservation(agent, sessionId, "PHASE5_PACKAGE_CRASH_RECOVERY");
+    } finally {
+      agent.close();
+    }
+  });
 });
 
 async function resolvePackagedExecutable(): Promise<string> {

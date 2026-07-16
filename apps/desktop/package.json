@@ -25,6 +25,9 @@
     "package:mac": "pnpm package:clean && pnpm build && electron-builder --mac dmg --publish never",
     "package:linux": "pnpm package:clean && pnpm build && electron-builder --linux AppImage deb --publish never",
     "package:win": "pnpm package:clean && pnpm build && electron-builder --win nsis --publish never",
+    "package:release:mac": "pnpm package:clean && pnpm build && electron-builder --config electron-builder.release.yml --mac dmg --publish never",
+    "package:release:linux": "pnpm package:clean && pnpm build && electron-builder --config electron-builder.release.yml --linux AppImage deb --publish never",
+    "package:release:win": "pnpm package:clean && pnpm build && electron-builder --config electron-builder.release.yml --win nsis --publish never",
     "package:verify": "node scripts/verify-packaged-app.mjs"
   },
   "dependencies": {
