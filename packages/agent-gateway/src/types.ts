@@ -14,6 +14,7 @@ import type {
   ObserveCapturedOperationResult,
   ObserveTerminalRequest,
   ObserveTerminalResult,
+  OperationId,
   PermissionResolutionOutcome,
   PolicyDenialNotice,
   PolicyPrompt,
@@ -80,6 +81,7 @@ export type AgentGateway = {
   revokeSessionControl(sessionId: SessionId): AgentSessionControlState;
   allowSessionControl(sessionId: SessionId): AgentSessionControlState;
   removeSessionControl(sessionId: SessionId): void;
+  removeOperationControl(operationId: OperationId): void;
   stop(): Promise<void>;
 };
 

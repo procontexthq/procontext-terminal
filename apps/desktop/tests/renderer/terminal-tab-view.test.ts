@@ -168,11 +168,13 @@ describe("TerminalTabView", () => {
           cursorBlink?: boolean;
           minimumContrastRatio?: number;
           overviewRuler?: { width?: number };
+          scrollback?: number;
           screenReaderMode?: boolean;
           theme?: { overviewRulerBorder?: string };
         }
       | undefined;
     expect(terminalOptions?.overviewRuler).toEqual({ width: 8 });
+    expect(terminalOptions?.scrollback).toBe(props.config.terminal.scrollback);
     expect(terminalOptions?.theme?.overviewRulerBorder).toBe(props.terminalTheme.background);
     expect(terminalOptions).toMatchObject({
       cursorBlink: true,

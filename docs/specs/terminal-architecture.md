@@ -233,7 +233,8 @@ is unchanged; keys intended for the application remain terminal input.
 - Full transcripts persist only when recording is explicitly enabled.
 - Session, operation, tab, and PTY runtime state is not restored after app
   restart. Phase 5 may restore validated window geometry only.
-- Default PTY scrollback is 5,000 rows.
+- Default PTY scrollback is 5,000 rows. A validated configured value applies
+  equally to the canonical model and renderer projection for a session.
 - Captured operation streams default to 1 MiB each and may request up to
   16 MiB each.
 - Temporary PTY result journals retain a fixed 1 MiB combined output tail.

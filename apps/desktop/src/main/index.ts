@@ -68,6 +68,7 @@ let recorder: FileTerminalRecorder | null = null;
 let terminalConfig: TerminalConfig = defaultTerminalConfig();
 const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
   defaultCwd: defaultTerminalCwd,
+  getScrollback: () => terminalConfig.terminal.scrollback,
   startRecordingByDefault: () => terminalConfig.recording.state === "enabled",
   recorder: {
     record: (event) => recorder?.record(event),
@@ -99,6 +100,7 @@ const operationManager = new TerminalOperationManager(
         cause: error instanceof Error ? error.message : String(error),
       });
     },
+    onOperationRemoved: (operationId) => agentGateway?.removeOperationControl(operationId),
   },
 );
 const presentationRegistry = createTerminalPresentationRegistry();
@@ -192,6 +194,7 @@ async function createMainWindow(options: { show?: boolean } = {}): Promise<Brows
     logger,
     getIsAppQuitting: () => quitAfterShutdown,
     shutdownTimeoutMs: 1500,
+    sessionLifecycle: "preserve",
   });
   if (isPrimaryWindow) {
     const geometryPersistence = attachWindowGeometryPersistence({

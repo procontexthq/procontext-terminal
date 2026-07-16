@@ -143,6 +143,28 @@ describe("TerminalSessionManager", () => {
     });
   });
 
+  it("resolves configured canonical scrollback when a session is created", async () => {
+    const host = new FakePtyHost();
+    const getScrollback = vi.fn(() => 100);
+    const manager = new TerminalSessionManager(host, { getScrollback });
+    const summary = await manager.createSession({ ...request, rows: 2 });
+
+    host.pty.emitData(
+      Array.from({ length: 110 }, (_, index) => `line-${String(index)}`).join("\r\n"),
+    );
+    const result = await manager.observe({
+      sessionId: summary.sessionId,
+      afterVersion: summary.observationVersion,
+      timeoutMs: 100,
+    });
+
+    expect(getScrollback).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      status: "changed",
+      observation: { viewport: { scrollbackRows: 100 } },
+    });
+  });
+
   it("returns canonical terminal protocol responses to the PTY", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);

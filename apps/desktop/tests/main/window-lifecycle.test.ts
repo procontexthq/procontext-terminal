@@ -65,6 +65,30 @@ const runningSession: TerminalSessionSummary = {
 };
 
 describe("window lifecycle", () => {
+  it("preserves sessions when the window close policy preserves PTY lifecycle", async () => {
+    const window = new FakeWindow();
+    const shutdown = vi.fn(() => Promise.resolve({ terminated: 1, timedOut: 0 }));
+    const options = {
+      window,
+      sessionManager: {
+        listSessions: () => [runningSession],
+        shutdown,
+      },
+      logger: fakeLogger(),
+      getIsAppQuitting: () => false,
+      shutdownTimeoutMs: 1500,
+      sessionLifecycle: "preserve" as const,
+    };
+
+    attachWindowCloseSessionCleanup(options);
+    const closeResult = window.emitClose();
+    await waitForMicrotasks();
+
+    expect(closeResult.prevented).toBe(false);
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(window.destroy).not.toHaveBeenCalled();
+  });
+
   it("keeps a closing window open until main-process session cleanup completes", async () => {
     const window = new FakeWindow();
     const shutdown = vi.fn(() => Promise.resolve({ terminated: 1, timedOut: 0 }));
@@ -78,6 +102,7 @@ describe("window lifecycle", () => {
       logger: fakeLogger(),
       getIsAppQuitting: () => false,
       shutdownTimeoutMs: 1500,
+      sessionLifecycle: "terminate",
     });
 
     const closeResult = window.emitClose();
@@ -104,6 +129,7 @@ describe("window lifecycle", () => {
       logger: fakeLogger(),
       getIsAppQuitting: () => true,
       shutdownTimeoutMs: 1500,
+      sessionLifecycle: "terminate",
     });
 
     const closeResult = window.emitClose();
@@ -127,6 +153,7 @@ describe("window lifecycle", () => {
       logger,
       getIsAppQuitting: () => false,
       shutdownTimeoutMs: 1500,
+      sessionLifecycle: "terminate",
     });
 
     const closeResult = window.emitClose();
@@ -156,6 +183,7 @@ describe("window lifecycle", () => {
       logger: fakeLogger(),
       getIsAppQuitting: () => false,
       shutdownTimeoutMs: 1500,
+      sessionLifecycle: "terminate",
     });
 
     expect(window.emitClose().prevented).toBe(true);
@@ -176,6 +204,7 @@ describe("window lifecycle", () => {
       logger: fakeLogger(),
       getIsAppQuitting: () => false,
       shutdownTimeoutMs: 1500,
+      sessionLifecycle: "terminate",
     });
 
     const closeResult = window.emitClose();

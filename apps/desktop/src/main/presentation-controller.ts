@@ -75,96 +75,99 @@ export function createTerminalPresentationController({
   const readyRenderers = new Set<number>();
   const readyWaiters = new Map<number, Set<ReadyWaiter>>();
   const pendingCommands = new Map<RequestId, PendingCommand>();
+  const presentationTransitions = new Map<SessionId, Promise<void>>();
   let pendingWindowCreation: Promise<PresentationWindow> | null = null;
 
   return {
-    async setPresentation(request) {
-      const session = sessions.getSession({ sessionId: request.sessionId });
-      const ownerId = registry.rendererIdFor(request.sessionId);
-      if (
-        request.presentation === "headless" &&
-        session.presentation.state === "headless" &&
-        ownerId === undefined
-      ) {
-        return session.presentation;
-      }
-      if (
-        request.presentation === "background" &&
-        session.presentation.state === request.presentation &&
-        ownerId !== undefined
-      ) {
-        return session.presentation;
-      }
+    setPresentation(request) {
+      return serializePresentationTransition(request.sessionId, async () => {
+        const session = sessions.getSession({ sessionId: request.sessionId });
+        const ownerId = registry.rendererIdFor(request.sessionId);
+        if (
+          request.presentation === "headless" &&
+          session.presentation.state === "headless" &&
+          ownerId === undefined
+        ) {
+          return session.presentation;
+        }
+        if (
+          request.presentation === "background" &&
+          session.presentation.state === request.presentation &&
+          ownerId !== undefined
+        ) {
+          return session.presentation;
+        }
 
-      await sessions.setPresentation(request.sessionId, {
-        state: "opening",
-        windowVisible:
-          ownerId === undefined ? false : (windowForRenderer(ownerId)?.isVisible() ?? false),
-        windowFocused:
-          ownerId === undefined ? false : (windowForRenderer(ownerId)?.isFocused() ?? false),
-      });
+        await sessions.setPresentation(request.sessionId, {
+          state: "opening",
+          windowVisible:
+            ownerId === undefined ? false : (windowForRenderer(ownerId)?.isVisible() ?? false),
+          windowFocused:
+            ownerId === undefined ? false : (windowForRenderer(ownerId)?.isFocused() ?? false),
+        });
 
-      try {
-        if (request.presentation === "headless") {
-          if (ownerId !== undefined) {
-            const ownerWindow = requireWindowForRenderer(ownerId, request.sessionId);
-            await requestRenderer(ownerWindow, request.sessionId, "hide");
+        try {
+          if (request.presentation === "headless") {
+            if (ownerId !== undefined) {
+              const ownerWindow = requireWindowForRenderer(ownerId, request.sessionId);
+              await requestRenderer(ownerWindow, request.sessionId, "hide");
+            }
+            const presentation = headlessPresentation();
+            await sessions.setPresentation(request.sessionId, presentation);
+            return presentation;
           }
-          const presentation = headlessPresentation();
+
+          let window =
+            ownerId === undefined
+              ? await ensureRendererWindow(request.sessionId, request.presentation)
+              : requireWindowForRenderer(ownerId, request.sessionId);
+          await waitForRenderer(window.webContents.id, request.sessionId);
+
+          if (ownerId === undefined) {
+            await requestRenderer(window, request.sessionId, "open");
+            const openedRendererId = registry.rendererIdFor(request.sessionId);
+            if (openedRendererId === undefined) {
+              throw presentationError(
+                request.sessionId,
+                "Renderer acknowledged opening without registering a terminal view.",
+              );
+            }
+            window = requireWindowForRenderer(openedRendererId, request.sessionId);
+          } else if (request.presentation === "background") {
+            await requestRenderer(window, request.sessionId, "open");
+          }
+
+          if (request.presentation === "foreground") {
+            if (window.isMinimized()) window.restore();
+            window.show();
+            window.focus();
+            await requestRenderer(window, request.sessionId, "focus");
+          }
+
+          const presentation: TerminalPresentation = {
+            state: request.presentation,
+            windowVisible: window.isVisible(),
+            windowFocused: window.isFocused(),
+          };
           await sessions.setPresentation(request.sessionId, presentation);
           return presentation;
+        } catch (error: unknown) {
+          const window = registry.rendererIdFor(request.sessionId);
+          const owningWindow = window === undefined ? undefined : windowForRenderer(window);
+          const unavailable: TerminalPresentation = {
+            state: "unavailable",
+            windowVisible: owningWindow?.isVisible() ?? false,
+            windowFocused: owningWindow?.isFocused() ?? false,
+          };
+          await sessions.setPresentation(request.sessionId, unavailable);
+          logger.warn("presentation", "transition_unavailable", {
+            sessionId: request.sessionId,
+            requestedPresentation: request.presentation,
+            cause: errorMessage(error),
+          });
+          return unavailable;
         }
-
-        let window =
-          ownerId === undefined
-            ? await ensureRendererWindow(request.sessionId, request.presentation)
-            : requireWindowForRenderer(ownerId, request.sessionId);
-        await waitForRenderer(window.webContents.id, request.sessionId);
-
-        if (ownerId === undefined) {
-          await requestRenderer(window, request.sessionId, "open");
-          const openedRendererId = registry.rendererIdFor(request.sessionId);
-          if (openedRendererId === undefined) {
-            throw presentationError(
-              request.sessionId,
-              "Renderer acknowledged opening without registering a terminal view.",
-            );
-          }
-          window = requireWindowForRenderer(openedRendererId, request.sessionId);
-        } else if (request.presentation === "background") {
-          await requestRenderer(window, request.sessionId, "open");
-        }
-
-        if (request.presentation === "foreground") {
-          if (window.isMinimized()) window.restore();
-          window.show();
-          window.focus();
-          await requestRenderer(window, request.sessionId, "focus");
-        }
-
-        const presentation: TerminalPresentation = {
-          state: request.presentation,
-          windowVisible: window.isVisible(),
-          windowFocused: window.isFocused(),
-        };
-        await sessions.setPresentation(request.sessionId, presentation);
-        return presentation;
-      } catch (error: unknown) {
-        const window = registry.rendererIdFor(request.sessionId);
-        const owningWindow = window === undefined ? undefined : windowForRenderer(window);
-        const unavailable: TerminalPresentation = {
-          state: "unavailable",
-          windowVisible: owningWindow?.isVisible() ?? false,
-          windowFocused: owningWindow?.isFocused() ?? false,
-        };
-        await sessions.setPresentation(request.sessionId, unavailable);
-        logger.warn("presentation", "transition_unavailable", {
-          sessionId: request.sessionId,
-          requestedPresentation: request.presentation,
-          cause: errorMessage(error),
-        });
-        return unavailable;
-      }
+      });
     },
 
     async closeView(sessionId) {
@@ -234,6 +237,25 @@ export function createTerminalPresentationController({
       }
     },
   };
+
+  function serializePresentationTransition<T>(
+    sessionId: SessionId,
+    transition: () => Promise<T>,
+  ): Promise<T> {
+    const previous = presentationTransitions.get(sessionId);
+    const result = previous ? previous.then(transition) : transition();
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    presentationTransitions.set(sessionId, settled);
+    void settled.then(() => {
+      if (presentationTransitions.get(sessionId) === settled) {
+        presentationTransitions.delete(sessionId);
+      }
+    });
+    return result;
+  }
 
   async function ensureRendererWindow(
     sessionId: SessionId,

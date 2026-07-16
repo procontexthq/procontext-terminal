@@ -64,6 +64,9 @@ The main process must not:
   renderer-dependent display and observation.
 - Remove renderer ownership when a renderer is destroyed and return preserved
   sessions to headless presentation without changing PTY lifecycle.
+- Keep per-window cleanup separate from full app shutdown. Windows and Linux
+  request app quit after the last window closes; macOS preserves the headless
+  runtime until the user explicitly quits.
 
 ## Collaborators
 

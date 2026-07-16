@@ -15,6 +15,7 @@ import {
   parseAgentCommandResult,
   type AgentCommandResult,
   type AgentGatewayDescriptor,
+  type RunTerminalResult,
   type TerminalSessionSummary,
 } from "@terminal/protocol";
 
@@ -180,6 +181,34 @@ describe("agent gateway", () => {
     await expect(
       first.request(createAgentCommand("terminal.close", { operationId })),
     ).resolves.toMatchObject({ ok: true, value: { status: "closed" } });
+    await waitForAttach(second, sessionId);
+    first.close();
+    second.close();
+  });
+
+  it("releases temporary-session attachment when its operation expires", async () => {
+    const services = createServices();
+    const sessionId = createSessionId("expired-temporary-pty");
+    const operationId = createOperationId("expired-temporary-operation");
+    services.run.mockResolvedValueOnce({
+      status: "running",
+      operationId,
+      sessionId,
+      tty: true,
+      observationVersion: 1,
+      elapsedMs: 10,
+    });
+    const runtime = await createRuntime(services);
+    const first = await authenticatedClient(runtime.gateway.descriptor);
+    const second = await authenticatedClient(runtime.gateway.descriptor);
+
+    await first.request(createAgentCommand("terminal.run", { input: "vim", tty: true }));
+    await expect(
+      second.request(createAgentCommand("terminal.attach", { sessionId })),
+    ).resolves.toMatchObject({ ok: false, error: { type: "session_in_use" } });
+
+    runtime.gateway.removeOperationControl(operationId);
+
     await waitForAttach(second, sessionId);
     first.close();
     second.close();
@@ -425,6 +454,70 @@ describe("agent gateway", () => {
       state: "revoked",
       attachedAt: null,
     });
+    client.close();
+  });
+
+  it("does not automatically attach a created session after human revocation", async () => {
+    const services = createServices();
+    const pendingCreate = deferred<TerminalSessionSummary>();
+    services.create.mockImplementation(() => pendingCreate.promise);
+    const runtime = await createRuntime(services);
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+    const sessionId = createSessionId("revoked-pending-create");
+
+    const createResult = client.request(createAgentCommand("terminal.create", {}));
+    await waitFor(() => services.create.mock.calls.length === 1);
+    runtime.gateway.revokeSessionControl(sessionId);
+    pendingCreate.resolve(sessionSummary(sessionId));
+
+    await expect(createResult).resolves.toMatchObject({
+      ok: false,
+      error: {
+        type: "policy_denied",
+        cause: "agent_control_revoked",
+        sessionId,
+      },
+    });
+    expect(runtime.gateway.listSessionControls()).toEqual([
+      { sessionId, state: "revoked", attachedAt: null },
+    ]);
+    client.close();
+  });
+
+  it("does not automatically attach a running temporary PTY after human revocation", async () => {
+    const services = createServices();
+    const sessionId = createSessionId("revoked-pending-run");
+    const operationId = createOperationId("revoked-pending-operation");
+    const pendingRun = deferred<RunTerminalResult>();
+    services.run.mockImplementation(() => pendingRun.promise);
+    const runtime = await createRuntime(services);
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+
+    const runResult = client.request(
+      createAgentCommand("terminal.run", { input: "vim", tty: true }),
+    );
+    await waitFor(() => services.run.mock.calls.length === 1);
+    runtime.gateway.revokeSessionControl(sessionId);
+    pendingRun.resolve({
+      status: "running",
+      operationId,
+      sessionId,
+      tty: true,
+      observationVersion: 1,
+      elapsedMs: 10,
+    });
+
+    await expect(runResult).resolves.toMatchObject({
+      ok: false,
+      error: {
+        type: "policy_denied",
+        cause: "agent_control_revoked",
+        sessionId,
+      },
+    });
+    expect(runtime.gateway.listSessionControls()).toEqual([
+      { sessionId, state: "revoked", attachedAt: null },
+    ]);
     client.close();
   });
 

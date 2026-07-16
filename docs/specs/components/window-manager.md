@@ -20,8 +20,11 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Create background presentation windows without stealing focus.
 - Restore, show, and focus the owning window for foreground presentation.
 - Wait for renderer readiness before sending correlated presentation commands.
-- Coordinate close behavior with the terminal session manager and settings store.
-- Surface user prompts for close, preserve, or terminate decisions when policy requires it.
+- Serialize presentation transitions for each session in request order while
+  allowing different sessions to transition independently.
+- Preserve terminal sessions when native windows close and coordinate explicit
+  termination with the terminal session manager.
+- Surface confirmation before an explicit human action terminates a live session.
 
 ## Boundaries
 
@@ -86,11 +89,17 @@ fullscreen, and window-manager behavior.
 
 Window close handling must preserve the distinction between closing a view and ending a session.
 
-- Closing the last visible window can terminate sessions, preserve sessions, or prompt according to settings.
+- Native window close preserves sessions. Renderer destruction removes its
+  views and returns those running sessions to headless presentation.
 - Closing a secondary window removes its renderer views without changing PTY
   lifecycle unless the user explicitly terminates those sessions.
 - A preserved session becomes headless presentation state while remaining
   `running`.
+- On Windows and Linux, closing the last window then follows the platform app
+  policy and requests a full app quit. On macOS, the app, gateway, operations,
+  and sessions remain active so a new window can reveal preserved sessions.
+- Full app quit owns bounded operation and PTY termination on every platform;
+  per-window cleanup must not partially shut down those services.
 - Forced app quit must still give the session manager a bounded chance to terminate or record final state.
 
 ## Testing Expectations

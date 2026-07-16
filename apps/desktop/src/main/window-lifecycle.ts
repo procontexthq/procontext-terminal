@@ -21,6 +21,7 @@ export type AttachWindowCloseSessionCleanupOptions = {
   logger: Pick<AppLogger, "info" | "warn" | "error">;
   getIsAppQuitting: () => boolean;
   shutdownTimeoutMs: number;
+  sessionLifecycle: "preserve" | "terminate";
 };
 
 export function attachWindowCloseSessionCleanup({
@@ -29,7 +30,10 @@ export function attachWindowCloseSessionCleanup({
   logger,
   getIsAppQuitting,
   shutdownTimeoutMs,
+  sessionLifecycle,
 }: AttachWindowCloseSessionCleanupOptions): void {
+  if (sessionLifecycle === "preserve") return;
+
   let cleanupInProgress = false;
   let cleanupComplete = false;
 

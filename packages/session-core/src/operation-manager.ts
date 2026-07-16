@@ -31,6 +31,7 @@ export type TerminalOperationManagerOptions = {
   createOperationId?: () => OperationId;
   now?: () => number;
   onBackgroundError: (error: unknown) => void;
+  onOperationRemoved?: (operationId: OperationId) => void;
 };
 
 export type TerminalOperationShutdownResult = {
@@ -62,6 +63,7 @@ export class TerminalOperationManager {
       createOperationId: options.createOperationId ?? createOperationId,
       now: this.now,
       onBackgroundError: options.onBackgroundError,
+      onOperationRemoved: (operationId) => this.notifyOperationRemoved(operationId),
     });
   }
 
@@ -192,7 +194,15 @@ export class TerminalOperationManager {
     if (timer) clearTimeout(timer);
     this.expiryTimers.delete(operationId);
     this.capturedOperations.get(operationId)?.dispose();
-    this.capturedOperations.delete(operationId);
+    if (this.capturedOperations.delete(operationId)) this.notifyOperationRemoved(operationId);
+  }
+
+  private notifyOperationRemoved(operationId: OperationId): void {
+    try {
+      this.options.onOperationRemoved?.(operationId);
+    } catch (error: unknown) {
+      this.options.onBackgroundError(error);
+    }
   }
 
   private notFound(operationId: OperationId) {

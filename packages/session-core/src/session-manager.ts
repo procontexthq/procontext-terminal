@@ -46,6 +46,7 @@ export type TerminalSessionManagerOptions = {
   recorder?: TerminalRecorder;
   startRecordingByDefault?: () => boolean;
   scrollback?: number;
+  getScrollback?: () => number;
   closeTimeoutMs?: number;
   shellIntegrationInitializationTimeoutMs?: number;
 };
@@ -244,6 +245,7 @@ export class TerminalSessionManager {
       cleanupShellIntegration?: () => void;
     },
   ): Promise<TerminalSessionSummary> {
+    const scrollback = this.options.getScrollback?.() ?? this.options.scrollback ?? 5_000;
     const pty = await this.ptyHost.spawn({
       sessionId,
       shell,
@@ -256,7 +258,7 @@ export class TerminalSessionManager {
       cwd: shell.cwd,
       cols: options.cols,
       rows: options.rows,
-      scrollback: this.options.scrollback ?? 5_000,
+      scrollback,
       createdBy: options.createdBy,
       pty,
       recorder: this.options.recorder,

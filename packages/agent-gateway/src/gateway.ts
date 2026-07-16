@@ -151,6 +151,9 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       revokedSessionIds.delete(sessionId);
       releaseSession(sessionId);
     },
+    removeOperationControl(operationId) {
+      releaseOperation(operationId);
+    },
     async stop() {
       if (stopped) return;
       stopped = true;
@@ -217,7 +220,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     }
 
     if (command.type === "terminal.attach" && revokedSessionIds.has(command.payload.sessionId)) {
-      denyRevokedAttachment(command, connection);
+      denyRevokedAttachment(command, connection, command.payload.sessionId);
       return;
     }
 
@@ -234,7 +237,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
             command.type === "terminal.attach" &&
             (activeRequest.controlRevoked || revokedSessionIds.has(command.payload.sessionId))
           ) {
-            denyRevokedAttachment(command, connection);
+            denyRevokedAttachment(command, connection, command.payload.sessionId);
             return;
           }
           denyCommand(command, connection, decision.decisionId, permissionDenialCode(outcome));
@@ -251,13 +254,17 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
         releaseSessionOperations,
       });
       if (command.type === "terminal.attach" && activeRequest.controlRevoked) {
-        denyRevokedAttachment(command, connection);
+        denyRevokedAttachment(command, connection, command.payload.sessionId);
         return;
       }
       audit(connection, command, "allow");
       sendResult(connection, createAgentCommandSuccess(command.requestId, value));
     } catch (error: unknown) {
       const normalized = normalizeCommandError(error, command);
+      if (isAgentControlRevokedError(normalized)) {
+        denyRevokedAttachment(command, connection, normalized.sessionId);
+        return;
+      }
       audit(connection, command, "failure", normalized);
       sendResult(connection, createAgentCommandFailure(command.requestId, normalized));
     } finally {
@@ -311,6 +318,17 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
   }
 
   function attachOrThrow(sessionId: SessionId, connection: ConnectionContext): void {
+    if (revokedSessionIds.has(sessionId)) {
+      throw createTerminalError(
+        "policy_denied",
+        "Agent control has been revoked for this terminal session.",
+        {
+          sessionId,
+          operation: "terminal.attach",
+          cause: "agent_control_revoked",
+        },
+      );
+    }
     const attachedAt = now().toISOString();
     if (!attachments.attach(sessionId, connection.id, attachedAt)) {
       throw createTerminalError(
@@ -414,14 +432,15 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
   }
 
   function denyRevokedAttachment(
-    command: Extract<AgentCommand, { type: "terminal.attach" }>,
+    command: AgentCommand,
     connection: ConnectionContext,
+    sessionId: SessionId,
   ): void {
     const decisionId = createDecisionId();
     const message = "Agent control has been revoked for this terminal session.";
     const error = createTerminalError("policy_denied", message, {
       operation: command.type,
-      sessionId: command.payload.sessionId,
+      sessionId,
       cause: "agent_control_revoked",
     });
     options.onPolicyDenied?.({
@@ -429,12 +448,22 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       at: now().toISOString(),
       actor: "agent",
       operation: command.type,
-      sessionId: command.payload.sessionId,
+      sessionId,
       code: "agent_control_revoked",
       message,
     });
     audit(connection, command, "deny", error, "agent_control_revoked");
     sendResult(connection, createAgentCommandFailure(command.requestId, error));
+  }
+
+  function isAgentControlRevokedError(
+    error: TerminalError,
+  ): error is TerminalError & { sessionId: SessionId } {
+    return (
+      error.type === "policy_denied" &&
+      error.cause === "agent_control_revoked" &&
+      error.sessionId !== undefined
+    );
   }
 
   function denyCommand(
