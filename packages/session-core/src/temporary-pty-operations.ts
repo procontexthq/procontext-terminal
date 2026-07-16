@@ -34,6 +34,7 @@ export class TemporaryPtyOperations {
       createOperationId: () => OperationId;
       now: () => number;
       onBackgroundError: (error: unknown) => void;
+      onOperationRemoved: (operationId: OperationId) => void;
     },
   ) {
     this.unsubscribeSessionEvents = sessions.onSessionEvent((event) => {
@@ -187,8 +188,9 @@ export class TemporaryPtyOperations {
 
   private remove(operation: TemporaryPtyOperation): void {
     this.cancelExpiry(operation.operationId);
-    this.operations.delete(operation.operationId);
+    const removed = this.operations.delete(operation.operationId);
     this.operationIdsBySession.delete(operation.sessionId);
+    if (removed) this.options.onOperationRemoved(operation.operationId);
   }
 
   private cancelExpiry(operationId: OperationId): void {
@@ -209,7 +211,11 @@ function validateTemporaryRun(request: RunTerminalRequest): void {
 }
 
 function isPresented(session: TerminalSessionSummary): boolean {
-  return session.presentation.state !== "headless";
+  return (
+    session.presentation.state === "opening" ||
+    session.presentation.state === "background" ||
+    session.presentation.state === "foreground"
+  );
 }
 
 function isSessionNotFound(error: unknown): boolean {

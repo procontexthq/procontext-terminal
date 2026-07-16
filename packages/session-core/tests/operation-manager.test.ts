@@ -274,7 +274,12 @@ describe("TerminalOperationManager captured runs", () => {
     try {
       const ptyHost = new FakePtyHost();
       const sessions = new TerminalSessionManager(ptyHost);
-      const manager = createManager(new FakeCapturedProcessHost(), { retentionMs: 50 }, sessions);
+      const onOperationRemoved = vi.fn();
+      const manager = createManager(
+        new FakeCapturedProcessHost(),
+        { retentionMs: 50, onOperationRemoved },
+        sessions,
+      );
       const runningPromise = manager.run(runRequest({ input: "watch", tty: true, timeoutMs: 1 }));
       await vi.advanceTimersByTimeAsync(1);
       const running = await runningPromise;
@@ -290,6 +295,8 @@ describe("TerminalOperationManager captured runs", () => {
       await expect(manager.close({ operationId: running.operationId })).rejects.toMatchObject({
         type: "operation_not_found",
       });
+      expect(onOperationRemoved).toHaveBeenCalledOnce();
+      expect(onOperationRemoved).toHaveBeenCalledWith(running.operationId);
     } finally {
       vi.useRealTimers();
     }
@@ -329,6 +336,47 @@ describe("TerminalOperationManager captured runs", () => {
       expect(sessions.getSession({ sessionId: running.sessionId }).lifecycle).toBe("exited");
       await expect(manager.close({ operationId: running.operationId })).resolves.toMatchObject({
         status: "closed",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("expires a completed temporary PTY when presentation is unavailable", async () => {
+    vi.useFakeTimers();
+    try {
+      const ptyHost = new FakePtyHost();
+      const sessions = new TerminalSessionManager(ptyHost);
+      const manager = createManager(new FakeCapturedProcessHost(), { retentionMs: 50 }, sessions);
+      const runningPromise = manager.run(
+        runRequest({
+          input: "watch",
+          tty: true,
+          timeoutMs: 1,
+          presentation: "background",
+        }),
+        {
+          onTemporarySessionCreated: (sessionId) =>
+            sessions.setPresentation(sessionId, {
+              state: "unavailable",
+              windowVisible: false,
+              windowFocused: false,
+            }),
+        },
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      const running = await runningPromise;
+      if (!running.tty) throw new Error("Expected a terminal run.");
+
+      ptyHost.pty.emitExit({ exitCode: 0, signal: null });
+      vi.runAllTicks();
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(() => sessions.getSession({ sessionId: running.sessionId })).toThrow(
+        expect.objectContaining({ type: "session_not_found" }),
+      );
+      await expect(manager.close({ operationId: running.operationId })).rejects.toMatchObject({
+        type: "operation_not_found",
       });
     } finally {
       vi.useRealTimers();
@@ -428,6 +476,7 @@ function createManager(
   options: {
     retentionMs?: number;
     createOperationId?: () => OperationId;
+    onOperationRemoved?: (operationId: OperationId) => void;
   } = {},
   sessionManager = new TerminalSessionManager(new UnusedPtyHost()),
 ): TerminalOperationManager {

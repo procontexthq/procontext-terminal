@@ -14,6 +14,8 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 
 - Store terminal profiles.
 - Store theme, font, cursor, scrollback, and accessibility settings.
+- Supply the same validated scrollback value to canonical terminal models and
+  renderer projections when their sessions and views are created.
 - Store agent gateway settings.
 - Store policy settings.
 - Store recording defaults.

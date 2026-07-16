@@ -53,8 +53,11 @@ let logger = createAppLogger({
   level: resolveLogLevel(),
 });
 let recorder: FileTerminalRecorder | null = null;
+let terminalConfig: TerminalConfig = defaultTerminalConfig();
+let agentGateway: AgentGateway | null = null;
 const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
   defaultCwd: defaultTerminalCwd,
+  getScrollback: () => terminalConfig.terminal.scrollback,
   recorder: {
     record: (event) => recorder?.record(event),
     start: (session) => recorder?.start(session),
@@ -85,6 +88,7 @@ const operationManager = new TerminalOperationManager(
         cause: error instanceof Error ? error.message : String(error),
       });
     },
+    onOperationRemoved: (operationId) => agentGateway?.removeOperationControl(operationId),
   },
 );
 const presentationRegistry = createTerminalPresentationRegistry();
@@ -100,8 +104,6 @@ const presentationController = createTerminalPresentationController({
 });
 const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
-let agentGateway: AgentGateway | null = null;
-let terminalConfig: TerminalConfig = defaultTerminalConfig();
 let disposeCollaborationServices: (() => void) | null = null;
 let quitAfterShutdown = false;
 let suppressNextWindowAllClosedQuit = false;
@@ -151,6 +153,7 @@ async function createMainWindow(options: { show?: boolean } = {}): Promise<Brows
     logger,
     getIsAppQuitting: () => quitAfterShutdown,
     shutdownTimeoutMs: 1500,
+    sessionLifecycle: "preserve",
   });
 
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {

@@ -123,10 +123,12 @@ describe("TerminalTabView", () => {
     const terminalOptions = terminalConstructorMock.mock.calls[0]?.[0] as
       | {
           overviewRuler?: { width?: number };
+          scrollback?: number;
           theme?: { overviewRulerBorder?: string };
         }
       | undefined;
     expect(terminalOptions?.overviewRuler).toEqual({ width: 8 });
+    expect(terminalOptions?.scrollback).toBe(props.config.terminal.scrollback);
     expect(terminalOptions?.theme?.overviewRulerBorder).toBe(props.terminalTheme.background);
 
     const nextTheme = { ...props.terminalTheme, background: "#050607" };

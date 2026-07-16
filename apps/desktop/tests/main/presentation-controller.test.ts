@@ -84,6 +84,53 @@ describe("terminal presentation controller", () => {
     expect(fixture.actions()).toEqual(["hide"]);
   });
 
+  it("finishes presentation transitions in request order for the same session", async () => {
+    const fixture = createFixture();
+    fixture.window.onSend = (command) => {
+      if (command.action === "open") return;
+      if (command.action === "hide") {
+        fixture.registry.close(command.sessionId, fixture.window.webContents.id);
+      }
+      queueMicrotask(() => {
+        fixture.controller.acknowledge(fixture.window.webContents.id, {
+          ...command,
+          status: "completed",
+        });
+      });
+    };
+
+    const foreground = fixture.controller.setPresentation({
+      sessionId,
+      presentation: "foreground",
+    });
+    await vi.waitFor(() => expect(fixture.actions()).toEqual(["open"]));
+
+    const headless = fixture.controller.setPresentation({
+      sessionId,
+      presentation: "headless",
+    });
+    const openCommand = fixture.commands()[0];
+    if (!openCommand) throw new Error("Expected the foreground transition to request a view.");
+    fixture.registry.open(sessionId, fixture.window.webContents.id);
+    fixture.controller.acknowledge(fixture.window.webContents.id, {
+      ...openCommand,
+      status: "completed",
+    });
+
+    await expect(foreground).resolves.toMatchObject({ state: "foreground" });
+    await expect(headless).resolves.toEqual({
+      state: "headless",
+      windowVisible: false,
+      windowFocused: false,
+    });
+    expect(fixture.actions()).toEqual(["open", "focus", "hide"]);
+    expect(fixture.sessions.presentation).toEqual({
+      state: "headless",
+      windowVisible: false,
+      windowFocused: false,
+    });
+  });
+
   it("keeps the session usable and marks presentation unavailable when no renderer can open", async () => {
     const fixture = createFixture({
       windows: [],
@@ -214,6 +261,7 @@ function createFixture(
     sessions,
     window,
     actions: () => sent.map((command) => command.action),
+    commands: () => [...sent],
     acknowledgeCommands(failedAction?: RendererPresentationCommand["action"]) {
       window.onSend = (command) => {
         if (command.action === "open") {

@@ -65,9 +65,14 @@ bytes, title updates, screen snapshots, or lifecycle events independently of
   connection. PTY session interaction still requires attachment.
 - Human control is independent and may coexist with one attached agent.
 - Connection loss releases agent attachment without closing the PTY.
+- Operation-manager removal, including retention expiry, clears the gateway's
+  operation-to-session index and releases any temporary-session attachment.
 - Human revocation releases the current attachment, cancels pending
   session-scoped observation, and blocks every agent connection from attaching
   to that session until human control explicitly allows attachment again.
+- The revocation check also applies atomically to automatic attachment after
+  session creation or a running temporary PTY result, so an in-flight request
+  cannot restore control after the human revokes it.
 - Allowing agent control removes the session-level block but does not
   automatically attach a connection.
 

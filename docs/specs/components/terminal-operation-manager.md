@@ -25,6 +25,8 @@ sessions without duplicating persistent-session behavior.
   minutes.
 - Keep operation and temporary-session records consistent when either identity
   is closed.
+- Notify the composing runtime whenever an operation record is removed so
+  transport-specific ownership indexes can discard the same capability.
 
 ## Captured Operations
 
@@ -55,8 +57,10 @@ add only:
 Temporary PTY operations may be headless, background, or foreground. The
 operation manager reports the new session through a narrow creation callback so
 Electron main can settle presentation before the initial run wait completes.
-Completed headless temporary operations expire after retention, while completed
-presented operations remain until explicit close.
+Completed headless temporary operations expire after retention. A failed or
+unavailable presentation follows the same expiry rule because it has no usable
+view. Completed operations with an opening, background, or foreground view
+remain until explicit close.
 
 ## Ownership And Reconnect
 
