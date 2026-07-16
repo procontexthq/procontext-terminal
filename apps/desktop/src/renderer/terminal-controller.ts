@@ -7,6 +7,7 @@ import type {
   TerminalLifecycleState,
   TerminalResponseResult,
   TerminalTheme,
+  TerminalAccessibilityConfig,
   Unsubscribe,
 } from "@terminal/protocol";
 
@@ -14,6 +15,8 @@ import {
   createTerminalResponseCoordinator,
   type TerminalParserLike,
 } from "./terminal-response-coordinator";
+import type { TerminalSearchTarget } from "./terminal-search";
+import { terminalAccessibilityOptions } from "./terminal-accessibility";
 
 export type TerminalLike = {
   buffer: {
@@ -23,8 +26,12 @@ export type TerminalLike = {
     };
   };
   options?: {
+    cursorBlink?: boolean;
     fontFamily?: string;
     fontSize?: number;
+    minimumContrastRatio?: number;
+    screenReaderMode?: boolean;
+    scrollback?: number;
     theme?: Partial<TerminalTheme>;
   };
   parser?: TerminalParserLike;
@@ -51,13 +58,16 @@ export type TerminalLaunchMetadata = {
   shell: string | null;
 };
 
-export type TerminalController = {
+export type TerminalController = TerminalSearchTarget & {
   sessionId: SessionId;
   readonly lifecycle: TerminalLifecycleState;
   focus(): void;
   resize(): Promise<void>;
   setFocused(focused: boolean): Promise<void>;
   setFontFamily(fontFamily: string): void;
+  setFontSize(fontSize: number): void;
+  setScrollback(scrollback: number): void;
+  setAccessibility(accessibility: TerminalAccessibilityConfig): void;
   setTheme(theme: TerminalTheme): void;
   dispose(options?: TerminalControllerDisposeOptions): Promise<boolean>;
 };
@@ -69,6 +79,7 @@ export type CreateTerminalSessionOptions = {
   attachSessionId?: SessionId;
   createTerminal: () => TerminalLike;
   createFitAddon: () => FitAddonLike;
+  createSearchAddon?: () => TerminalSearchTarget;
   onTitleChange?: (title: string) => void;
   onBell?: () => void;
   onSessionEvent?: (event: RendererSessionEvent) => void;
@@ -80,6 +91,7 @@ export async function createTerminalSession(
 ): Promise<TerminalController> {
   const terminal = options.createTerminal();
   const fitAddon = options.createFitAddon();
+  let searchTarget: TerminalSearchTarget | null = null;
   const subscriptions: Array<{ dispose(): void }> = [];
   const responseCoordinator = createTerminalResponseCoordinator(terminal.parser);
   subscriptions.push(responseCoordinator);
@@ -92,6 +104,33 @@ export async function createTerminalSession(
   let bootstrapComplete = false;
   let bufferedEvents: RendererSessionEvent[] = [];
   let suppressViewportReport = false;
+  let localViewportReportSuppressions = 0;
+
+  const reportCurrentViewport = (): void => {
+    if (!sessionId || disposed) return;
+    const viewportY = terminal.buffer.active.viewportY;
+    void options.api
+      .reportViewport({
+        sessionId,
+        viewportY,
+        atBottom: terminal.buffer.active.baseY === viewportY,
+      })
+      .catch(options.onError);
+  };
+
+  const runLocalSearch = <T>(operation: () => T, reportSettledViewport = false): T => {
+    localViewportReportSuppressions += 1;
+    let result: T;
+    try {
+      result = operation();
+      return result;
+    } finally {
+      queueMicrotask(() => {
+        localViewportReportSuppressions = Math.max(0, localViewportReportSuppressions - 1);
+        if (reportSettledViewport && result === true) reportCurrentViewport();
+      });
+    }
+  };
 
   const writeProjectionOutput = (
     data: string,
@@ -138,6 +177,11 @@ export async function createTerminalSession(
 
   try {
     terminal.loadAddon?.(fitAddon);
+    const nextSearchTarget = options.createSearchAddon?.();
+    if (nextSearchTarget && terminal.loadAddon) {
+      terminal.loadAddon(nextSearchTarget);
+      searchTarget = nextSearchTarget;
+    }
     terminal.open(options.element);
     fitAddon.fit();
     const dimensions = fitAddon.proposeDimensions() ?? { cols: 80, rows: 24 };
@@ -179,7 +223,7 @@ export async function createTerminalSession(
       }),
     );
     const scrollSubscription = terminal.onScroll?.((viewportY) => {
-      if (suppressViewportReport || !sessionId) return;
+      if (suppressViewportReport || localViewportReportSuppressions > 0 || !sessionId) return;
       void options.api
         .reportViewport({
           sessionId,
@@ -203,9 +247,35 @@ export async function createTerminalSession(
         if (terminal.options) terminal.options.fontFamily = fontFamily;
         refreshTerminal(terminal, options.onError);
       },
+      setFontSize(fontSize) {
+        if (terminal.options) terminal.options.fontSize = fontSize;
+        refreshTerminal(terminal, options.onError);
+      },
+      setScrollback(scrollback) {
+        if (terminal.options) terminal.options.scrollback = scrollback;
+        refreshTerminal(terminal, options.onError);
+      },
+      setAccessibility(accessibility) {
+        if (terminal.options) {
+          Object.assign(terminal.options, terminalAccessibilityOptions(accessibility));
+        }
+        refreshTerminal(terminal, options.onError);
+      },
       setTheme(theme) {
         if (terminal.options) terminal.options.theme = theme;
         refreshTerminal(terminal, options.onError);
+      },
+      findNext(query, searchOptions) {
+        return runLocalSearch(() => searchTarget?.findNext(query, searchOptions) ?? false, true);
+      },
+      findPrevious(query, searchOptions) {
+        return runLocalSearch(
+          () => searchTarget?.findPrevious(query, searchOptions) ?? false,
+          true,
+        );
+      },
+      clearDecorations() {
+        runLocalSearch(() => searchTarget?.clearDecorations());
       },
       async resize() {
         if (disposed || lifecycle !== "running") return;

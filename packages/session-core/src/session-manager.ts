@@ -44,6 +44,7 @@ export type TerminalSessionManagerOptions = {
   defaultCwd?: () => string;
   onEventHandlerError?: (error: unknown, event: RendererSessionEvent) => void;
   recorder?: TerminalRecorder;
+  startRecordingByDefault?: () => boolean;
   scrollback?: number;
   getScrollback?: () => number;
   closeTimeoutMs?: number;
@@ -277,6 +278,15 @@ export class TerminalSessionManager {
         : { outputLimitBytes: options.outputLimitBytes }),
     });
     this.sessions.set(sessionId, session);
+    if (this.options.startRecordingByDefault?.()) {
+      try {
+        await session.startRecording();
+      } catch (error: unknown) {
+        if (isTerminalError(error)) {
+          this.emit({ type: "session.error", payload: error });
+        }
+      }
+    }
     this.emit({ type: "session.updated", payload: session.summary });
     return session.summary;
   }

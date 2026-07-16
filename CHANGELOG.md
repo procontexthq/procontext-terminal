@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Integrated terminal tabs and essential controls into a streamlined native
   title bar that respects Windows, macOS, and Linux window-control safe areas.
+- Added local scrollback search and validated clickable HTTP(S) and local-path
+  links, with native targets rechecked before they are opened or revealed.
+- Added focused terminal settings for appearance, shell profiles, scrollback,
+  accessibility, recording, and human-terminal presentation defaults.
+- Restored the primary window's saved display position and size while keeping
+  invalid or off-screen geometry from making the application inaccessible.
+- Added credentialed production release validation for native installers,
+  signing and notarization, packaged PTY behavior, and artifact provenance.
 
 ### Fixed
 

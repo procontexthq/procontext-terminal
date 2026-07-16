@@ -56,6 +56,66 @@ const testShell = platformShell();
 const request = { shell: testShell, cols: 80, rows: 24 };
 
 describe("TerminalSessionManager", () => {
+  it("starts recording newly created sessions only when configured by default", async () => {
+    const recorder = createRecorder();
+    const enabledManager = new TerminalSessionManager(new FakePtyHost(), {
+      recorder,
+      startRecordingByDefault: () => true,
+    });
+
+    const enabled = await enabledManager.createSession(request);
+
+    expect(recorder.start).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: enabled.sessionId }),
+    );
+    expect(enabled.recording).toEqual({ state: "active" });
+
+    const agent = await enabledManager.createSession({ ...request, createdBy: "agent" });
+    const temporary = await enabledManager.createCommandSession({
+      input: "echo ready",
+      shell: testShell,
+      createdBy: "system",
+      outputLimitBytes: 1_024,
+    });
+    expect(agent.recording).toEqual({ state: "active" });
+    expect(temporary.recording).toEqual({ state: "active" });
+    expect(recorder.start).toHaveBeenCalledTimes(3);
+
+    const disabledRecorder = createRecorder();
+    const disabledManager = new TerminalSessionManager(new FakePtyHost(), {
+      recorder: disabledRecorder,
+      startRecordingByDefault: () => false,
+    });
+    const disabled = await disabledManager.createSession(request);
+
+    expect(disabledRecorder.start).not.toHaveBeenCalled();
+    expect(disabled.recording).toEqual({ state: "inactive" });
+  });
+
+  it("keeps a new session observable when default recording cannot start", async () => {
+    const manager = new TerminalSessionManager(new FakePtyHost(), {
+      startRecordingByDefault: () => true,
+    });
+    const events: RendererSessionEvent[] = [];
+    manager.onSessionEvent((event) => events.push(event));
+
+    const summary = await manager.createSession(request);
+
+    expect(summary.recording).toMatchObject({
+      state: "failed",
+      error: { type: "recording_failed", sessionId: summary.sessionId },
+    });
+    expect(manager.getSession({ sessionId: summary.sessionId })).toEqual(summary);
+    expect(
+      events.some(
+        (event) =>
+          event.type === "session.error" &&
+          event.payload.type === "recording_failed" &&
+          event.payload.sessionId === summary.sessionId,
+      ),
+    ).toBe(true);
+  });
+
   it("creates a running headless session with canonical state", async () => {
     const host = new FakePtyHost();
     const manager = new TerminalSessionManager(host);

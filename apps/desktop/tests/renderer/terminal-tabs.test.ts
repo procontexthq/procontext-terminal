@@ -42,6 +42,15 @@ describe("terminal tabs model", () => {
     expect(state.activeTabId).toBe(state.tabs[0]?.id);
   });
 
+  it("can add a background terminal tab without replacing the active tab", () => {
+    const initial = createInitialTerminalTabs();
+    const state = addTerminalTab(initial, undefined, { activate: false });
+
+    expect(state.tabs).toHaveLength(2);
+    expect(state.activeTabId).toBe(initial.activeTabId);
+    expect(state.tabs.at(-1)).toMatchObject({ sessionId: null, status: "starting" });
+  });
+
   it("wraps adjacent tab selection and tracks unread bells", () => {
     let state = addTerminalTab(createInitialTerminalTabs());
     const [first, second] = state.tabs;

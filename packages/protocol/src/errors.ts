@@ -31,6 +31,7 @@ export const terminalErrorTypes = [
   "recording_failed",
   "view_unavailable",
   "settings_save_failed",
+  "link_open_failed",
 ] as const;
 
 export type TerminalErrorType = (typeof terminalErrorTypes)[number];

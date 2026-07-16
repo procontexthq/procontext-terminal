@@ -18,6 +18,8 @@ import {
   type ResolvePermissionRequest,
   type TerminalConfig,
   type TerminalError,
+  type TerminalLinkOpenResult,
+  type TerminalLinkTarget,
 } from "@terminal/protocol";
 import type { TerminalPolicy, TerminalPolicyOperation } from "@terminal/policy-engine";
 import type { TerminalSessionManager } from "@terminal/session-core";
@@ -25,6 +27,7 @@ import type { TerminalSessionManager } from "@terminal/session-core";
 import type { AppLogger } from "./logger";
 import type { TerminalPresentationRegistry } from "./presentation-registry";
 import type { TerminalPresentationController } from "./presentation-controller";
+import type { TerminalConfigMutation } from "./terminal-config-persistence";
 
 type RendererTerminalSessionService = Pick<
   TerminalSessionManager,
@@ -49,13 +52,14 @@ export type TerminalCommandServices = {
   rendererId: number;
   closeSession(request: CloseTerminalRequest): Promise<CloseTerminalResult>;
   getConfig(): TerminalConfig;
-  saveConfig(config: TerminalConfig): Promise<TerminalConfig>;
+  saveConfig(mutation: TerminalConfigMutation): Promise<TerminalConfig>;
   listAgentControls(): AgentSessionControlState[];
   revokeAgentControl(sessionId: AgentSessionControlState["sessionId"]): AgentSessionControlState;
   allowAgentControl(sessionId: AgentSessionControlState["sessionId"]): AgentSessionControlState;
   listPermissions(): AgentPermissionRequest[];
   resolvePermission(request: ResolvePermissionRequest): boolean;
   exportRecordingFile(request: RecordingControlRequest): Promise<RecordingExportFileResult>;
+  openLink(target: TerminalLinkTarget): Promise<TerminalLinkOpenResult>;
   onPolicyDenied?(notice: PolicyDenialNotice): void;
   policy: TerminalPolicy;
   logger?: AppLogger;
@@ -211,12 +215,16 @@ async function executeRendererCommand(
       );
     case "settings.get":
       return createRendererCommandSuccess(command.requestId, services.getConfig());
+    case "link.open":
+      return createRendererCommandSuccess(
+        command.requestId,
+        await services.openLink(command.payload),
+      );
     case "settings.saveUiTheme": {
-      const current = services.getConfig();
       try {
         const saved = await services.saveConfig({
-          ...current,
-          ui: { ...current.ui, theme: command.payload.theme },
+          type: "ui-theme",
+          theme: command.payload.theme,
         });
         return createRendererCommandSuccess(command.requestId, saved);
       } catch (error: unknown) {
@@ -226,12 +234,25 @@ async function executeRendererCommand(
         });
       }
     }
-    case "settings.saveAgentPolicy": {
-      const current = services.getConfig();
+    case "settings.saveFocused": {
       try {
         const saved = await services.saveConfig({
-          ...current,
-          agentPolicy: command.payload.policy,
+          type: "focused-settings",
+          settings: command.payload.settings,
+        });
+        return createRendererCommandSuccess(command.requestId, saved);
+      } catch (error: unknown) {
+        throw createTerminalError("settings_save_failed", "Could not save terminal settings.", {
+          operation: command.type,
+          cause: errorMessage(error),
+        });
+      }
+    }
+    case "settings.saveAgentPolicy": {
+      try {
+        const saved = await services.saveConfig({
+          type: "agent-policy",
+          policy: command.payload.policy,
         });
         return createRendererCommandSuccess(command.requestId, saved);
       } catch (error: unknown) {
@@ -349,7 +370,9 @@ function policyOperation(command: RendererCommand): TerminalPolicyOperation {
     case "permission.resolve":
       return { type: command.type };
     case "settings.get":
+    case "link.open":
     case "settings.saveUiTheme":
+    case "settings.saveFocused":
     case "settings.saveAgentPolicy":
     case "presentation.ready":
     case "presentation.acknowledge":

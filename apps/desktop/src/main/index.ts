@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog, Menu, nativeImage } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeImage, screen, shell } from "electron";
 
 import {
   resolveAgentGatewayDescriptorPath,
@@ -22,7 +23,7 @@ import {
   TerminalOperationManager,
   TerminalSessionManager,
 } from "@terminal/session-core";
-import type { AppShortcutAction, TerminalConfig } from "@terminal/protocol";
+import type { AppShortcutAction, TerminalConfig, WindowGeometry } from "@terminal/protocol";
 
 import {
   broadcastRendererEvent,
@@ -38,6 +39,11 @@ import { resolveDefaultTerminalCwd } from "./default-terminal-cwd";
 import { createAppLogger, parseLogLevel, resolveMainLogPath } from "./logger";
 import { createTerminalPresentationRegistry } from "./presentation-registry";
 import { createTerminalPresentationController } from "./presentation-controller";
+import {
+  createQueuedTerminalConfigPersistence,
+  type TerminalConfigMutation,
+} from "./terminal-config-persistence";
+import { createTerminalLinkOpener } from "./terminal-link-opener";
 import { waitForInitialHumanSessionSettled } from "./startup-session";
 import {
   createApplicationMenuTemplate,
@@ -45,6 +51,12 @@ import {
   resolveWindowChromeOptions,
 } from "./window-chrome";
 import { attachWindowCloseSessionCleanup } from "./window-lifecycle";
+import {
+  attachWindowGeometryPersistence,
+  resolveWindowBounds,
+  type WindowBounds,
+  type WindowGeometryPersistence,
+} from "./window-state";
 
 app.setName(PRODUCT_NAME);
 
@@ -54,10 +66,10 @@ let logger = createAppLogger({
 });
 let recorder: FileTerminalRecorder | null = null;
 let terminalConfig: TerminalConfig = defaultTerminalConfig();
-let agentGateway: AgentGateway | null = null;
 const sessionManager = new TerminalSessionManager(new NodePtyHost(), {
   defaultCwd: defaultTerminalCwd,
   getScrollback: () => terminalConfig.terminal.scrollback,
+  startRecordingByDefault: () => terminalConfig.recording.state === "enabled",
   recorder: {
     record: (event) => recorder?.record(event),
     start: (session) => recorder?.start(session),
@@ -92,6 +104,13 @@ const operationManager = new TerminalOperationManager(
   },
 );
 const presentationRegistry = createTerminalPresentationRegistry();
+const openTerminalLink = createTerminalLinkOpener({
+  platform:
+    process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux",
+  openExternal: (target) => shell.openExternal(target),
+  showItemInFolder: (target) => shell.showItemInFolder(target),
+  statPath: (target) => stat(target),
+});
 const presentationController = createTerminalPresentationController({
   sessions: sessionManager,
   registry: presentationRegistry,
@@ -104,7 +123,26 @@ const presentationController = createTerminalPresentationController({
 });
 const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
+let agentGateway: AgentGateway | null = null;
+const terminalConfigPersistence = createQueuedTerminalConfigPersistence({
+  getConfig: () => terminalConfig,
+  setConfig: (config) => {
+    terminalConfig = config;
+  },
+  persist: (config) =>
+    saveTerminalConfig(resolveTerminalConfigPath(app.getPath("userData")), config),
+  onPersisted: (config, mutation) => {
+    if (mutation.type === "focused-settings") updateRecorderRedactors(config);
+    if (mutation.type !== "window-geometry") {
+      logger.info("settings", "saved", {
+        settingsPath: resolveTerminalConfigPath(app.getPath("userData")),
+        uiTheme: config.ui.theme,
+      });
+    }
+  },
+});
 let disposeCollaborationServices: (() => void) | null = null;
+let primaryWindowGeometryPersistence: WindowGeometryPersistence | null = null;
 let quitAfterShutdown = false;
 let suppressNextWindowAllClosedQuit = false;
 
@@ -130,9 +168,12 @@ function safeAppHome(): string {
 async function createMainWindow(options: { show?: boolean } = {}): Promise<BrowserWindow> {
   logger.info("window", "create_requested");
   const appIconPath = resolveAppIconPath();
+  const isPrimaryWindow = BrowserWindow.getAllWindows().length === 0;
+  const initialBounds = isPrimaryWindow
+    ? resolvePrimaryWindowBounds()
+    : { width: 1000, height: 700 };
   const window = new BrowserWindow({
-    width: 1000,
-    height: 700,
+    ...initialBounds,
     minWidth: 640,
     minHeight: 420,
     ...resolveWindowChromeOptions(process.platform),
@@ -155,6 +196,26 @@ async function createMainWindow(options: { show?: boolean } = {}): Promise<Brows
     shutdownTimeoutMs: 1500,
     sessionLifecycle: "preserve",
   });
+  if (isPrimaryWindow) {
+    const geometryPersistence = attachWindowGeometryPersistence({
+      window,
+      getDisplayMatching: (bounds) => screen.getDisplayMatching(bounds),
+      saveGeometry: saveWindowGeometry,
+      onError: (error) => {
+        logger.warn("window", "geometry_save_failed", {
+          windowId: window.id,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+      },
+    });
+    primaryWindowGeometryPersistence = geometryPersistence;
+    window.once("closed", () => {
+      geometryPersistence.dispose();
+      if (primaryWindowGeometryPersistence === geometryPersistence) {
+        primaryWindowGeometryPersistence = null;
+      }
+    });
+  }
 
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
     logger.error("renderer", "load_failed", {
@@ -292,6 +353,7 @@ void app
       closeSession: (request) => operationManager.close(request),
       getConfig: () => terminalConfig,
       saveConfig,
+      openLink: openTerminalLink,
       ...collaborationServices.renderer,
     });
     installApplicationMenu();
@@ -454,27 +516,50 @@ function isAppShortcutPlatform(value: NodeJS.Platform): value is AppShortcutPlat
   return value === "darwin" || value === "win32" || value === "linux";
 }
 
-async function saveConfig(config: TerminalConfig): Promise<TerminalConfig> {
-  const terminalConfigPath = resolveTerminalConfigPath(app.getPath("userData"));
-  await saveTerminalConfig(terminalConfigPath, config);
-  terminalConfig = config;
-  const redactors = [createPatternRedactor(terminalConfig.recording.redactedPatterns)];
+async function saveConfig(mutation: TerminalConfigMutation): Promise<TerminalConfig> {
+  return terminalConfigPersistence.save(mutation);
+}
+
+async function saveWindowGeometry(geometry: WindowGeometry): Promise<void> {
+  await terminalConfigPersistence.save({ type: "window-geometry", geometry });
+}
+
+function updateRecorderRedactors(config: TerminalConfig): void {
+  const redactors = [createPatternRedactor(config.recording.redactedPatterns)];
   if (recorder) {
     recorder.updateRedactors(redactors);
-  } else {
-    recorder = new FileTerminalRecorder({
-      directory: join(app.getPath("userData"), "recordings"),
-      redactors,
-    });
+    return;
   }
-  logger.info("settings", "saved", {
-    settingsPath: terminalConfigPath,
-    uiTheme: config.ui.theme,
+  recorder = new FileTerminalRecorder({
+    directory: join(app.getPath("userData"), "recordings"),
+    redactors,
   });
-  return terminalConfig;
+}
+
+function resolvePrimaryWindowBounds(): WindowBounds {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const workArea = primaryDisplay.workArea;
+  const width = Math.min(1000, workArea.width);
+  const height = Math.min(700, workArea.height);
+  const fallback = {
+    x: workArea.x + Math.round((workArea.width - width) / 2),
+    y: workArea.y + Math.round((workArea.height - height) / 2),
+    width,
+    height,
+  };
+  const displays = [
+    primaryDisplay,
+    ...screen.getAllDisplays().filter((display) => display.id !== primaryDisplay.id),
+  ].map((display) => ({
+    id: display.id,
+    workArea: display.workArea,
+  }));
+  return resolveWindowBounds(terminalConfig.windowGeometry, displays, fallback);
 }
 
 async function shutdownApp() {
+  await flushPrimaryWindowGeometry();
+  await terminalConfigPersistence.pending();
   disposeCollaborationServices?.();
   disposeCollaborationServices = null;
   if (agentGateway) {
@@ -499,6 +584,18 @@ async function shutdownApp() {
   const sessionResult = await sessionManager.shutdown({ timeoutMs: 1500 });
   if (operationShutdownError) throw operationShutdownError;
   return sessionResult;
+}
+
+async function flushPrimaryWindowGeometry(): Promise<void> {
+  const persistence = primaryWindowGeometryPersistence;
+  if (!persistence) return;
+
+  primaryWindowGeometryPersistence = null;
+  try {
+    await persistence.flush();
+  } finally {
+    persistence.dispose();
+  }
 }
 
 function sanitizeUrlForLog(value: string): string {

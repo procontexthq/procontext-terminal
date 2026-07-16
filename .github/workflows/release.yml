@@ -26,13 +26,16 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            package_script: package:mac
+            release_platform: macos
+            package_script: package:release:mac
             artifact_name: procontext-terminal-macos
           - os: windows-latest
-            package_script: package:win
+            release_platform: windows
+            package_script: package:release:win
             artifact_name: procontext-terminal-windows
           - os: ubuntu-latest
-            package_script: package:linux
+            release_platform: linux
+            package_script: package:release:linux
             artifact_name: procontext-terminal-linux
 
     steps:
@@ -50,6 +53,17 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+
+      - name: Validate release tag and credentials
+        env:
+          CSC_LINK: ${{ matrix.release_platform == 'macos' && secrets.MACOS_CSC_LINK || matrix.release_platform == 'windows' && secrets.WINDOWS_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.release_platform == 'macos' && secrets.MACOS_CSC_KEY_PASSWORD || matrix.release_platform == 'windows' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ matrix.release_platform == 'macos' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.release_platform == 'macos' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.release_platform == 'macos' && secrets.APPLE_TEAM_ID || '' }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: node apps/desktop/scripts/validate-release-inputs.mjs --platform ${{ matrix.release_platform }} --package-json apps/desktop/package.json
 
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
@@ -103,6 +117,12 @@ jobs:
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" pnpm test:e2e
 
       - name: Build release artifacts
+        env:
+          CSC_LINK: ${{ matrix.release_platform == 'macos' && secrets.MACOS_CSC_LINK || matrix.release_platform == 'windows' && secrets.WINDOWS_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.release_platform == 'macos' && secrets.MACOS_CSC_KEY_PASSWORD || matrix.release_platform == 'windows' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ matrix.release_platform == 'macos' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.release_platform == 'macos' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.release_platform == 'macos' && secrets.APPLE_TEAM_ID || '' }}
         run: pnpm ${{ matrix.package_script }}
 
       - name: Verify native PTY packaging
@@ -118,25 +138,21 @@ jobs:
         working-directory: apps/desktop
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" pnpm exec vitest run -c vitest.package.config.ts
 
-      - name: Collect release artifact files
+      - name: Verify and collect distributable installers
         run: |
           rm -rf apps/desktop/release-artifacts
-          mkdir -p apps/desktop/release-artifacts
-          find apps/desktop/dist -maxdepth 1 -type f \( \
-            -name "*.dmg" -o \
-            -name "*.dmg.blockmap" -o \
-            -name "*.AppImage" -o \
-            -name "*.AppImage.zsync" -o \
-            -name "*.deb" -o \
-            -name "*.rpm" -o \
-            -name "*.exe" -o \
-            -name "*.exe.blockmap" -o \
-            -name "*.msi" -o \
-            -name "latest*.yml" \
-          \) -exec cp {} apps/desktop/release-artifacts/ \;
-          if [ "$(find apps/desktop/release-artifacts -type f | wc -l | tr -d ' ')" = "0" ]; then
-            echo "No release artifact files were produced."
-            exit 1
+          verify_args=(
+            apps/desktop/scripts/verify-release-artifacts.mjs
+            --platform ${{ matrix.release_platform }}
+            --dist apps/desktop/dist
+            --package-json apps/desktop/package.json
+            --require-signature
+            --copy-to apps/desktop/release-artifacts
+          )
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" node "${verify_args[@]}"
+          else
+            node "${verify_args[@]}"
           fi
 
       - name: Upload release artifacts
@@ -147,6 +163,14 @@ jobs:
           if-no-files-found: error
 
       - name: Generate artifact attestations
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest@v4
         with:
           subject-path: apps/desktop/release-artifacts/*
+
+      - name: Verify release provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for artifact in apps/desktop/release-artifacts/*; do
+            gh attestation verify "$artifact" --repo "$GITHUB_REPOSITORY"
+          done

@@ -181,9 +181,22 @@ The first multi-session milestone supports tabs only.
   the pattern values.
 - Search remains local to the renderer xterm scrollback.
 - Link activation validates supported URL schemes and local file targets before
-  delegating to main-process OS integration.
+  delegating to main-process OS integration. Main revalidates every target;
+  HTTP(S) links may open externally, while existing local files and directories
+  are revealed in the platform file manager and are never executed.
 - Settings remain focused on existing terminal, shell, recording, policy,
   presentation, accessibility, and appearance contracts.
+- The focused terminal settings panel edits terminal font, colors, scrollback,
+  shell profiles, accessibility preferences, recording defaults, and default
+  presentation. It validates numeric ranges and recording redaction regexes
+  before sending one typed save command. Agent policy remains in its existing
+  focused panel; tabs, sessions, and window geometry are never renderer form
+  fields.
+- Default presentation never changes the visible foreground startup terminal
+  and never overrides fixed agent protocol defaults. Later human New Terminal
+  actions activate a foreground view, open a non-focused background view, or
+  create a headless session according to the saved preference. Headless human
+  sessions remain discoverable and revealable through Sessions.
 
 Split panes, persisted layouts, restored terminal sessions, and a broad command
 palette are explicitly out of scope.

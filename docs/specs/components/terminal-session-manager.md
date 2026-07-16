@@ -29,6 +29,9 @@ terminal state. Presentation and agent attachment are separate concerns.
 - Shut down active sessions without discarding handles that fail to terminate.
 - Optionally retain a bounded combined raw-output tail for temporary command
   result construction.
+- Apply the dynamic recording default while creating future persistent or
+  temporary PTY sessions. Recording startup failure remains visible in the
+  canonical session and must not orphan the running PTY.
 
 ## Lifecycle
 
@@ -78,4 +81,7 @@ transport, or agent connection ownership. It exposes no node-pty handles.
   completion.
 - Failing subscribers do not corrupt session state.
 - Recording failures are surfaced without silently discarding records.
+- Enabled recording defaults cover human, agent, and temporary TTY sessions;
+  disabled defaults leave them inactive and captured non-TTY operations remain
+  outside session recording.
 - Shutdown does not orphan or forget active PTYs.

@@ -13,12 +13,15 @@ import type {
   RendererSessionEvent,
   SessionId,
   TerminalConfig,
+  TerminalLinkOpenResult,
+  TerminalLinkTarget,
 } from "@terminal/protocol";
 import type { TerminalSessionManager } from "@terminal/session-core";
 
 import type { AppLogger } from "./logger";
 import type { TerminalPresentationRegistry } from "./presentation-registry";
 import type { TerminalPresentationController } from "./presentation-controller";
+import type { TerminalConfigMutation } from "./terminal-config-persistence";
 import { handleRendererCommandPayload } from "./terminal-command-handler";
 
 export const IPC_CHANNELS = {
@@ -40,6 +43,7 @@ export function registerTerminalIpc({
   revokeAgentControl,
   allowAgentControl,
   exportRecordingFile,
+  openLink,
   listPermissions,
   resolvePermission,
   onPolicyDenied,
@@ -53,11 +57,12 @@ export function registerTerminalIpc({
   logger: AppLogger;
   closeSession: (request: CloseTerminalRequest) => Promise<CloseTerminalResult>;
   getConfig: () => TerminalConfig;
-  saveConfig: (config: TerminalConfig) => Promise<TerminalConfig>;
+  saveConfig: (mutation: TerminalConfigMutation) => Promise<TerminalConfig>;
   listAgentControls: () => AgentSessionControlState[];
   revokeAgentControl: (sessionId: SessionId) => AgentSessionControlState;
   allowAgentControl: (sessionId: SessionId) => AgentSessionControlState;
   exportRecordingFile: (request: RecordingControlRequest) => Promise<RecordingExportFileResult>;
+  openLink: (target: TerminalLinkTarget) => Promise<TerminalLinkOpenResult>;
   listPermissions: () => AgentPermissionRequest[];
   resolvePermission: (request: ResolvePermissionRequest) => boolean;
   onPolicyDenied?: (notice: PolicyDenialNotice) => void;
@@ -87,6 +92,7 @@ export function registerTerminalIpc({
       revokeAgentControl,
       allowAgentControl,
       exportRecordingFile,
+      openLink,
       listPermissions,
       resolvePermission,
       onPolicyDenied,

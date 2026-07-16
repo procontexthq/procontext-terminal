@@ -29,6 +29,28 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
   is `default`; `coder`, `gamer`, and `classic` remain valid persisted choices.
   The default terminal font stack starts with bundled JetBrains Mono and falls
   back to normal platform monospace fonts.
+- Phase 5 uses settings schema version 4. It adds accessibility preferences,
+  default terminal presentation, and validated primary-window geometry while
+  deterministically migrating schema versions 1 through 3. Accessibility
+  settings are screen-reader mode, reduced motion, and a minimum contrast ratio.
+- Focused renderer writes may update terminal appearance and scrollback, shell
+  profiles, accessibility, recording defaults, and default presentation. They
+  preserve UI theme, agent policy, and window geometry. Window geometry is
+  written independently by the Electron main process.
+- The persisted presentation preference must not override agent protocol
+  defaults: omitted agent create and temporary-TTY run presentation remains
+  `headless`, attach remains unchanged, and explicit agent presentation wins.
+  Human startup always retains one visible foreground terminal. Later human New
+  Terminal actions use the preference: `foreground` activates the new view,
+  `background` opens a view without stealing focus, and `headless` creates the
+  PTY without a renderer view so it remains available through Sessions.
+- Enabling recording by default starts recording for future PTY-backed human,
+  agent, and temporary TTY sessions only. It never retroactively changes an
+  existing session and does not apply to captured non-TTY operations.
+- UI-theme selection is a terminal appearance preset: it atomically updates the
+  UI theme, terminal font family, and terminal background. Later focused
+  appearance edits remain authoritative until another UI-theme preset is
+  selected.
 
 ## Boundaries
 
@@ -45,13 +67,23 @@ The settings store must not:
 Settings must be validated at load time.
 
 - Valid settings are returned as typed configuration.
-- Invalid settings fail closed to defaults.
+- Invalid settings fail closed to defaults, except invalid optional window
+  geometry, which is isolated to `null` while otherwise valid settings survive.
 - Invalid settings produce a visible warning and structured log entry.
 - Migrations must be versioned and deterministic.
 - Unknown future schema versions must not be silently downgraded.
 - Writes must use a safe temporary-file then rename flow.
+- Concurrent focused, UI-theme, agent-policy, and window-geometry writes are
+  serialized and each field-specific mutation is applied to the latest
+  committed configuration.
 - Legacy workspace/tab-layout data from earlier builds must be ignored while
   preserving otherwise valid terminal, shell, and recording settings.
+- Window geometry must contain finite, bounded integer coordinates, dimensions
+  no smaller than the supported app minimum, and the numeric display ID. A
+  missing or invalid geometry value resolves to safe primary-display defaults.
+- Terminal background, foreground, and cursor colors use portable three- or
+  six-digit hexadecimal RGB values so Electron window framing, renderer CSS,
+  and xterm resolve the same color instead of applying different fallbacks.
 
 ## Persisted Data
 
@@ -79,5 +111,9 @@ It must not persist:
 - Valid settings load as typed config.
 - Invalid settings fall back to defaults with structured diagnostics.
 - Migrations produce expected current-schema output.
+- Focused settings writes cannot add tab, session, operation, PTY, transcript,
+  or workspace-layout state.
+- Invalid or unavailable-display window geometry resolves to visible,
+  work-area-clamped primary-display bounds.
 - Platform path resolution works for macOS, Linux, and Windows.
 - Sensitive values are not logged in plain text.

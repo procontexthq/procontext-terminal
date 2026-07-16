@@ -13,6 +13,7 @@ import {
   type FitAddonLike,
   type TerminalLike,
 } from "../../src/renderer/terminal-controller";
+import type { TerminalSearchTarget } from "../../src/renderer/terminal-search";
 
 const sessionId = createSessionId("session-1");
 
@@ -162,6 +163,37 @@ describe("terminal controller", () => {
     });
   });
 
+  it("reports one settled search viewport without disabling later human scroll reports", async () => {
+    const terminal = new FakeTerminal();
+    const { api } = createApi();
+    const searchTarget: TerminalSearchTarget = {
+      findNext: vi.fn(() => {
+        terminal.emitScroll(2);
+        return true;
+      }),
+      findPrevious: vi.fn(() => false),
+      clearDecorations: vi.fn(),
+    };
+    const controller = await createController(api, terminal, searchTarget);
+
+    expect(controller.findNext("needle", { incremental: true })).toBe(true);
+    expect(terminal.loadAddon).toHaveBeenCalledWith(searchTarget);
+    expect(api.reportViewport).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(api.reportViewport).toHaveBeenCalledExactlyOnceWith({
+      sessionId,
+      viewportY: 2,
+      atBottom: false,
+    });
+    terminal.emitScroll(3);
+    expect(api.reportViewport).toHaveBeenLastCalledWith({
+      sessionId,
+      viewportY: 3,
+      atBottom: false,
+    });
+  });
+
   it("reports whether its renderer view is foreground or background", async () => {
     const terminal = new FakeTerminal();
     const { api } = createApi();
@@ -172,6 +204,29 @@ describe("terminal controller", () => {
 
     expect(api.reportViewFocus).toHaveBeenNthCalledWith(1, { sessionId, focused: true });
     expect(api.reportViewFocus).toHaveBeenNthCalledWith(2, { sessionId, focused: false });
+  });
+
+  it("applies focused terminal and accessibility settings to a live view", async () => {
+    const terminal = new FakeTerminal();
+    const { api } = createApi();
+    const controller = await createController(api, terminal);
+
+    controller.setFontSize(16);
+    controller.setScrollback(12_000);
+    controller.setAccessibility({
+      screenReaderMode: true,
+      reducedMotion: true,
+      minimumContrastRatio: 7,
+    });
+
+    expect(terminal.options).toMatchObject({
+      cursorBlink: false,
+      fontSize: 16,
+      minimumContrastRatio: 7,
+      screenReaderMode: true,
+      scrollback: 12_000,
+    });
+    expect(terminal.refresh).toHaveBeenCalled();
   });
 
   it("stops accepting input when canonical lifecycle exits", async () => {
@@ -298,7 +353,7 @@ class FakeTerminal implements TerminalLike {
     return { dispose: vi.fn() };
   }
 
-  loadAddon(): void {}
+  readonly loadAddon = vi.fn();
 
   emitData(data: string): void {
     this.dataHandler(data);
@@ -321,7 +376,11 @@ class FakeTerminal implements TerminalLike {
   }
 }
 
-async function createController(api: RendererTerminalApi, terminal: FakeTerminal) {
+async function createController(
+  api: RendererTerminalApi,
+  terminal: FakeTerminal,
+  searchTarget?: TerminalSearchTarget,
+) {
   const fitAddon: FitAddonLike = {
     fit: vi.fn(),
     proposeDimensions: vi.fn(() => ({ cols: 80, rows: 24 })),
@@ -332,6 +391,7 @@ async function createController(api: RendererTerminalApi, terminal: FakeTerminal
     attachSessionId: sessionId,
     createTerminal: () => terminal,
     createFitAddon: () => fitAddon,
+    ...(searchTarget ? { createSearchAddon: () => searchTarget } : {}),
   });
 }
 
@@ -389,7 +449,9 @@ function createApi(): {
     listPermissions: vi.fn(() => Promise.resolve([])),
     resolvePermission: vi.fn(() => Promise.resolve(false)),
     getConfig: vi.fn(),
+    openLink: vi.fn(() => Promise.resolve({ status: "opened" as const })),
     saveUiTheme: vi.fn(),
+    saveFocusedSettings: vi.fn(),
     saveAgentPolicy: vi.fn(),
     presentationReady: vi.fn(() => Promise.resolve()),
     acknowledgePresentation: vi.fn(() => Promise.resolve()),

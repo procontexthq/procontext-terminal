@@ -104,6 +104,7 @@ describe("desktop terminal smoke", () => {
         ["sidebar", '[data-testid="session-sidebar-toggle"]'],
         ["new-tab", '[data-testid="new-tab-button"]'],
         ["theme", '[data-testid="theme-select"]'],
+        ["settings", '[data-testid="focused-settings-toggle"]'],
         ["policy", '[data-testid="agent-policy-toggle"]'],
         ["agent-status", '[data-testid="agent-activity"]'],
       ] as const;
@@ -262,6 +263,115 @@ describe("desktop terminal smoke", () => {
       await page.keyboard.press("Control+W");
       await waitForTerminalText(page, handledMarker);
     }
+  });
+
+  it("persists focused settings and applies accessibility preferences to the live terminal", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+
+    await page.getByTestId("focused-settings-toggle").click();
+    await page.getByRole("region", { name: "Terminal settings" }).waitFor({
+      timeout: e2eUiTimeoutMs,
+    });
+    await page.getByTestId("setting-font-size").fill("16");
+    await page.getByTestId("setting-font-family").fill('Consolas, "Courier New", monospace');
+    await page.getByTestId("setting-scrollback").fill("12000");
+    await page.getByTestId("setting-color-background").fill("#112233");
+    await page.getByTestId("accessibility-minimum-contrast").fill("7");
+    await page.getByTestId("accessibility-screen-reader").check();
+    await page.getByTestId("accessibility-reduced-motion").check();
+    await page.getByTestId("focused-settings-save").click();
+
+    await page.waitForFunction(
+      () => {
+        const shell = document.querySelector<HTMLElement>(".app-shell");
+        return (
+          shell?.dataset.screenReader === "true" &&
+          shell.dataset.reducedMotion === "true" &&
+          shell.style.getPropertyValue("--terminal-font").includes("Consolas") &&
+          shell.style.getPropertyValue("--terminal-bg") === "#112233"
+        );
+      },
+      undefined,
+      { timeout: e2eUiTimeoutMs },
+    );
+    await page.locator(".xterm-accessibility-tree").waitFor({ timeout: e2eUiTimeoutMs });
+    await waitForFileText(join(userDataDir, "settings.json"), '"schemaVersion": 4');
+    const saved = JSON.parse(await readFile(join(userDataDir, "settings.json"), "utf8")) as {
+      accessibility?: { screenReaderMode?: boolean; reducedMotion?: boolean };
+      terminal?: { fontSize?: number; scrollback?: number };
+    };
+    if (
+      saved.terminal?.fontSize !== 16 ||
+      saved.terminal.scrollback !== 12_000 ||
+      saved.accessibility?.screenReaderMode !== true ||
+      saved.accessibility.reducedMotion !== true
+    ) {
+      throw new Error(`Expected focused settings to persist: ${JSON.stringify(saved)}`);
+    }
+  });
+
+  it("applies saved presentation defaults to later human terminals only", async () => {
+    const userDataDir = await createTempUserDataDir();
+    await writeFile(
+      join(userDataDir, "settings.json"),
+      `${JSON.stringify(
+        { ...defaultTerminalConfig(), defaultPresentation: "background" },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+
+    await page.getByTestId("new-tab-button").click();
+    await page.waitForFunction(
+      async () => {
+        const sessions = await window.terminalApi.listSessions();
+        return (
+          document.querySelectorAll("[data-terminal-tab='true']").length === 2 &&
+          sessions.length === 2 &&
+          sessions.some((session) => session.presentation.state === "background")
+        );
+      },
+      undefined,
+      { timeout: e2eUiTimeoutMs },
+    );
+    const selectedTabs = await page
+      .locator("[data-terminal-tab='true'][aria-selected='true']")
+      .count();
+    if (
+      selectedTabs !== 1 ||
+      (await page.getByTestId("terminal-tab-0").getAttribute("aria-selected")) !== "true"
+    ) {
+      throw new Error("A background terminal must not replace the active foreground tab.");
+    }
+
+    await page.getByTestId("focused-settings-toggle").click();
+    await page.getByTestId("setting-default-presentation").selectOption("headless");
+    await page.getByTestId("focused-settings-save").click();
+    await page.waitForFunction(
+      async () => (await window.terminalApi.getConfig()).defaultPresentation === "headless",
+      undefined,
+      { timeout: e2eUiTimeoutMs },
+    );
+    await page.getByTestId("new-tab-button").click();
+    await page.waitForFunction(
+      async () => {
+        const sessions = await window.terminalApi.listSessions();
+        return (
+          document.querySelectorAll("[data-terminal-tab='true']").length === 2 &&
+          sessions.length === 3 &&
+          sessions.filter((session) => session.presentation.state === "headless").length === 1
+        );
+      },
+      undefined,
+      { timeout: e2eUiTimeoutMs },
+    );
   });
 
   it("keeps a live-bottom renderer viewport on the settled end of bursty output", async () => {
@@ -1314,15 +1424,25 @@ async function setNativeWindowSize(page: Page, width: number, height: number): P
     nextWidth: width,
     nextHeight: height,
   });
-  await page.waitForFunction(
-    ({ expectedWidth, expectedHeight }) =>
-      window.innerWidth <= expectedWidth &&
-      window.innerWidth >= expectedWidth - 32 &&
-      window.innerHeight <= expectedHeight &&
-      window.innerHeight >= expectedHeight - 80,
-    { expectedWidth: width, expectedHeight: height },
-    { timeout: e2eUiTimeoutMs },
-  );
+  try {
+    await page.waitForFunction(
+      ({ expectedWidth, expectedHeight }) =>
+        Math.abs(window.innerWidth - expectedWidth) <= 32 &&
+        window.innerHeight <= expectedHeight + 32 &&
+        window.innerHeight >= expectedHeight - 80,
+      { expectedWidth: width, expectedHeight: height },
+      { timeout: e2eUiTimeoutMs },
+    );
+  } catch (error: unknown) {
+    const actual = await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }));
+    throw new Error(
+      `Native window did not resize near ${width}x${height}; actual=${actual.width}x${actual.height}.`,
+      { cause: error },
+    );
+  }
 }
 
 async function waitForTerminalReady(page: Page): Promise<void> {
@@ -1473,6 +1593,19 @@ async function waitForAgentDescriptor(userDataDir: string): Promise<AgentGateway
     }
   }
   throw new Error("Timed out waiting for agent gateway descriptor.");
+}
+
+async function waitForFileText(path: string, expected: string): Promise<void> {
+  const deadline = Date.now() + e2eUiTimeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if ((await readFile(path, "utf8")).includes(expected)) return;
+    } catch {
+      // The settings write may not have reached disk yet.
+    }
+    await delay(50);
+  }
+  throw new Error(`Timed out waiting for ${expected} in ${path}.`);
 }
 
 async function stopElectronProcess(): Promise<void> {

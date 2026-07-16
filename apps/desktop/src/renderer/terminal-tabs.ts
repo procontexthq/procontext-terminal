@@ -33,11 +33,12 @@ export function createInitialTerminalTabs(): TerminalTabsState {
 export function addTerminalTab(
   state: TerminalTabsState,
   tab: TerminalTabLaunchMetadata = defaultTab(),
+  options: { activate?: boolean } = {},
 ): TerminalTabsState {
   const nextTab = createTerminalTab(tab);
   return {
     tabs: [...state.tabs, nextTab],
-    activeTabId: nextTab.id,
+    activeTabId: options.activate === false ? state.activeTabId : nextTab.id,
   };
 }
 
