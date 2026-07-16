@@ -58,7 +58,11 @@ export function themeFontSet(theme: UiThemePreference): ThemeFontSet {
   return themeFonts[theme];
 }
 
-export function themeFontLoadDescriptors(fonts: ThemeFontSet, terminalFontSize: number): string[] {
+export function themeFontLoadDescriptors(
+  fonts: ThemeFontSet,
+  terminalFontSize: number,
+  terminalFontFamily = fonts.terminalFontFamily,
+): string[] {
   return [
     fontLoadDescriptor({
       family: fonts.uiFontFace,
@@ -66,11 +70,22 @@ export function themeFontLoadDescriptors(fonts: ThemeFontSet, terminalFontSize: 
       weight: fonts.uiFontWeight,
     }),
     fontLoadDescriptor({
-      family: fonts.terminalFontFace,
+      family: firstFontFamily(terminalFontFamily),
       size: terminalFontSize,
       weight: fonts.terminalFontWeight,
     }),
   ];
+}
+
+function firstFontFamily(fontFamily: string): string {
+  const first = fontFamily.split(",", 1)[0]?.trim() ?? "monospace";
+  if (first.length >= 2 && first.startsWith('"') && first.endsWith('"')) {
+    return first.slice(1, -1).replaceAll('\\"', '"');
+  }
+  if (first.length >= 2 && first.startsWith("'") && first.endsWith("'")) {
+    return first.slice(1, -1).replaceAll("\\'", "'");
+  }
+  return first || "monospace";
 }
 
 function fontLoadDescriptor({

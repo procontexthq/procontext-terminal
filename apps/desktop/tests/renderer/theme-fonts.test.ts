@@ -29,5 +29,8 @@ describe("theme fonts", () => {
       '500 12px "Orbitron"',
       '400 13px "Share Tech Mono"',
     ]);
+    expect(
+      themeFontLoadDescriptors(themeFonts.gamer, 16, 'Consolas, "Courier New", monospace'),
+    ).toEqual(['500 12px "Orbitron"', '400 16px "Consolas"']);
   });
 });

@@ -3,9 +3,12 @@ import { z } from "zod";
 import {
   agentPermissionCategories,
   saveAgentPolicyRequestSchema,
+  saveFocusedSettingsRequestSchema,
   saveUiThemeRequestSchema,
   type AgentPermissionCategory,
   type AgentPolicyConfig,
+  type FocusedTerminalSettings,
+  type SaveFocusedSettingsRequest,
   type SaveAgentPolicyRequest,
   type SaveUiThemeRequest,
   type TerminalConfig,
@@ -27,6 +30,11 @@ import {
   type RequestId,
   type SessionId,
 } from "./ids.js";
+import {
+  terminalLinkTargetSchema,
+  type TerminalLinkOpenResult,
+  type TerminalLinkTarget,
+} from "./links.js";
 import {
   recordingControlRequestSchema,
   type RecordingControlRequest,
@@ -201,7 +209,13 @@ export type RendererCommand =
       payload: ResolvePermissionRequest;
     }
   | { type: "settings.get"; requestId: RequestId; payload: Record<string, never> }
+  | { type: "link.open"; requestId: RequestId; payload: TerminalLinkTarget }
   | { type: "settings.saveUiTheme"; requestId: RequestId; payload: SaveUiThemeRequest }
+  | {
+      type: "settings.saveFocused";
+      requestId: RequestId;
+      payload: SaveFocusedSettingsRequest;
+    }
   | {
       type: "settings.saveAgentPolicy";
       requestId: RequestId;
@@ -385,9 +399,19 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("settings.get"), requestId: requestIdSchema, payload: z.object({}) }),
   z.object({
+    type: z.literal("link.open"),
+    requestId: requestIdSchema,
+    payload: terminalLinkTargetSchema,
+  }),
+  z.object({
     type: z.literal("settings.saveUiTheme"),
     requestId: requestIdSchema,
     payload: saveUiThemeRequestSchema,
+  }),
+  z.object({
+    type: z.literal("settings.saveFocused"),
+    requestId: requestIdSchema,
+    payload: saveFocusedSettingsRequestSchema,
   }),
   z.object({
     type: z.literal("settings.saveAgentPolicy"),
@@ -431,7 +455,9 @@ export type RendererTerminalApi = {
   listPermissions(): Promise<AgentPermissionRequest[]>;
   resolvePermission(request: ResolvePermissionRequest): Promise<boolean>;
   getConfig(): Promise<TerminalConfig>;
+  openLink(target: TerminalLinkTarget): Promise<TerminalLinkOpenResult>;
   saveUiTheme(theme: UiThemePreference): Promise<TerminalConfig>;
+  saveFocusedSettings(settings: FocusedTerminalSettings): Promise<TerminalConfig>;
   saveAgentPolicy(policy: AgentPolicyConfig): Promise<TerminalConfig>;
   presentationReady(): Promise<void>;
   acknowledgePresentation(request: RendererPresentationAcknowledgement): Promise<void>;

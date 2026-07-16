@@ -257,6 +257,8 @@ Status: implemented.
 
 ### Focused terminal usability
 
+Status: implemented.
+
 - Add local terminal search over the human-visible xterm scrollback.
 - Add validated clickable URLs and local file paths without turning terminal
   output into trusted application commands.

@@ -38,6 +38,7 @@ import {
 import { nextTerminalStatus, type TerminalUiStatus } from "./terminal-status";
 import { NotificationCenter } from "./notification-center";
 import { AgentPolicySettings } from "./agent-policy-settings";
+import { FocusedSettings } from "./focused-settings";
 import { PermissionCenter } from "./permission-center";
 import { SessionSidebarToggle } from "./session-sidebar-toggle";
 import { SessionSidebar } from "./session-sidebar";
@@ -47,6 +48,7 @@ import { useSessionCollaboration } from "./use-session-collaboration";
 import { useAgentPermissions } from "./use-agent-permissions";
 import { resolveAppShortcut } from "../shared/app-shortcuts";
 import { keyboardEventShortcutInput, rendererShortcutPlatform } from "./renderer-shortcuts";
+import { openNewHumanTerminal } from "./new-human-terminal";
 
 export function App(): ReactElement {
   const [config, setConfig] = useState<TerminalConfig | null>(null);
@@ -166,8 +168,15 @@ export function App(): ReactElement {
   }, []);
 
   const addTab = useCallback(() => {
-    setTabsState((current) => (current ? addTerminalTab(current) : current));
-  }, []);
+    void openNewHumanTerminal(config?.defaultPresentation ?? "foreground", {
+      addVisibleTab: (activate) => {
+        setTabsState((current) =>
+          current ? addTerminalTab(current, undefined, { activate }) : current,
+        );
+      },
+      createHeadless: () => window.terminalApi.createSession({ presentation: "headless" }),
+    }).catch(reportError);
+  }, [config?.defaultPresentation, reportError]);
 
   const processPresentationCommand = useCallback(
     (command: RendererPresentationCommand) =>
@@ -206,23 +215,17 @@ export function App(): ReactElement {
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const fonts = themeFontSet(uiTheme);
   const terminalFontSize = config?.terminal.fontSize ?? 13;
+  const terminalFontFamily = config?.terminal.fontFamily ?? fonts.terminalFontFamily;
   const fontLoadDescriptors = useMemo(
-    () => themeFontLoadDescriptors(fonts, terminalFontSize),
-    [fonts, terminalFontSize],
+    () => themeFontLoadDescriptors(fonts, terminalFontSize, terminalFontFamily),
+    [fonts, terminalFontFamily, terminalFontSize],
   );
-  const terminalTheme = useMemo(
-    () =>
-      config
-        ? {
-            ...config.terminal.theme,
-            background: fonts.terminalBackground,
-          }
-        : null,
-    [config, fonts.terminalBackground],
-  );
-  const appStyle: CSSProperties & Record<"--ui-font" | "--terminal-font", string> = {
+  const terminalTheme = config?.terminal.theme ?? null;
+  const appStyle: CSSProperties &
+    Record<"--ui-font" | "--terminal-bg" | "--terminal-font", string> = {
     "--ui-font": fonts.uiFontFamily,
-    "--terminal-font": fonts.terminalFontFamily,
+    "--terminal-bg": terminalTheme?.background ?? fonts.terminalBackground,
+    "--terminal-font": terminalFontFamily,
   };
 
   const closeTab = useCallback(
@@ -299,7 +302,13 @@ export function App(): ReactElement {
   }, [handleAppShortcut]);
 
   return (
-    <main className="app-shell" data-theme={uiTheme} style={appStyle}>
+    <main
+      className="app-shell"
+      data-theme={uiTheme}
+      data-reduced-motion={config?.accessibility.reducedMotion ? "true" : "false"}
+      data-screen-reader={config?.accessibility.screenReaderMode ? "true" : "false"}
+      style={appStyle}
+    >
       <header className="titlebar" data-testid="window-titlebar">
         <div className="titlebar-content">
           <SessionSidebarToggle
@@ -341,6 +350,17 @@ export function App(): ReactElement {
               </select>
             </label>
             {config ? (
+              <FocusedSettings
+                config={config}
+                onSave={(settings) => {
+                  void window.terminalApi
+                    .saveFocusedSettings(settings)
+                    .then(setConfig)
+                    .catch(reportError);
+                }}
+              />
+            ) : null}
+            {config ? (
               <AgentPolicySettings
                 policy={config.agentPolicy}
                 onSave={(policy: AgentPolicyConfig) => {
@@ -380,7 +400,7 @@ export function App(): ReactElement {
                   tab={tab}
                   config={config}
                   active={tab.id === activeTabId}
-                  terminalFontFamily={fonts.terminalFontFamily}
+                  terminalFontFamily={terminalFontFamily}
                   fontLoadDescriptors={fontLoadDescriptors}
                   terminalTheme={terminalTheme}
                   focusRequestVersion={focusRequestVersion}

@@ -388,6 +388,20 @@ describe("terminal protocol", () => {
     expect(createRendererCommand("recording.exportFile", { sessionId }, requestId)).toMatchObject({
       type: "recording.exportFile",
     });
+    expect(
+      createRendererCommand(
+        "link.open",
+        { kind: "url", target: "https://example.com/docs" },
+        requestId,
+      ),
+    ).toMatchObject({ type: "link.open" });
+    expect(() =>
+      parseRendererCommand({
+        type: "link.open",
+        requestId,
+        payload: { kind: "url", target: "javascript:alert(1)" },
+      }),
+    ).toThrow();
     expect(createRendererCommand("permission.list", {}, requestId)).toMatchObject({
       type: "permission.list",
     });
@@ -414,6 +428,30 @@ describe("terminal protocol", () => {
         requestId,
       ),
     ).toMatchObject({ type: "settings.saveAgentPolicy" });
+    expect(
+      createRendererCommand(
+        "settings.saveFocused",
+        {
+          settings: {
+            terminal: {
+              fontFamily: "monospace",
+              fontSize: 14,
+              scrollback: 10_000,
+              theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+            },
+            shell: { defaultProfile: null, profiles: [] },
+            accessibility: {
+              screenReaderMode: true,
+              reducedMotion: true,
+              minimumContrastRatio: 7,
+            },
+            recording: { state: "disabled", redactedPatterns: ["token"] },
+            defaultPresentation: "background",
+          },
+        },
+        requestId,
+      ),
+    ).toMatchObject({ type: "settings.saveFocused" });
     expect(
       isRendererSessionEvent({
         type: "permission.requested",
@@ -504,7 +542,7 @@ describe("terminal protocol", () => {
     const sessionId = createSessionId("session-recording");
     expect(
       parseTerminalConfig({
-        schemaVersion: 3,
+        schemaVersion: 4,
         terminal: {
           fontFamily: "monospace",
           fontSize: 13,
@@ -513,6 +551,19 @@ describe("terminal protocol", () => {
         },
         shell: { defaultProfile: null, profiles: [] },
         recording: { state: "disabled", redactedPatterns: [] },
+        accessibility: {
+          screenReaderMode: false,
+          reducedMotion: false,
+          minimumContrastRatio: 4.5,
+        },
+        defaultPresentation: "foreground",
+        windowGeometry: {
+          x: 120,
+          y: 80,
+          width: 1000,
+          height: 700,
+          displayId: 1,
+        },
         ui: { theme: "default" },
         agentPolicy: {
           observation: "allow",
@@ -523,7 +574,42 @@ describe("terminal protocol", () => {
           termination: "ask",
         },
       }),
-    ).toMatchObject({ schemaVersion: 3, agentPolicy: { presentation: "ask" } });
+    ).toMatchObject({
+      schemaVersion: 4,
+      accessibility: { minimumContrastRatio: 4.5 },
+      defaultPresentation: "foreground",
+      windowGeometry: { displayId: 1 },
+      agentPolicy: { presentation: "ask" },
+    });
+    expect(() =>
+      parseTerminalConfig({
+        schemaVersion: 4,
+        terminal: {
+          fontFamily: "monospace",
+          fontSize: 13,
+          scrollback: 5000,
+          theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+        },
+        shell: { defaultProfile: null, profiles: [] },
+        recording: { state: "disabled", redactedPatterns: [] },
+        accessibility: {
+          screenReaderMode: false,
+          reducedMotion: false,
+          minimumContrastRatio: 22,
+        },
+        defaultPresentation: "foreground",
+        windowGeometry: null,
+        ui: { theme: "default" },
+        agentPolicy: {
+          observation: "allow",
+          execution: "allow",
+          interaction: "allow",
+          presentation: "allow",
+          recording: "allow",
+          termination: "allow",
+        },
+      }),
+    ).toThrow();
     expect(
       parseTerminalRecordingExport({
         schemaVersion: 1,

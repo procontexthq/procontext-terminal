@@ -14,7 +14,7 @@ import {
 describe("terminal config", () => {
   it("provides backward-compatible permission defaults", () => {
     expect(defaultTerminalConfig()).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       terminal: {
         fontFamily:
           '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
@@ -32,6 +32,13 @@ describe("terminal config", () => {
         state: "disabled",
         redactedPatterns: [],
       },
+      accessibility: {
+        screenReaderMode: false,
+        reducedMotion: false,
+        minimumContrastRatio: 4.5,
+      },
+      defaultPresentation: "foreground",
+      windowGeometry: null,
       agentPolicy: {
         observation: "allow",
         execution: "allow",
@@ -52,11 +59,14 @@ describe("terminal config", () => {
 
     expect(parsed.warnings).toHaveLength(0);
     expect(parsed.config).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh", profiles: [] },
       ui: { theme: "default" },
       recording: { redactedPatterns: ["token"] },
+      accessibility: { minimumContrastRatio: 4.5 },
+      defaultPresentation: "foreground",
+      windowGeometry: null,
       agentPolicy: { termination: "allow" },
     });
     expect(parsed.config).not.toHaveProperty("workspace");
@@ -70,18 +80,16 @@ describe("terminal config", () => {
     });
 
     expect(parsed.config).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh", profiles: [] },
       recording: { redactedPatterns: ["token"] },
     });
-    expect(parsed.warnings).toEqual([
-      "Invalid recording redaction pattern ignored: (",
-      "Invalid recording redaction pattern ignored: ",
-    ]);
+    expect(parsed.warnings).toEqual(["2 invalid recording redaction patterns ignored."]);
+    expect(parsed.warnings.join(" ")).not.toContain("(");
   });
 
-  it("migrates explicit schema version 1 settings to schema version 3", () => {
+  it("migrates explicit schema version 1 settings to schema version 4", () => {
     const parsed = parseTerminalConfig({
       schemaVersion: 1,
       terminal: { fontSize: 15 },
@@ -90,7 +98,7 @@ describe("terminal config", () => {
 
     expect(parsed.warnings).toHaveLength(0);
     expect(parsed.config).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       terminal: { fontSize: 15 },
       shell: { defaultProfile: "/bin/bash" },
       ui: { theme: "default" },
@@ -108,12 +116,83 @@ describe("terminal config", () => {
 
     expect(parsed.warnings).toHaveLength(0);
     expect(parsed.config).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       terminal: { fontSize: 14 },
       shell: { defaultProfile: "/bin/zsh" },
       ui: { theme: "default" },
     });
     expect(parsed.config).not.toHaveProperty("workspace");
+  });
+
+  it("migrates schema version 3 settings with safe focused-setting defaults", () => {
+    const parsed = parseTerminalConfig({
+      schemaVersion: 3,
+      terminal: { fontSize: 15 },
+      shell: { defaultProfile: null, profiles: [] },
+      recording: { state: "enabled", redactedPatterns: ["secret"] },
+      ui: { theme: "coder" },
+      agentPolicy: defaultTerminalConfig().agentPolicy,
+      tabs: [{ sessionId: "must-not-survive" }],
+      sessions: [{ id: "must-not-survive" }],
+    });
+
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.config).toMatchObject({
+      schemaVersion: 4,
+      terminal: { fontSize: 15 },
+      accessibility: {
+        screenReaderMode: false,
+        reducedMotion: false,
+        minimumContrastRatio: 4.5,
+      },
+      defaultPresentation: "foreground",
+      windowGeometry: null,
+    });
+    expect(parsed.config).not.toHaveProperty("tabs");
+    expect(parsed.config).not.toHaveProperty("sessions");
+  });
+
+  it("retains validated window geometry and isolates invalid geometry from valid settings", () => {
+    const valid = parseTerminalConfig({
+      ...defaultTerminalConfig(),
+      windowGeometry: {
+        x: -1200,
+        y: 40,
+        width: 1280,
+        height: 800,
+        displayId: 7,
+      },
+    });
+    expect(valid.warnings).toEqual([]);
+    expect(valid.config.windowGeometry).toEqual({
+      x: -1200,
+      y: 40,
+      width: 1280,
+      height: 800,
+      displayId: 7,
+    });
+
+    const invalid = parseTerminalConfig({
+      ...defaultTerminalConfig(),
+      terminal: { ...defaultTerminalConfig().terminal, fontSize: 17 },
+      ui: { theme: "coder" },
+      windowGeometry: {
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        displayId: 1,
+        tabs: ["forbidden"],
+      },
+    });
+    expect(invalid.config).toMatchObject({
+      terminal: { fontSize: 17 },
+      ui: { theme: "coder" },
+      windowGeometry: null,
+    });
+    expect(invalid.warnings).toEqual([
+      "Invalid window geometry ignored; using safe window defaults.",
+    ]);
   });
 
   it("falls back to defaults for invalid settings", () => {
@@ -123,6 +202,22 @@ describe("terminal config", () => {
 
     expect(parsed.config).toEqual(defaultTerminalConfig());
     expect(parsed.warnings).toHaveLength(1);
+  });
+
+  it("rejects terminal colors that cannot be shared by xterm, CSS, and Electron", () => {
+    const parsed = parseTerminalConfig({
+      ...defaultTerminalConfig(),
+      terminal: {
+        ...defaultTerminalConfig().terminal,
+        theme: {
+          ...defaultTerminalConfig().terminal.theme,
+          background: "not-a-portable-color",
+        },
+      },
+    });
+
+    expect(parsed.config).toEqual(defaultTerminalConfig());
+    expect(parsed.warnings).toEqual(["Invalid terminal settings; using defaults."]);
   });
 
   it("rejects unknown future schema versions without downgrading silently", () => {
@@ -159,7 +254,7 @@ describe("terminal config", () => {
         config,
         warnings: [],
       });
-      await expect(readFile(settingsPath, "utf8")).resolves.toContain('"schemaVersion": 3');
+      await expect(readFile(settingsPath, "utf8")).resolves.toContain('"schemaVersion": 4');
       await expect(readFile(settingsPath, "utf8")).resolves.not.toContain('"workspace"');
     } finally {
       await rm(tempDir, { recursive: true, force: true });

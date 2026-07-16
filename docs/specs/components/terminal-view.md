@@ -30,6 +30,13 @@ but does not define terminal truth.
 - Apply canonical viewport changes requested by an agent.
 - Follow live output when the viewport is at the bottom while preserving a
   human-selected historical viewport.
+- Search the local xterm scrollback without sending transcript content across
+  IPC. A successful search suppresses intermediate xterm scroll callbacks and
+  reports one settled viewport so canonical human/agent viewport state remains
+  synchronized.
+- Detect validated HTTP(S) URLs and absolute local paths across xterm logical
+  lines, including quoted paths and links wrapped over multiple buffer rows.
+  Link ranges must map back to the correct terminal cells.
 - Preserve selection, copy, paste, mouse reporting, accessibility, and focus.
 - Render xterm.js's compact custom scrollbar as the sole terminal scrollbar;
   its legacy native viewport scrollbar must not reserve a platform-specific
@@ -64,6 +71,8 @@ exists, but do not forward input or PTY resize operations.
 - Mixed canonical response-write outcomes suppress and fall back at their
   original query occurrences.
 - Human and agent scrolling remain synchronized without feedback loops.
+- Search reports exactly one settled canonical viewport, and wrapped links
+  retain their complete validated target and multi-row range.
 - Exited sessions stay visible and reject input.
 - A successful human tab close restores focus and the blinking cursor in the
   surviving active terminal, including when an inactive tab was closed.

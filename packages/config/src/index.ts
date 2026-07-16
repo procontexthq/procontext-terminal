@@ -1,7 +1,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { terminalConfigSchema, type TerminalConfig, type TerminalTheme } from "@terminal/protocol";
+import {
+  terminalConfigSchema,
+  windowGeometrySchema,
+  type TerminalConfig,
+  type TerminalTheme,
+  type WindowGeometry,
+} from "@terminal/protocol";
 
 export type { TerminalConfig, TerminalTheme };
 
@@ -12,7 +18,7 @@ export type ConfigParseResult = {
 
 export function defaultTerminalConfig(): TerminalConfig {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     terminal: {
       fontFamily:
         '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
@@ -35,6 +41,13 @@ export function defaultTerminalConfig(): TerminalConfig {
       state: "disabled",
       redactedPatterns: [],
     },
+    accessibility: {
+      screenReaderMode: false,
+      reducedMotion: false,
+      minimumContrastRatio: 4.5,
+    },
+    defaultPresentation: "foreground",
+    windowGeometry: null,
     agentPolicy: {
       observation: "allow",
       execution: "allow",
@@ -52,7 +65,8 @@ export function parseTerminalConfig(value: unknown): ConfigParseResult {
     schemaVersion !== undefined &&
     schemaVersion !== 1 &&
     schemaVersion !== 2 &&
-    schemaVersion !== 3
+    schemaVersion !== 3 &&
+    schemaVersion !== 4
   ) {
     return {
       config: defaultTerminalConfig(),
@@ -63,10 +77,11 @@ export function parseTerminalConfig(value: unknown): ConfigParseResult {
   const defaults = defaultTerminalConfig();
   const raw = isObject(value) ? value : {};
   const recording = parseRecordingConfig(raw.recording, defaults.recording);
+  const windowGeometry = parseWindowGeometry(raw.windowGeometry);
   const merged = {
     ...defaults,
     ...raw,
-    schemaVersion: 3,
+    schemaVersion: 4,
     terminal: {
       ...defaults.terminal,
       ...(isObject(raw.terminal) ? raw.terminal : {}),
@@ -80,6 +95,11 @@ export function parseTerminalConfig(value: unknown): ConfigParseResult {
       ...(isObject(raw.ui) ? raw.ui : {}),
     },
     recording: recording.config,
+    windowGeometry: windowGeometry.geometry,
+    accessibility: {
+      ...defaults.accessibility,
+      ...(isObject(raw.accessibility) ? raw.accessibility : {}),
+    },
     agentPolicy: {
       ...defaults.agentPolicy,
       ...(isObject(raw.agentPolicy) ? raw.agentPolicy : {}),
@@ -87,12 +107,28 @@ export function parseTerminalConfig(value: unknown): ConfigParseResult {
   };
   const parsed = terminalConfigSchema.safeParse(merged);
   if (parsed.success) {
-    return { config: parsed.data, warnings: recording.warnings };
+    return {
+      config: parsed.data,
+      warnings: [...recording.warnings, ...windowGeometry.warnings],
+    };
   }
 
   return {
     config: defaultTerminalConfig(),
     warnings: ["Invalid terminal settings; using defaults."],
+  };
+}
+
+function parseWindowGeometry(value: unknown): {
+  geometry: WindowGeometry | null;
+  warnings: string[];
+} {
+  if (value === undefined || value === null) return { geometry: null, warnings: [] };
+  const parsed = windowGeometrySchema.safeParse(value);
+  if (parsed.success) return { geometry: parsed.data, warnings: [] };
+  return {
+    geometry: null,
+    warnings: ["Invalid window geometry ignored; using safe window defaults."],
   };
 }
 
@@ -157,10 +193,10 @@ function parseRecordingConfig(
     return { config: merged, warnings: [] };
   }
 
-  const warnings: string[] = [];
+  let invalidPatternCount = 0;
   const redactedPatterns = merged.redactedPatterns.filter((pattern): pattern is string => {
     if (typeof pattern !== "string" || pattern.length === 0 || !isValidRegexPattern(pattern)) {
-      warnings.push(`Invalid recording redaction pattern ignored: ${String(pattern)}`);
+      invalidPatternCount += 1;
       return false;
     }
     return true;
@@ -168,7 +204,12 @@ function parseRecordingConfig(
 
   return {
     config: { ...merged, redactedPatterns },
-    warnings,
+    warnings:
+      invalidPatternCount === 0
+        ? []
+        : [
+            `${invalidPatternCount} invalid recording redaction pattern${invalidPatternCount === 1 ? "" : "s"} ignored.`,
+          ],
   };
 }
 

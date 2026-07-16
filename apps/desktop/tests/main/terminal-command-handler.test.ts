@@ -16,6 +16,7 @@ import {
   type TerminalCommandServices,
 } from "../../src/main/terminal-command-handler";
 import { createTerminalPresentationRegistry } from "../../src/main/presentation-registry";
+import { applyTerminalConfigMutation } from "../../src/main/terminal-config-persistence";
 
 const sessionId = createSessionId("session-1");
 
@@ -303,7 +304,100 @@ describe("terminal command handler", () => {
       decision: "allow",
     });
     expect(saved).toMatchObject({ ok: true, value: { agentPolicy: policy } });
-    expect(base.saveConfig).toHaveBeenCalledWith(expect.objectContaining({ agentPolicy: policy }));
+    expect(base.saveConfig).toHaveBeenCalledWith({ type: "agent-policy", policy });
+  });
+
+  it("saves UI themes as atomic terminal appearance presets", async () => {
+    const base = createServices();
+    base.getConfig = () => ({
+      ...defaultTerminalConfig(),
+      terminal: {
+        ...defaultTerminalConfig().terminal,
+        fontFamily: "User Font",
+        theme: { ...defaultTerminalConfig().terminal.theme, background: "#123456" },
+      },
+    });
+
+    const saved = await handleRendererCommandPayload(
+      createRendererCommand("settings.saveUiTheme", { theme: "gamer" }),
+      base,
+    );
+
+    expect(base.saveConfig).toHaveBeenCalledWith({ type: "ui-theme", theme: "gamer" });
+    expect(saved).toMatchObject({
+      ok: true,
+      value: {
+        ui: { theme: "gamer" },
+        terminal: {
+          fontFamily:
+            '"Share Tech Mono", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+          theme: { background: "#07100d" },
+        },
+      },
+    });
+  });
+
+  it("saves focused terminal settings without replacing policy, theme, or window geometry", async () => {
+    const base = createServices();
+    const current = {
+      ...defaultTerminalConfig(),
+      ui: { theme: "gamer" as const },
+      windowGeometry: { x: 20, y: 30, width: 1000, height: 700, displayId: 1 },
+    };
+    base.getConfig = () => current;
+    const settings = {
+      terminal: {
+        ...current.terminal,
+        fontSize: 16,
+        scrollback: 12_000,
+      },
+      shell: {
+        defaultProfile: "work",
+        profiles: [
+          {
+            id: "work",
+            name: "Work",
+            shell: "/bin/zsh",
+            cwd: "/workspace",
+            env: {},
+          },
+        ],
+      },
+      accessibility: {
+        screenReaderMode: true,
+        reducedMotion: true,
+        minimumContrastRatio: 7,
+      },
+      recording: { state: "enabled" as const, redactedPatterns: ["token"] },
+      defaultPresentation: "background" as const,
+    };
+
+    const saved = await handleRendererCommandPayload(
+      createRendererCommand("settings.saveFocused", { settings }),
+      base,
+    );
+
+    expect(saved).toMatchObject({
+      ok: true,
+      value: {
+        ...current,
+        ...settings,
+      },
+    });
+    expect(base.saveConfig).toHaveBeenCalledWith({ type: "focused-settings", settings });
+  });
+
+  it("routes validated terminal links through the main-process opener", async () => {
+    const base = createServices();
+    const target = { kind: "url" as const, target: "https://example.com/docs" };
+
+    const result = await handleRendererCommandPayload(
+      createRendererCommand("link.open", target),
+      base,
+    );
+
+    expect(result).toMatchObject({ ok: true, value: { status: "opened" } });
+    expect(base.openLink).toHaveBeenCalledWith(target);
   });
 
   it("routes native recording export and reports sanitized policy denials", async () => {
@@ -392,7 +486,7 @@ describe("terminal command handler", () => {
 
 function createServices(overrides: { policy?: TerminalPolicy } = {}): TerminalCommandServices {
   const summary = createSummary();
-  return {
+  const services: TerminalCommandServices = {
     rendererId: 11,
     presentationRegistry: createTerminalPresentationRegistry(),
     presentationController: {
@@ -466,11 +560,16 @@ function createServices(overrides: { policy?: TerminalPolicy } = {}): TerminalCo
     exportRecordingFile: vi.fn(() =>
       Promise.resolve({ status: "saved" as const, fileName: "recording.json" }),
     ),
+    openLink: vi.fn(() => Promise.resolve({ status: "opened" as const })),
     onPolicyDenied: vi.fn(),
     getConfig: defaultTerminalConfig,
-    saveConfig: vi.fn((config) => Promise.resolve(config)),
+    saveConfig: vi.fn(),
     policy: overrides.policy ?? createDefaultTerminalPolicy(),
   };
+  services.saveConfig = vi.fn<TerminalCommandServices["saveConfig"]>((mutation) =>
+    Promise.resolve(applyTerminalConfigMutation(services.getConfig(), mutation)),
+  );
+  return services;
 }
 
 function createSummary(): TerminalSessionSummary {
