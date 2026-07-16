@@ -21,6 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Made focused terminal settings easier to use with named font choices that
+  preserve custom stacks, synchronized color controls, aligned accessibility
+  checkboxes, and responsive shell-profile actions.
 - Serialized presentation changes for each terminal session so overlapping
   reveal, focus, and hide requests cannot commit stale UI state.
 - Applied configured scrollback consistently to canonical terminal state and

@@ -1,13 +1,12 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawnSync, type ChildProcess } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { chromium, type Browser, type Page } from "playwright";
+import { _electron as electron, type ElectronApplication, type Page } from "playwright";
 import { afterEach, describe, it } from "vitest";
 import { WebSocket as NodeWebSocket } from "ws";
 
@@ -39,8 +38,8 @@ const electronPath = require("electron") as string;
 const e2eUiTimeoutMs = terminalUiTimeoutMs(process.platform);
 const e2eAppLaunchTimeoutMs = process.platform === "linux" && process.env.CI ? 60_000 : 30_000;
 
-let electronProcess: ChildProcessWithoutNullStreams | null = null;
-let browser: Browser | null = null;
+let electronProcess: ChildProcess | null = null;
+let browser: ElectronApplication | null = null;
 let electronOutput = "";
 let rendererOutput = "";
 const tempUserDataDirs: string[] = [];
@@ -49,8 +48,8 @@ describe("desktop terminal smoke", () => {
   afterEach(async () => {
     const connectedBrowser = browser;
     browser = null;
-    await stopElectronProcess();
     if (connectedBrowser) await settleWithin(connectedBrowser.close(), 5_000);
+    await stopElectronProcess();
     for (const dir of tempUserDataDirs.splice(0)) await removeTempDir(dir);
   }, 30_000);
 
@@ -270,13 +269,79 @@ describe("desktop terminal smoke", () => {
     browser = await launchApp(userDataDir);
     const page = await firstPage(browser);
     await waitForTerminalReady(page);
+    await setNativeWindowSize(page, 640, 560);
+    await page.getByTestId("theme-select").selectOption("gamer");
+    await page.waitForFunction(
+      () => document.querySelector<HTMLElement>(".app-shell")?.dataset.theme === "gamer",
+      undefined,
+      { timeout: e2eUiTimeoutMs },
+    );
 
     await page.getByTestId("focused-settings-toggle").click();
     await page.getByRole("region", { name: "Terminal settings" }).waitFor({
       timeout: e2eUiTimeoutMs,
     });
+    await page.getByRole("button", { name: "Add profile" }).click();
+    const settingsLayout = await page.evaluate(() => {
+      const panel = document.querySelector<HTMLElement>(".focused-settings-panel");
+      const profile = panel?.querySelector<HTMLElement>(".focused-settings-shell-profile");
+      const checkbox = panel?.querySelector<HTMLInputElement>(
+        '[data-testid="accessibility-screen-reader"]',
+      );
+      const checkboxText = checkbox
+        ?.closest("label")
+        ?.querySelector<HTMLElement>(".focused-settings-checkbox-label");
+      const controls = profile
+        ? [
+            ...Array.from(profile.querySelectorAll<HTMLElement>("input, button")),
+            ...Array.from(panel!.querySelectorAll<HTMLElement>(".focused-settings-add-profile")),
+          ]
+        : [];
+      if (!panel || !profile || !checkbox || !checkboxText || controls.length !== 5) return null;
+
+      const panelRect = panel.getBoundingClientRect();
+      const controlBounds = controls.map((control) => {
+        const rect = control.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const hit = document.elementFromPoint(centerX, centerY);
+        return {
+          left: rect.left,
+          right: rect.right,
+          hit: Boolean(hit && (hit === control || control.contains(hit))),
+        };
+      });
+      const checkboxRect = checkbox.getBoundingClientRect();
+      const checkboxTextRect = checkboxText.getBoundingClientRect();
+      return {
+        panelOverflow: panel.scrollWidth > panel.clientWidth + 1,
+        profileOverflow: profile.scrollWidth > profile.clientWidth + 1,
+        controlsInsidePanel: controlBounds.every(
+          (bounds) =>
+            bounds.left >= panelRect.left - 1 && bounds.right <= panelRect.right + 1 && bounds.hit,
+        ),
+        checkboxCenterDelta: Math.abs(
+          checkboxRect.top +
+            checkboxRect.height / 2 -
+            (checkboxTextRect.top + checkboxTextRect.height / 2),
+        ),
+      };
+    });
+    if (
+      !settingsLayout ||
+      settingsLayout.panelOverflow ||
+      settingsLayout.profileOverflow ||
+      !settingsLayout.controlsInsidePanel ||
+      settingsLayout.checkboxCenterDelta > 1
+    ) {
+      throw new Error(
+        `Expected responsive focused settings controls: ${JSON.stringify(settingsLayout)}`,
+      );
+    }
+    await page.getByRole("button", { name: "Remove profile" }).click();
     await page.getByTestId("setting-font-size").fill("16");
-    await page.getByTestId("setting-font-family").fill('Consolas, "Courier New", monospace');
+    await page.getByTestId("setting-font-family").selectOption("custom");
+    await page.getByTestId("setting-font-family-custom").fill('Consolas, "Courier New", monospace');
     await page.getByTestId("setting-scrollback").fill("12000");
     await page.getByTestId("setting-color-background").fill("#112233");
     await page.getByTestId("accessibility-minimum-contrast").fill("7");
@@ -1337,99 +1402,86 @@ async function createTempUserDataDir(): Promise<string> {
   return userDataDir;
 }
 
-async function launchApp(userDataDir: string): Promise<Browser> {
+async function launchApp(userDataDir: string): Promise<ElectronApplication> {
   const appCwd = fileURLToPath(new URL("../../", import.meta.url));
-  const port = await getFreePort();
   electronOutput = "";
   rendererOutput = "";
-  electronProcess = spawn(
-    electronPath,
-    [
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${userDataDir}`,
-      ...platformElectronFlags(),
-      "out/main/index.cjs",
-    ],
-    {
-      cwd: appCwd,
-      env: e2eEnvironment(),
-      detached: process.platform !== "win32",
-    },
-  );
-  electronProcess.stdout.on("data", (chunk: Buffer) => appendElectronOutput("stdout", chunk));
-  electronProcess.stderr.on("data", (chunk: Buffer) => appendElectronOutput("stderr", chunk));
-  return connectToElectron(port);
-}
-
-async function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close(() => reject(new Error("Could not allocate local debug port.")));
-        return;
-      }
-      server.close(() => resolve(address.port));
-    });
+  const application = await electron.launch({
+    executablePath: electronPath,
+    args: [`--user-data-dir=${userDataDir}`, ...platformElectronFlags(), "out/main/index.cjs"],
+    cwd: appCwd,
+    env: e2eEnvironment(),
+    timeout: e2eAppLaunchTimeoutMs,
   });
+  electronProcess = application.process();
+  electronProcess.stdout?.on("data", (chunk: Buffer) => appendElectronOutput("stdout", chunk));
+  electronProcess.stderr?.on("data", (chunk: Buffer) => appendElectronOutput("stderr", chunk));
+  return application;
 }
 
-async function connectToElectron(port: number): Promise<Browser> {
-  const endpoint = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + e2eAppLaunchTimeoutMs;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      return await chromium.connectOverCDP(endpoint);
-    } catch (error: unknown) {
-      lastError = error;
-      if (electronProcess?.exitCode !== null) {
-        throw new Error(
-          `Electron exited before opening CDP with code ${electronProcess?.exitCode}.\n${electronOutput}`,
-          { cause: error },
-        );
-      }
-      await delay(100);
+async function firstPage(connectedBrowser: ElectronApplication): Promise<Page> {
+  const page = await connectedBrowser.firstWindow({ timeout: e2eUiTimeoutMs });
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") {
+      rendererOutput += `[console:${message.type()}] ${message.text()}\n`;
     }
-  }
-  throw new Error(`Timed out connecting to Electron.\n${electronOutput}`, { cause: lastError });
-}
-
-async function firstPage(connectedBrowser: Browser): Promise<Page> {
-  const deadline = Date.now() + e2eUiTimeoutMs;
-  while (Date.now() < deadline) {
-    for (const context of connectedBrowser.contexts()) {
-      const page = context.pages()[0];
-      if (page) {
-        page.on("console", (message) => {
-          if (message.type() === "error" || message.type() === "warning") {
-            rendererOutput += `[console:${message.type()}] ${message.text()}\n`;
-          }
-        });
-        page.on("pageerror", (error) => {
-          rendererOutput += `[pageerror] ${error.stack ?? error.message}\n`;
-        });
-        return page;
-      }
-    }
-    await delay(100);
-  }
-  throw new Error("Timed out waiting for Electron page.");
+  });
+  page.on("pageerror", (error) => {
+    rendererOutput += `[pageerror] ${error.stack ?? error.message}\n`;
+  });
+  return page;
 }
 
 async function setNativeWindowSize(page: Page, width: number, height: number): Promise<void> {
-  await page.evaluate(({ nextWidth, nextHeight }) => window.resizeTo(nextWidth, nextHeight), {
-    nextWidth: width,
-    nextHeight: height,
-  });
+  const connectedBrowser = browser;
+  if (!connectedBrowser) throw new Error("Cannot resize a disconnected Electron app.");
+
+  const nativeContentBounds = await connectedBrowser.evaluate(
+    ({ BrowserWindow }, nextBounds) => {
+      const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
+      if (windows.length !== 1) {
+        throw new Error(`Expected one Electron window, found ${windows.length}.`);
+      }
+
+      const window = windows[0]!;
+      window.setSize(nextBounds.width, nextBounds.height, false);
+      return window.getContentBounds();
+    },
+    { width, height },
+  );
+
   try {
     await page.waitForFunction(
-      ({ expectedWidth, expectedHeight }) =>
-        Math.abs(window.innerWidth - expectedWidth) <= 32 &&
-        window.innerHeight <= expectedHeight + 32 &&
-        window.innerHeight >= expectedHeight - 80,
+      ({ expectedWidth, expectedHeight }) => {
+        const overlay = (
+          navigator as Navigator & {
+            windowControlsOverlay?: {
+              visible: boolean;
+              getTitlebarAreaRect: () => DOMRect;
+            };
+          }
+        ).windowControlsOverlay;
+        const overlayRect = overlay?.getTitlebarAreaRect();
+        const contentRect = document
+          .querySelector<HTMLElement>(".titlebar-content")
+          ?.getBoundingClientRect();
+
+        return (
+          Math.abs(window.innerWidth - expectedWidth) <= 32 &&
+          window.innerHeight <= expectedHeight + 32 &&
+          window.innerHeight >= expectedHeight - 80 &&
+          overlay?.visible === true &&
+          overlayRect !== undefined &&
+          overlayRect.width > 0 &&
+          overlayRect.x >= -1 &&
+          overlayRect.right <= window.innerWidth + 1 &&
+          Math.abs(overlayRect.height - 44) <= 1 &&
+          contentRect !== undefined &&
+          contentRect.left >= overlayRect.left - 1 &&
+          contentRect.right <= overlayRect.right + 1 &&
+          contentRect.right <= window.innerWidth + 1
+        );
+      },
       { expectedWidth: width, expectedHeight: height },
       { timeout: e2eUiTimeoutMs },
     );
@@ -1437,9 +1489,34 @@ async function setNativeWindowSize(page: Page, width: number, height: number): P
     const actual = await page.evaluate(() => ({
       width: window.innerWidth,
       height: window.innerHeight,
+      overlay: (() => {
+        const value = (
+          navigator as Navigator & {
+            windowControlsOverlay?: {
+              visible: boolean;
+              getTitlebarAreaRect: () => DOMRect;
+            };
+          }
+        ).windowControlsOverlay;
+        const rect = value?.getTitlebarAreaRect();
+        return rect
+          ? {
+              visible: value?.visible ?? false,
+              left: rect.left,
+              right: rect.right,
+              height: rect.height,
+            }
+          : null;
+      })(),
+      content: (() => {
+        const rect = document
+          .querySelector<HTMLElement>(".titlebar-content")
+          ?.getBoundingClientRect();
+        return rect ? { left: rect.left, right: rect.right, height: rect.height } : null;
+      })(),
     }));
     throw new Error(
-      `Native window did not resize near ${width}x${height}; actual=${actual.width}x${actual.height}.`,
+      `Native window and titlebar overlay did not settle near ${width}x${height}; native=${JSON.stringify(nativeContentBounds)} actual=${JSON.stringify(actual)}.`,
       { cause: error },
     );
   }
@@ -1637,8 +1714,12 @@ function changeDirectoryCommand(cwd: string): string {
   return `cd '${cwd.replaceAll("'", `'\\''`)}'`;
 }
 
-function e2eEnvironment(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+function e2eEnvironment(): Record<string, string> {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
   if (process.platform === "win32") env.ComSpec ??= "C:\\Windows\\System32\\cmd.exe";
   else env.SHELL = "/bin/sh";
   return env;
@@ -1648,7 +1729,7 @@ function platformElectronFlags(): string[] {
   return process.platform === "linux" ? ["--no-sandbox", "--disable-gpu"] : [];
 }
 
-function terminateProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (process.platform === "win32" && child.pid) {
     spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
     return;

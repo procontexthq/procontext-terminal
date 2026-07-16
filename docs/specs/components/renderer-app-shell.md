@@ -192,6 +192,26 @@ The first multi-session milestone supports tabs only.
   before sending one typed save command. Agent policy remains in its existing
   focused panel; tabs, sessions, and window geometry are never renderer form
   fields.
+- Terminal font selection presents friendly choices for the bundled JetBrains
+  Mono, Share Tech Mono, and IBM Plex Mono faces plus a system monospace choice.
+  Each named choice maps to a complete portable CSS fallback stack rather than
+  exposing that comma-separated stack as the primary control. A persisted stack
+  that does not match a named choice appears in a `Custom` mode with its original
+  value intact; opening, cancelling, or saving unrelated settings must not
+  normalize or replace that value. Custom mode keeps the stack editable for
+  users who deliberately configure another font.
+- Background, foreground, and cursor color controls pair a native color picker
+  with an editable hexadecimal text value. Both controls have programmatic
+  labels, stay synchronized, and submit the existing validated `#RGB` or
+  `#RRGGBB` terminal-theme value rather than adding renderer-only color state to
+  persisted configuration.
+- Accessibility checkboxes and their text render as aligned, fully clickable
+  rows while retaining native checkbox focus, keyboard, checked-state, and
+  screen-reader semantics.
+- The shell-profile editor reflows at every supported app width so profile name,
+  shell, working-directory, add, and remove controls remain visible and usable
+  without horizontal clipping. Narrow layouts may stack fields and actions but
+  must preserve their labels, order, and behavior.
 - Default presentation never changes the visible foreground startup terminal
   and never overrides fixed agent protocol defaults. Later human New Terminal
   actions activate a foreground view, open a non-focused background view, or
@@ -212,3 +232,9 @@ palette are explicitly out of scope.
 - The titlebar exposes a draggable region, every interactive descendant is
   non-draggable, and the active tab plus all persistent header actions remain
   reachable inside the native-controls safe area at the minimum window width.
+- Named font choices save their canonical portable fallback stacks, while
+  unknown custom stacks round-trip losslessly until the user edits them.
+- Color picker and hexadecimal text pairs stay synchronized and reject invalid
+  text through the existing focused-settings validation path.
+- Accessibility checkbox labels activate their native controls, and shell
+  profile fields and actions remain reachable at the minimum supported width.

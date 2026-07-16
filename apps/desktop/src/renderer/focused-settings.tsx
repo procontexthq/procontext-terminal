@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ReactElement } from "react";
+import type { Dispatch, ReactElement, SetStateAction } from "react";
 
 import {
   focusedTerminalSettingsSchema,
@@ -11,6 +11,33 @@ import {
 import { FocusedSettingsShellProfiles } from "./focused-settings-shell-profiles";
 
 const SETTINGS_ERROR_ID = "focused-settings-error";
+const SYSTEM_MONOSPACE_FONT_STACK =
+  'ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+const CUSTOM_FONT_CHOICE = "custom";
+const TERMINAL_FONT_OPTIONS = [
+  {
+    id: "jetbrains-mono",
+    label: "JetBrains Mono",
+    fontFamily: `"JetBrains Mono", ${SYSTEM_MONOSPACE_FONT_STACK}`,
+  },
+  {
+    id: "share-tech-mono",
+    label: "Share Tech Mono",
+    fontFamily: `"Share Tech Mono", ${SYSTEM_MONOSPACE_FONT_STACK}`,
+  },
+  {
+    id: "ibm-plex-mono",
+    label: "IBM Plex Mono",
+    fontFamily: `"IBM Plex Mono", ${SYSTEM_MONOSPACE_FONT_STACK}`,
+  },
+  {
+    id: "system-monospace",
+    label: "System monospace",
+    fontFamily: SYSTEM_MONOSPACE_FONT_STACK,
+  },
+] as const;
+
+type TerminalFontChoice = (typeof TERMINAL_FONT_OPTIONS)[number]["id"] | typeof CUSTOM_FONT_CHOICE;
 
 export function FocusedSettings({
   config,
@@ -24,12 +51,16 @@ export function FocusedSettings({
   const [redactionPatterns, setRedactionPatterns] = useState(
     config.recording.redactedPatterns.join("\n"),
   );
+  const [fontChoice, setFontChoice] = useState<TerminalFontChoice>(() =>
+    terminalFontChoice(config.terminal.fontFamily),
+  );
   const [error, setError] = useState<string | null>(null);
   const [invalidFields, setInvalidFields] = useState<string[]>([]);
 
   useEffect(() => {
     setDraft(focusedSettingsFromConfig(config));
     setRedactionPatterns(config.recording.redactedPatterns.join("\n"));
+    setFontChoice(terminalFontChoice(config.terminal.fontFamily));
     setError(null);
     setInvalidFields([]);
   }, [config]);
@@ -94,19 +125,51 @@ export function FocusedSettings({
           <fieldset>
             <legend>Terminal appearance</legend>
             <label>
-              Font family
-              <input
+              Terminal font
+              <select
                 data-testid="setting-font-family"
                 {...errorProps("setting-font-family")}
-                value={draft.terminal.fontFamily}
-                onChange={(event) =>
+                value={fontChoice}
+                onChange={(event) => {
+                  const choice = terminalFontOption(event.target.value);
+                  if (!choice) {
+                    setFontChoice(CUSTOM_FONT_CHOICE);
+                    return;
+                  }
+                  setFontChoice(choice.id);
                   setDraft((current) => ({
                     ...current,
-                    terminal: { ...current.terminal, fontFamily: event.target.value },
-                  }))
-                }
-              />
+                    terminal: { ...current.terminal, fontFamily: choice.fontFamily },
+                  }));
+                }}
+              >
+                {TERMINAL_FONT_OPTIONS.map((choice) => (
+                  <option key={choice.id} value={choice.id}>
+                    {choice.label}
+                  </option>
+                ))}
+                <option value={CUSTOM_FONT_CHOICE}>Custom</option>
+              </select>
             </label>
+            {fontChoice === CUSTOM_FONT_CHOICE ? (
+              <label className="focused-settings-full-width">
+                Custom font stack
+                <input
+                  data-testid="setting-font-family-custom"
+                  {...errorProps("setting-font-family")}
+                  value={draft.terminal.fontFamily}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      terminal: { ...current.terminal, fontFamily: event.target.value },
+                    }))
+                  }
+                />
+                <span className="setting-help">
+                  Fonts are tried from left to right; the first available font is used.
+                </span>
+              </label>
+            ) : null}
             <label>
               Font size
               <input
@@ -141,27 +204,35 @@ export function FocusedSettings({
                 }
               />
             </label>
-            {(["background", "foreground", "cursor"] as const).map((color) => (
-              <label key={color}>
-                {capitalize(color)} color
-                <input
-                  data-testid={`setting-color-${color}`}
-                  {...errorProps(`setting-color-${color}`)}
-                  pattern="#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?"
-                  title="Use #RGB or #RRGGBB."
-                  value={draft.terminal.theme[color]}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      terminal: {
-                        ...current.terminal,
-                        theme: { ...current.terminal.theme, [color]: event.target.value },
-                      },
-                    }))
-                  }
-                />
-              </label>
-            ))}
+            {(["background", "foreground", "cursor"] as const).map((color) => {
+              const label = `${capitalize(color)} color`;
+              const textInputId = `setting-color-${color}-value`;
+              return (
+                <div className="focused-settings-color-field" key={color}>
+                  <label htmlFor={textInputId}>{label}</label>
+                  <div className="focused-settings-color-controls">
+                    <input
+                      id={textInputId}
+                      type="text"
+                      data-testid={`setting-color-${color}`}
+                      {...errorProps(`setting-color-${color}`)}
+                      pattern="#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?"
+                      title="Use #RGB or #RRGGBB."
+                      value={draft.terminal.theme[color]}
+                      onChange={(event) => setTerminalColor(setDraft, color, event.target.value)}
+                    />
+                    <input
+                      type="color"
+                      data-testid={`setting-color-${color}-picker`}
+                      aria-label={`Choose ${color} color`}
+                      title={`Choose ${color} color`}
+                      value={colorPickerValue(draft.terminal.theme[color])}
+                      onChange={(event) => setTerminalColor(setDraft, color, event.target.value)}
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </fieldset>
 
           <FocusedSettingsShellProfiles
@@ -173,7 +244,7 @@ export function FocusedSettings({
 
           <fieldset>
             <legend>Accessibility</legend>
-            <label>
+            <label className="focused-settings-checkbox">
               <input
                 type="checkbox"
                 data-testid="accessibility-screen-reader"
@@ -189,9 +260,9 @@ export function FocusedSettings({
                   }))
                 }
               />
-              Screen reader mode
+              <span className="focused-settings-checkbox-label">Screen reader mode</span>
             </label>
-            <label>
+            <label className="focused-settings-checkbox">
               <input
                 type="checkbox"
                 data-testid="accessibility-reduced-motion"
@@ -207,7 +278,7 @@ export function FocusedSettings({
                   }))
                 }
               />
-              Reduce motion
+              <span className="focused-settings-checkbox-label">Reduce motion</span>
             </label>
             <label>
               Minimum contrast ratio
@@ -326,6 +397,38 @@ function isValidPattern(pattern: string): boolean {
 
 function capitalize(value: string): string {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
+function terminalFontChoice(fontFamily: string): TerminalFontChoice {
+  return terminalFontOptionByFamily(fontFamily)?.id ?? CUSTOM_FONT_CHOICE;
+}
+
+function terminalFontOption(value: string) {
+  return TERMINAL_FONT_OPTIONS.find((option) => option.id === value);
+}
+
+function terminalFontOptionByFamily(fontFamily: string) {
+  return TERMINAL_FONT_OPTIONS.find((option) => option.fontFamily === fontFamily);
+}
+
+function colorPickerValue(value: string): string {
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/iu.exec(value);
+  if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
+  return /^#[0-9a-f]{6}$/iu.test(value) ? value : "#000000";
+}
+
+function setTerminalColor(
+  setDraft: Dispatch<SetStateAction<FocusedTerminalSettings>>,
+  color: keyof FocusedTerminalSettings["terminal"]["theme"],
+  value: string,
+): void {
+  setDraft((current) => ({
+    ...current,
+    terminal: {
+      ...current.terminal,
+      theme: { ...current.terminal.theme, [color]: value },
+    },
+  }));
 }
 
 function settingTestIdForPath(path: PropertyKey[]): string | null {

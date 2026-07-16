@@ -9,6 +9,10 @@ import type { FocusedTerminalSettings } from "@terminal/protocol";
 
 import { FocusedSettings } from "../../src/renderer/focused-settings";
 
+const SYSTEM_MONOSPACE_STACK =
+  'ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+const SHARE_TECH_MONO_STACK = `"Share Tech Mono", ${SYSTEM_MONOSPACE_STACK}`;
+
 describe("FocusedSettings", () => {
   beforeEach(() => {
     (
@@ -123,6 +127,156 @@ describe("FocusedSettings", () => {
 
     act(() => root.unmount());
   });
+
+  it("maps a friendly bundled-font choice to its canonical fallback stack", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onSave = vi.fn<(settings: FocusedTerminalSettings) => void>();
+
+    act(() => {
+      root.render(createElement(FocusedSettings, { config: defaultTerminalConfig(), onSave }));
+    });
+    click(container, "focused-settings-toggle");
+
+    const fontChoice = getControl<HTMLSelectElement>(container, "setting-font-family");
+    expect(fontChoice.tagName).toBe("SELECT");
+    expect(fontChoice.value).toBe("jetbrains-mono");
+    expect(fontChoice.selectedOptions[0]?.textContent).toBe("JetBrains Mono");
+    expect(Array.from(fontChoice.options, (option) => [option.value, option.textContent])).toEqual([
+      ["jetbrains-mono", "JetBrains Mono"],
+      ["share-tech-mono", "Share Tech Mono"],
+      ["ibm-plex-mono", "IBM Plex Mono"],
+      ["system-monospace", "System monospace"],
+      ["custom", "Custom"],
+    ]);
+
+    changeValue(container, "setting-font-family", "share-tech-mono");
+    click(container, "focused-settings-save");
+
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave.mock.calls[0]![0].terminal.fontFamily).toBe(SHARE_TECH_MONO_STACK);
+
+    act(() => root.unmount());
+  });
+
+  it("preserves and edits a custom persisted font stack without exposing it as a preset", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onSave = vi.fn<(settings: FocusedTerminalSettings) => void>();
+    const customStack = '"Fira Code", Consolas, monospace';
+    const updatedStack = '"Cascadia Mono", Consolas, monospace';
+    const config = {
+      ...defaultTerminalConfig(),
+      terminal: { ...defaultTerminalConfig().terminal, fontFamily: customStack },
+    };
+
+    act(() => {
+      root.render(createElement(FocusedSettings, { config, onSave }));
+    });
+    click(container, "focused-settings-toggle");
+
+    const fontChoice = getControl<HTMLSelectElement>(container, "setting-font-family");
+    const customFont = getControl<HTMLInputElement>(container, "setting-font-family-custom");
+    expect(fontChoice.value).toBe("custom");
+    expect(fontChoice.selectedOptions[0]?.textContent).toBe("Custom");
+    expect(customFont.value).toBe(customStack);
+    expect(customFont.labels?.[0]?.textContent).toContain("Custom font stack");
+
+    click(container, "focused-settings-save");
+    expect(onSave.mock.calls[0]![0].terminal.fontFamily).toBe(customStack);
+
+    changeValue(container, "setting-font-family-custom", updatedStack);
+    click(container, "focused-settings-save");
+    expect(onSave.mock.calls[1]![0].terminal.fontFamily).toBe(updatedStack);
+
+    act(() => root.unmount());
+  });
+
+  it("uses accessible horizontal label rows for accessibility checkboxes", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        createElement(FocusedSettings, {
+          config: defaultTerminalConfig(),
+          onSave: vi.fn(),
+        }),
+      );
+    });
+    click(container, "focused-settings-toggle");
+
+    for (const [testId, accessibleName] of [
+      ["accessibility-screen-reader", "Screen reader mode"],
+      ["accessibility-reduced-motion", "Reduce motion"],
+    ] as const) {
+      const checkbox = getControl<HTMLInputElement>(container, testId);
+      const label = checkbox.labels?.[0];
+      expect(checkbox.type).toBe("checkbox");
+      expect(label?.classList.contains("focused-settings-checkbox")).toBe(true);
+      expect(label?.querySelector(".focused-settings-checkbox-label")?.textContent).toBe(
+        accessibleName,
+      );
+      expect(label?.textContent?.trim()).toBe(accessibleName);
+    }
+
+    act(() => root.unmount());
+  });
+
+  it("keeps portable hex text editable while synchronizing accessible color pickers", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onSave = vi.fn<(settings: FocusedTerminalSettings) => void>();
+    const defaults = defaultTerminalConfig();
+    const config = {
+      ...defaults,
+      terminal: {
+        ...defaults.terminal,
+        theme: { ...defaults.terminal.theme, background: "#abc" },
+      },
+    };
+
+    act(() => {
+      root.render(createElement(FocusedSettings, { config, onSave }));
+    });
+    click(container, "focused-settings-toggle");
+
+    const backgroundText = getControl<HTMLInputElement>(container, "setting-color-background");
+    const backgroundPicker = getControl<HTMLInputElement>(
+      container,
+      "setting-color-background-picker",
+    );
+    expect(backgroundText.type).toBe("text");
+    expect(backgroundText.value).toBe("#abc");
+    expect(backgroundPicker.type).toBe("color");
+    expect(backgroundPicker.value).toBe("#aabbcc");
+    expect(backgroundPicker.getAttribute("aria-label")).toBe("Choose background color");
+
+    changeValue(container, "setting-color-background", "#123");
+    expect(backgroundText.value).toBe("#123");
+    expect(backgroundPicker.value).toBe("#112233");
+    click(container, "focused-settings-save");
+    expect(onSave.mock.calls[0]![0].terminal.theme.background).toBe("#123");
+
+    changeValue(container, "setting-color-background-picker", "#445566");
+    expect(backgroundText.value).toBe("#445566");
+    click(container, "focused-settings-save");
+    expect(onSave.mock.calls[1]![0].terminal.theme.background).toBe("#445566");
+
+    for (const color of ["foreground", "cursor"] as const) {
+      const textInput = getControl<HTMLInputElement>(container, `setting-color-${color}`);
+      const picker = getControl<HTMLInputElement>(container, `setting-color-${color}-picker`);
+      expect(textInput.type).toBe("text");
+      expect(picker.type).toBe("color");
+      expect(picker.getAttribute("aria-label")).toBe(`Choose ${color} color`);
+    }
+
+    act(() => root.unmount());
+  });
 });
 
 function click(container: HTMLElement, testId: string): void {
@@ -150,4 +304,10 @@ function toggle(container: HTMLElement, testId: string, checked: boolean): void 
   act(() => {
     if (input.checked !== checked) input.click();
   });
+}
+
+function getControl<T extends HTMLElement>(container: HTMLElement, testId: string): T {
+  const control = container.querySelector<T>(`[data-testid="${testId}"]`);
+  if (!control) throw new Error(`Missing ${testId}.`);
+  return control;
 }
