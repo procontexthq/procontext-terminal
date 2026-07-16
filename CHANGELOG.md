@@ -13,6 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Serialized presentation changes for each terminal session so overlapping
+  reveal, focus, and hide requests cannot commit stale UI state.
+- Applied configured scrollback consistently to canonical terminal state and
+  renderer projections.
+- Preserved running terminal sessions when native windows close, leaving full
+  application quit as the owner of process termination.
+- Expired completed temporary PTYs when their requested presentation is
+  unavailable and released their stale agent-operation attachments.
 - Kept the surviving terminal focused after tab closure and allowed the final
   sidebar-managed view to hide or terminate without spawning a replacement PTY.
 - Removed duplicate and contrasting Windows terminal scrollbar artifacts and
@@ -23,3 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Returned terminal-generated protocol responses from the canonical session on
   every platform, preventing PowerShell startup and command stalls without
   duplicate renderer replies.
+
+### Security
+
+- Enforced human revocation during in-flight agent session creation and
+  temporary PTY startup so automatic attachment cannot restore revoked control.
