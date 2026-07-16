@@ -1,14 +1,20 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { ReactElement } from "react";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import { Terminal } from "@xterm/xterm";
 
 import type { RendererSessionEvent, TerminalConfig, TerminalTheme } from "@terminal/protocol";
 
 import { browserFontFaceSet, waitForFontFaces } from "./font-loading";
 import { createTerminalSession, type TerminalController } from "./terminal-controller";
+import { terminalAccessibilityOptions } from "./terminal-accessibility";
+import { createTerminalLinkProvider } from "./terminal-link-provider";
+import { TerminalSearchControls } from "./terminal-search-controls";
+import type { TerminalSearchTarget } from "./terminal-search";
 import type { TerminalTab } from "./terminal-tabs";
 import type { TerminalUiStatus } from "./terminal-status";
+import { rendererShortcutPlatform } from "./renderer-shortcuts";
 
 export function TerminalTabView({
   tab,
@@ -49,6 +55,20 @@ export function TerminalTabView({
     attachSessionId: tab.sessionId,
   });
   const terminalFinished = tab.status === "exited" || tab.status === "failed";
+  const searchTarget = useMemo<TerminalSearchTarget>(
+    () => ({
+      findNext(query, options) {
+        return controller.current?.findNext(query, options) ?? false;
+      },
+      findPrevious(query, options) {
+        return controller.current?.findPrevious(query, options) ?? false;
+      },
+      clearDecorations() {
+        controller.current?.clearDecorations();
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -69,16 +89,42 @@ export function TerminalTabView({
           element: terminalElement.current,
           session: launch.current.session,
           attachSessionId: launch.current.attachSessionId ?? undefined,
-          createTerminal: () =>
-            new Terminal({
+          createTerminal: () => {
+            const terminal = new Terminal({
               fontFamily: terminalFontFamily,
               fontSize: config.terminal.fontSize,
               scrollback: config.terminal.scrollback,
               theme: themeForXterm(terminalTheme),
-              cursorBlink: true,
+              ...terminalAccessibilityOptions(config.accessibility),
               overviewRuler: { width: 8 },
-            }),
+            });
+            terminal.registerLinkProvider(
+              createTerminalLinkProvider({
+                platform: rendererShortcutPlatform() ?? "linux",
+                columns: () => terminal.cols,
+                getLine: (line) => {
+                  const bufferLine = terminal.buffer.active.getLine(line - 1);
+                  return bufferLine === undefined
+                    ? null
+                    : {
+                        cells: Array.from({ length: terminal.cols }, (_, column) => {
+                          const cell = bufferLine.getCell(column);
+                          return {
+                            chars: cell?.getChars() ?? "",
+                            width: cell?.getWidth() ?? 1,
+                          };
+                        }),
+                        isWrapped: bufferLine.isWrapped,
+                      };
+                },
+                open: (target) => window.terminalApi.openLink(target),
+                onError,
+              }),
+            );
+            return terminal;
+          },
           createFitAddon: () => new FitAddon(),
+          createSearchAddon: () => new SearchAddon(),
           onSessionEvent: (event) => onSessionEvent(tab.id, event),
           onTitleChange: (title) => onTitleChange(tab.id, title),
           onBell: () => onBell(tab.id),
@@ -126,11 +172,21 @@ export function TerminalTabView({
 
   useEffect(() => {
     controller.current?.setFontFamily(terminalFontFamily);
+    controller.current?.setFontSize(config.terminal.fontSize);
+    controller.current?.setScrollback(config.terminal.scrollback);
+    controller.current?.setAccessibility(config.accessibility);
     controller.current?.setTheme(themeForXterm(terminalTheme));
     if (active) {
       void controller.current?.resize();
     }
-  }, [active, terminalFontFamily, terminalTheme]);
+  }, [
+    active,
+    config.accessibility,
+    config.terminal.fontSize,
+    config.terminal.scrollback,
+    terminalFontFamily,
+    terminalTheme,
+  ]);
 
   useEffect(() => {
     let disposed = false;
@@ -190,6 +246,11 @@ export function TerminalTabView({
         className={`terminal-host${active ? " is-active" : ""}`}
         data-testid={active && tab.status === "running" ? "terminal-ready" : "terminal-host"}
         data-session-id={tab.sessionId ?? ""}
+      />
+      <TerminalSearchControls
+        active={active}
+        target={searchTarget}
+        onRequestTerminalFocus={() => controller.current?.focus()}
       />
       {active && terminalFinished ? (
         <div

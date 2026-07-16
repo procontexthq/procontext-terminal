@@ -56,8 +56,11 @@ export function createRendererTerminalApi({
     resolvePermission: (request) =>
       invokeCommand(invoke, createRendererCommand("permission.resolve", request)),
     getConfig: () => invokeCommand(invoke, createRendererCommand("settings.get", {})),
+    openLink: (target) => invokeCommand(invoke, createRendererCommand("link.open", target)),
     saveUiTheme: (theme) =>
       invokeCommand(invoke, createRendererCommand("settings.saveUiTheme", { theme })),
+    saveFocusedSettings: (settings) =>
+      invokeCommand(invoke, createRendererCommand("settings.saveFocused", { settings })),
     saveAgentPolicy: (policy) =>
       invokeCommand(invoke, createRendererCommand("settings.saveAgentPolicy", { policy })),
     presentationReady: () => invokeCommand(invoke, createRendererCommand("presentation.ready", {})),

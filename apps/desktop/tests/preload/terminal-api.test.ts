@@ -43,6 +43,27 @@ describe("renderer terminal api", () => {
       api.resolvePermission({ permissionId: "decision-1", decision: "deny" }),
     ).resolves.toBe("permission.resolve");
     await expect(api.saveUiTheme("gamer")).resolves.toBe("settings.saveUiTheme");
+    await expect(api.openLink({ kind: "url", target: "https://example.com/docs" })).resolves.toBe(
+      "link.open",
+    );
+    await expect(
+      api.saveFocusedSettings({
+        terminal: {
+          fontFamily: "monospace",
+          fontSize: 14,
+          scrollback: 8000,
+          theme: { background: "#000", foreground: "#fff", cursor: "#fff" },
+        },
+        shell: { defaultProfile: null, profiles: [] },
+        accessibility: {
+          screenReaderMode: true,
+          reducedMotion: true,
+          minimumContrastRatio: 7,
+        },
+        recording: { state: "disabled", redactedPatterns: [] },
+        defaultPresentation: "foreground",
+      }),
+    ).resolves.toBe("settings.saveFocused");
     await expect(
       api.saveAgentPolicy({
         observation: "allow",

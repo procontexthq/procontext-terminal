@@ -39,6 +39,19 @@ Window restoration is limited to validated size, position, and display
 placement. It must not restore terminal sessions, tabs, operations, PTY runtime
 state, or workspace layouts.
 
+The primary window restores schema-validated `x`, `y`, `width`, `height`, and
+numeric display ID. Restored bounds are clamped to that display's work area. If
+the recorded display is unavailable, the primary window uses centered,
+work-area-clamped defaults on the current primary display. Move and resize
+events are debounced before the main process writes geometry; window close
+flushes the latest normal bounds. Secondary presentation windows neither
+restore nor replace the primary-window geometry.
+
+Direct app quit awaitably flushes and detaches the primary-window persistence
+before the main process drains queued settings writes. A pending move or resize
+debounce therefore cannot be lost during shutdown, and the later native window
+close cannot enqueue a duplicate geometry write.
+
 ## Platform Window Chrome
 
 The terminal header is the single in-window title and command surface. Native
@@ -91,6 +104,9 @@ Window close handling must preserve the distinction between closing a view and e
 - Closing a window does not implicitly terminate a session unless settings or
   explicit user action require it.
 - Restored window state is validated before use.
+- Move and resize persistence is debounced, close flushes the latest normal
+  bounds, direct app quit awaits the same flush before settings shutdown, and
+  unavailable displays fall back safely.
 - Window chrome options preserve native controls on macOS, Windows, and Linux,
   and the renderer titlebar stays inside the operating-system-provided safe
   area at supported window widths.

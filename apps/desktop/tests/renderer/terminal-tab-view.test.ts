@@ -11,8 +11,15 @@ import type { TerminalController } from "../../src/renderer/terminal-controller"
 import { TerminalTabView } from "../../src/renderer/terminal-tab-view";
 import type { TerminalTab } from "../../src/renderer/terminal-tabs";
 
-const { createTerminalSessionMock, terminalConstructorMock } = vi.hoisted(() => ({
+const {
+  createTerminalSessionMock,
+  linkProviderRegistrationMock,
+  searchAddonConstructorMock,
+  terminalConstructorMock,
+} = vi.hoisted(() => ({
   createTerminalSessionMock: vi.fn(),
+  linkProviderRegistrationMock: vi.fn(),
+  searchAddonConstructorMock: vi.fn(),
   terminalConstructorMock: vi.fn(),
 }));
 
@@ -22,7 +29,13 @@ const controller: TerminalController = {
   focus: vi.fn(),
   resize: vi.fn(() => Promise.resolve()),
   setFontFamily: vi.fn(),
+  setFontSize: vi.fn(),
+  setScrollback: vi.fn(),
+  setAccessibility: vi.fn(),
   setTheme: vi.fn(),
+  findNext: vi.fn(() => false),
+  findPrevious: vi.fn(() => false),
+  clearDecorations: vi.fn(),
   setFocused: vi.fn(() => Promise.resolve()),
   dispose: vi.fn(() => Promise.resolve(true)),
 };
@@ -38,8 +51,35 @@ vi.mock("../../src/renderer/font-loading", () => ({
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
+    readonly cols = 80;
+    readonly buffer = {
+      active: {
+        getLine: () => ({
+          isWrapped: false,
+          translateToString: () => "https://example.com/docs",
+        }),
+      },
+    };
+
     constructor(options: unknown) {
       terminalConstructorMock(options);
+    }
+
+    registerLinkProvider(provider: unknown): { dispose(): void } {
+      linkProviderRegistrationMock(provider);
+      return { dispose: vi.fn() };
+    }
+  },
+}));
+
+vi.mock("@xterm/addon-search", () => ({
+  SearchAddon: class {
+    readonly findNext = vi.fn(() => false);
+    readonly findPrevious = vi.fn(() => false);
+    readonly clearDecorations = vi.fn();
+
+    constructor() {
+      searchAddonConstructorMock(this);
     }
   },
 }));
@@ -56,6 +96,8 @@ describe("TerminalTabView", () => {
     createTerminalSessionMock.mockReset();
     createTerminalSessionMock.mockResolvedValue(controller);
     terminalConstructorMock.mockReset();
+    linkProviderRegistrationMock.mockReset();
+    searchAddonConstructorMock.mockReset();
     vi.mocked(controller.dispose).mockClear();
     vi.mocked(controller.focus).mockClear();
     vi.mocked(controller.resize).mockClear();
@@ -116,18 +158,30 @@ describe("TerminalTabView", () => {
     await act(() => Promise.resolve());
 
     const sessionOptions = createTerminalSessionMock.mock.calls[0]?.[0] as
-      | { createTerminal(): unknown }
+      | { createTerminal(): unknown; createSearchAddon(): unknown }
       | undefined;
     sessionOptions?.createTerminal();
+    const searchAddon = sessionOptions?.createSearchAddon();
 
     const terminalOptions = terminalConstructorMock.mock.calls[0]?.[0] as
       | {
+          cursorBlink?: boolean;
+          minimumContrastRatio?: number;
           overviewRuler?: { width?: number };
+          screenReaderMode?: boolean;
           theme?: { overviewRulerBorder?: string };
         }
       | undefined;
     expect(terminalOptions?.overviewRuler).toEqual({ width: 8 });
     expect(terminalOptions?.theme?.overviewRulerBorder).toBe(props.terminalTheme.background);
+    expect(terminalOptions).toMatchObject({
+      cursorBlink: true,
+      minimumContrastRatio: 4.5,
+      screenReaderMode: false,
+    });
+    expect(linkProviderRegistrationMock).toHaveBeenCalledOnce();
+    expect(searchAddonConstructorMock).toHaveBeenCalledOnce();
+    expect(searchAddon).toBe(searchAddonConstructorMock.mock.calls[0]?.[0]);
 
     const nextTheme = { ...props.terminalTheme, background: "#050607" };
     act(() => {

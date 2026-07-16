@@ -2,6 +2,7 @@ export * from "./agent.js";
 export * from "./config.js";
 export * from "./errors.js";
 export * from "./ids.js";
+export * from "./links.js";
 export * from "./observation.js";
 export * from "./operations.js";
 export * from "./recording.js";

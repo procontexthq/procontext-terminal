@@ -38,6 +38,7 @@ The architecture source of truth is [Terminal Architecture Spec](./specs/termina
 |   `-- desktop/
 |       |-- package.json
 |       |-- electron-builder.yml
+|       |-- electron-builder.release.yml
 |       |-- scripts/
 |       |-- src/
 |       |   |-- main/
@@ -179,6 +180,8 @@ Responsibilities:
 - Verify Electron and package output before app startup or packaging tests.
 - Keep app-specific packaging checks outside root workspace setup scripts.
 - Provide clear remediation when native desktop dependencies are missing.
+- Validate signed release artifacts with native platform tools and launch the
+  mounted, installed, or extracted application before upload.
 
 ### `apps/desktop/src/main`
 
@@ -214,6 +217,9 @@ Packaging note:
 
 - `apps/desktop/package.json` may declare native runtime dependencies such as `node-pty` so bundled Electron main code can resolve them from the app package on macOS, Windows, and Linux. Application code must still import `node-pty` only through `packages/pty-host`.
 - `apps/desktop/electron-builder.yml` owns distributable artifact configuration. Packaging verification helpers live under `apps/desktop/scripts`.
+- `apps/desktop/electron-builder.release.yml` is the credentialed production
+  configuration. It enables platform signing and notarization without changing
+  unsigned local or pull-request packaging.
 - `apps/desktop/resources` owns native desktop app assets such as macOS,
   Windows, and Linux app icons. Renderer UI assets remain under
   `apps/desktop/src/renderer`.

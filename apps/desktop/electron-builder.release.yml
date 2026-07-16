@@ -1,0 +1,53 @@
+appId: com.procontext.terminal
+productName: ProContext Terminal
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+copyright: Copyright 2026 ProContext
+
+directories:
+  output: dist
+  buildResources: resources
+
+files:
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+
+asar: false
+
+electronDist: node_modules/electron/dist
+npmRebuild: false
+nodeGypRebuild: false
+buildDependenciesFromSource: false
+
+publish: null
+
+mac:
+  category: public.app-category.developer-tools
+  icon: resources/icon.icns
+  notarize: true
+  target:
+    - dmg
+
+dmg:
+  sign: true
+
+linux:
+  category: Development
+  executableName: procontext-terminal
+  icon: resources/icon.png
+  target:
+    - AppImage
+    - deb
+
+win:
+  icon: resources/icon.ico
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

@@ -31,10 +31,13 @@ export class SessionRecording {
   async start(): Promise<void> {
     if (this.options.getStatus().state === "active") return;
     if (!this.options.recorder) {
-      throw createTerminalError("recording_failed", "Terminal recording is unavailable.", {
-        sessionId: this.options.sessionId,
-        operation: "terminal.recording.start",
-      });
+      throw this.failure(
+        createTerminalError("recording_failed", "Terminal recording is unavailable.", {
+          sessionId: this.options.sessionId,
+          operation: "terminal.recording.start",
+        }),
+        "terminal.recording.start",
+      );
     }
     try {
       await this.options.recorder.start(this.options.getSummary());

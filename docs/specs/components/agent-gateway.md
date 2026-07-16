@@ -53,8 +53,9 @@ bytes, title updates, screen snapshots, or lifecycle events independently of
 - Authenticated local agents may list sessions and read session summaries.
 - Creating a session grants the connection its exclusive agent attachment.
 - Attaching succeeds only when no other agent connection controls the session.
-- Agent-created sessions default to headless presentation. Attach defaults to
-  leaving presentation unchanged.
+- Agent-created sessions and temporary TTY runs default to headless
+  presentation when the request omits it. Explicit create and run presentation
+  always wins. Attach defaults to leaving presentation unchanged.
 - Input, resize, scroll, observation, close, and recording require attachment.
 - Presentation changes require attachment and remain independent from PTY
   lifecycle.
