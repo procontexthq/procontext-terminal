@@ -51,6 +51,14 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
   UI theme, terminal font family, and terminal background. Later focused
   appearance edits remain authoritative until another UI-theme preset is
   selected.
+- The persisted terminal font family remains a CSS font-family string. Friendly
+  renderer choices are presentation-only mappings to canonical portable stacks,
+  not new persisted enum values. A non-empty custom stack that does not match a
+  named renderer choice must round-trip unchanged when unrelated focused
+  settings are saved.
+- Paired renderer color pickers and hexadecimal text controls write the existing
+  terminal background, foreground, and cursor string fields. They do not change
+  the settings schema or add derived color-picker state.
 
 ## Boundaries
 
@@ -84,6 +92,10 @@ Settings must be validated at load time.
 - Terminal background, foreground, and cursor colors use portable three- or
   six-digit hexadecimal RGB values so Electron window framing, renderer CSS,
   and xterm resolve the same color instead of applying different fallbacks.
+- Named terminal-font selections resolve to canonical stacks with bundled faces
+  followed by portable system monospace fallbacks. Other non-empty font-family
+  strings remain valid custom values and are not rewritten merely because the
+  renderer does not recognize them.
 
 ## Persisted Data
 
@@ -117,3 +129,7 @@ It must not persist:
   work-area-clamped primary-display bounds.
 - Platform path resolution works for macOS, Linux, and Windows.
 - Sensitive values are not logged in plain text.
+- Focused settings preserve an unrecognized custom font stack when another
+  setting changes, while named choices persist their canonical fallback stacks.
+- Color-picker interaction persists the same validated hexadecimal fields as
+  direct text entry and requires no schema migration.

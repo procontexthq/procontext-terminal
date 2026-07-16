@@ -54,7 +54,11 @@ export function FocusedSettingsShellProfiles({
         </select>
       </label>
       {draft.shell.profiles.map((profile, index) => (
-        <article key={profile.id} aria-label={`Shell profile ${profile.name}`}>
+        <article
+          className="focused-settings-shell-profile"
+          key={profile.id}
+          aria-label={`Shell profile ${profile.name}`}
+        >
           <label>
             Name
             <input
@@ -82,12 +86,18 @@ export function FocusedSettingsShellProfiles({
               onChange={(event) => updateProfile(index, { cwd: event.target.value || null })}
             />
           </label>
-          <button type="button" onClick={() => removeProfile(index, setDraft)}>
-            Remove profile
-          </button>
+          <div className="focused-settings-shell-profile-actions">
+            <button type="button" onClick={() => removeProfile(index, setDraft)}>
+              Remove profile
+            </button>
+          </div>
         </article>
       ))}
-      <button type="button" onClick={() => addProfile(setDraft)}>
+      <button
+        type="button"
+        className="focused-settings-add-profile"
+        onClick={() => addProfile(setDraft)}
+      >
         Add profile
       </button>
     </fieldset>

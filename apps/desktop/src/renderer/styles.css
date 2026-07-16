@@ -497,7 +497,8 @@ body {
 }
 
 .focused-settings-panel label,
-.focused-settings-panel article {
+.focused-settings-panel article,
+.focused-settings-color-field {
   display: grid;
   min-width: 0;
   gap: 4px;
@@ -507,7 +508,7 @@ body {
 
 .focused-settings-panel article {
   grid-column: 1 / -1;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
   align-items: end;
   padding-top: 8px;
   border-top: 1px solid var(--border-soft);
@@ -524,6 +525,53 @@ body {
   background: var(--surface);
   color: var(--text);
   font: inherit;
+}
+
+.focused-settings-panel .focused-settings-full-width {
+  grid-column: 1 / -1;
+}
+
+.focused-settings-color-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.focused-settings-panel input[type="color"] {
+  width: 34px;
+  min-width: 34px;
+  height: 28px;
+  min-height: 28px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.focused-settings-panel .focused-settings-checkbox {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.focused-settings-checkbox input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.focused-settings-shell-profile-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+.focused-settings-add-profile {
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .focused-settings-panel textarea {

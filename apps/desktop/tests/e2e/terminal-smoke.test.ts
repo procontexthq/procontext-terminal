@@ -269,13 +269,79 @@ describe("desktop terminal smoke", () => {
     browser = await launchApp(userDataDir);
     const page = await firstPage(browser);
     await waitForTerminalReady(page);
+    await setNativeWindowSize(page, 640, 560);
+    await page.getByTestId("theme-select").selectOption("gamer");
+    await page.waitForFunction(
+      () => document.querySelector<HTMLElement>(".app-shell")?.dataset.theme === "gamer",
+      undefined,
+      { timeout: e2eUiTimeoutMs },
+    );
 
     await page.getByTestId("focused-settings-toggle").click();
     await page.getByRole("region", { name: "Terminal settings" }).waitFor({
       timeout: e2eUiTimeoutMs,
     });
+    await page.getByRole("button", { name: "Add profile" }).click();
+    const settingsLayout = await page.evaluate(() => {
+      const panel = document.querySelector<HTMLElement>(".focused-settings-panel");
+      const profile = panel?.querySelector<HTMLElement>(".focused-settings-shell-profile");
+      const checkbox = panel?.querySelector<HTMLInputElement>(
+        '[data-testid="accessibility-screen-reader"]',
+      );
+      const checkboxText = checkbox
+        ?.closest("label")
+        ?.querySelector<HTMLElement>(".focused-settings-checkbox-label");
+      const controls = profile
+        ? [
+            ...Array.from(profile.querySelectorAll<HTMLElement>("input, button")),
+            ...Array.from(panel!.querySelectorAll<HTMLElement>(".focused-settings-add-profile")),
+          ]
+        : [];
+      if (!panel || !profile || !checkbox || !checkboxText || controls.length !== 5) return null;
+
+      const panelRect = panel.getBoundingClientRect();
+      const controlBounds = controls.map((control) => {
+        const rect = control.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const hit = document.elementFromPoint(centerX, centerY);
+        return {
+          left: rect.left,
+          right: rect.right,
+          hit: Boolean(hit && (hit === control || control.contains(hit))),
+        };
+      });
+      const checkboxRect = checkbox.getBoundingClientRect();
+      const checkboxTextRect = checkboxText.getBoundingClientRect();
+      return {
+        panelOverflow: panel.scrollWidth > panel.clientWidth + 1,
+        profileOverflow: profile.scrollWidth > profile.clientWidth + 1,
+        controlsInsidePanel: controlBounds.every(
+          (bounds) =>
+            bounds.left >= panelRect.left - 1 && bounds.right <= panelRect.right + 1 && bounds.hit,
+        ),
+        checkboxCenterDelta: Math.abs(
+          checkboxRect.top +
+            checkboxRect.height / 2 -
+            (checkboxTextRect.top + checkboxTextRect.height / 2),
+        ),
+      };
+    });
+    if (
+      !settingsLayout ||
+      settingsLayout.panelOverflow ||
+      settingsLayout.profileOverflow ||
+      !settingsLayout.controlsInsidePanel ||
+      settingsLayout.checkboxCenterDelta > 1
+    ) {
+      throw new Error(
+        `Expected responsive focused settings controls: ${JSON.stringify(settingsLayout)}`,
+      );
+    }
+    await page.getByRole("button", { name: "Remove profile" }).click();
     await page.getByTestId("setting-font-size").fill("16");
-    await page.getByTestId("setting-font-family").fill('Consolas, "Courier New", monospace');
+    await page.getByTestId("setting-font-family").selectOption("custom");
+    await page.getByTestId("setting-font-family-custom").fill('Consolas, "Courier New", monospace');
     await page.getByTestId("setting-scrollback").fill("12000");
     await page.getByTestId("setting-color-background").fill("#112233");
     await page.getByTestId("accessibility-minimum-contrast").fill("7");
