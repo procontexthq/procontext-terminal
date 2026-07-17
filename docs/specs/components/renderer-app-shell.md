@@ -94,6 +94,9 @@ The first multi-session milestone supports tabs only.
   item after tab layout changes and observed or window-level resizes, not only
   when the active tab changes. Compact previous/next overflow controls and the
   new-tab action remain reachable outside the scrollable tab viewport.
+- When the tabs do not overflow, the new-tab action sits immediately after the
+  final tab instead of consuming the far edge of the remaining titlebar space.
+  It remains outside the scrollable viewport so overflow never hides it.
 - The session-list toggle uses a recognizable sidebar icon with an accessible
   label instead of consuming header width with a persistent text label.
 - The header is the app's in-window titlebar. Its empty regions drag the native
@@ -130,6 +133,13 @@ The first multi-session milestone supports tabs only.
   The visible terminal frame, padding, scroll area, and xterm theme background
   must use the same resolved theme background so theme switching does not leave
   mismatched gutter colors.
+- UI theme selection lives in the focused Settings surface rather than as a
+  persistent titlebar control. Changing it continues to apply and persist
+  immediately. While that atomic appearance preset is being persisted, the
+  regular Settings save remains disabled. The returned terminal font and
+  background update both the live terminal configuration and the Settings
+  draft without discarding unrelated in-progress edits. Keyboard focus returns
+  to the theme selector after that pending save settles.
 - Startup reconciliation may create visible views for live headless sessions
   according to presentation policy. A missing renderer view never changes PTY
   lifecycle.
@@ -160,6 +170,18 @@ The first multi-session milestone supports tabs only.
 - Human actions can reveal, focus, hide, detach agent control, or terminate a
   session while preserving the distinction between renderer views, agent
   attachment, and PTY lifecycle.
+- Each session card exposes exactly one contextual presentation action:
+  `Reveal` for a headless session, `Focus` for a visible inactive session, or
+  `Hide` for the active session. Recording remains a direct contextual action;
+  recording export, agent-control changes, and termination live in a labelled
+  secondary-actions disclosure. Termination remains visually destructive and
+  keeps its existing confirmation behavior.
+- Closing a session-card disclosure with Escape or a non-removing action returns
+  keyboard focus to that card's More control. A confirmed removal moves focus
+  to a neighboring session, or to the Sessions toggle when no card remains.
+  Hiding and reopening the Sessions sidebar never restores a stale disclosure.
+- Attached and revoked agent control are prominent session states. Ordinary
+  detached control does not consume a high-emphasis header badge.
 - Activating a human tab reports that owned renderer view as foreground and
   reports previously active visible views as background through typed IPC, so
   canonical presentation remains consistent with actual window focus.
@@ -175,6 +197,9 @@ The first multi-session milestone supports tabs only.
 - Agent-policy settings use coarse observation, execution, interaction,
   presentation, recording, and termination categories with `allow`, `ask`, and
   `deny` modes.
+- One persistent Agent titlebar control combines the privacy-safe active/idle
+  indicator with access to agent-policy settings. The titlebar does not render
+  separate policy and activity controls.
 - The focused Settings surface includes an Agent access section with a static
   masked value, a non-secret fingerprint, creation time, and explicit Copy and
   Generate new key actions.
@@ -239,6 +264,13 @@ palette are explicitly out of scope.
   sessions, PTYs, or terminal output.
 - Agent access-key controls never render or retain the raw credential, and
   cancellation cannot regenerate or disconnect an agent.
+- With one or many tabs, the new-tab action remains adjacent to the tab group
+  when space permits and remains reachable when the strip overflows.
+- The titlebar exposes one Agent control whose visible active/idle state and
+  accessible name update from canonical gateway activity.
+- Session cards render only the presentation action valid for their current
+  state, and their secondary-actions disclosure preserves recording export,
+  per-session agent control, and destructive termination access.
 - The titlebar exposes a draggable region, every interactive descendant is
   non-draggable, and the active tab plus all persistent header actions remain
   reachable inside the native-controls safe area at the minimum window width.

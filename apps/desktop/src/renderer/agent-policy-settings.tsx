@@ -18,14 +18,18 @@ const categoryLabels: Record<AgentPermissionCategory, string> = {
 };
 
 export function AgentPolicySettings({
+  active,
   policy,
   onSave,
 }: {
+  active: boolean;
   policy: AgentPolicyConfig;
   onSave: (policy: AgentPolicyConfig) => void;
 }): ReactElement {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(policy);
+  const activityLabel = active ? "Agent active" : "Agent idle";
+  const popoverId = "agent-policy-popover";
 
   useEffect(() => setDraft(policy), [policy]);
 
@@ -33,23 +37,30 @@ export function AgentPolicySettings({
     <div className="agent-policy-settings">
       <button
         type="button"
-        className={`agent-policy-toggle${open ? " is-active" : ""}`}
-        aria-label="Agent policy"
+        className={`agent-policy-toggle${active ? " is-agent-active" : ""}${open ? " is-active" : ""}`}
+        aria-label={`${activityLabel}. Open agent policy settings`}
         aria-expanded={open}
-        title="Agent policy"
+        aria-controls={popoverId}
+        title={`${activityLabel}. Open agent policy settings`}
         data-testid="agent-policy-toggle"
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="titlebar-control-label">Agent policy</span>
-        <span className="titlebar-control-label-compact" aria-hidden="true">
-          Policy
-        </span>
+        <span>{activityLabel}</span>
+        <span className="agent-policy-chevron" aria-hidden="true" />
       </button>
+      <span
+        className="visually-hidden"
+        data-testid="agent-activity"
+        role="status"
+        aria-live="polite"
+      >
+        {activityLabel}
+      </span>
       {open ? (
-        <section className="agent-policy-popover" aria-label="Agent policy settings">
+        <section id={popoverId} className="agent-policy-popover" aria-label="Agent policy settings">
           <header>
             <strong>Agent permissions</strong>
-            <p>Choose the default response for each coarse capability.</p>
+            <p>{activityLabel}. Choose the default response for each coarse capability.</p>
           </header>
           {agentPermissionCategories.map((category) => (
             <label key={category}>

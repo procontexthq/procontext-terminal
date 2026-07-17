@@ -340,35 +340,10 @@ export function App(): ReactElement {
             onAdd={addTab}
           />
           <div className="titlebar-status">
-            <label className="theme-picker">
-              <span className="titlebar-control-label" aria-hidden="true">
-                Theme
-              </span>
-              <select
-                data-testid="theme-select"
-                aria-label="Theme"
-                value={uiTheme}
-                onChange={(event) => {
-                  const nextTheme = parseUiTheme(event.target.value);
-                  setUiTheme(nextTheme);
-                  void window.terminalApi
-                    .saveUiTheme(nextTheme)
-                    .then((savedConfig) => {
-                      setConfig(savedConfig);
-                      setUiTheme(savedConfig.ui.theme);
-                    })
-                    .catch(reportError);
-                }}
-              >
-                <option value="default">Default</option>
-                <option value="coder">Coder</option>
-                <option value="gamer">Gamer</option>
-                <option value="classic">Classic</option>
-              </select>
-            </label>
             {config ? (
               <FocusedSettings
                 config={config}
+                uiTheme={uiTheme}
                 agentAccess={
                   agentAccessMetadata
                     ? {
@@ -383,6 +358,20 @@ export function App(): ReactElement {
                       }
                     : undefined
                 }
+                onUiThemeChange={async (nextTheme) => {
+                  const previousTheme = uiTheme;
+                  setUiTheme(nextTheme);
+                  try {
+                    const savedConfig = await window.terminalApi.saveUiTheme(nextTheme);
+                    setConfig(savedConfig);
+                    setUiTheme(savedConfig.ui.theme);
+                    return savedConfig;
+                  } catch (error: unknown) {
+                    setUiTheme(previousTheme);
+                    reportError(error);
+                    return null;
+                  }
+                }}
                 onSave={(settings) => {
                   void window.terminalApi
                     .saveFocusedSettings(settings)
@@ -393,6 +382,7 @@ export function App(): ReactElement {
             ) : null}
             {config ? (
               <AgentPolicySettings
+                active={agentActive}
                 policy={config.agentPolicy}
                 onSave={(policy: AgentPolicyConfig) => {
                   void window.terminalApi
@@ -402,16 +392,6 @@ export function App(): ReactElement {
                 }}
               />
             ) : null}
-            <span
-              className={`agent-activity${agentActive ? " is-active" : ""}`}
-              data-testid="agent-activity"
-              role="status"
-              title={agentActive ? "Agent active" : "Agent idle"}
-            >
-              <span className="titlebar-control-label">
-                {agentActive ? "Agent active" : "Agent idle"}
-              </span>
-            </span>
           </div>
         </div>
       </header>
@@ -506,8 +486,4 @@ function requiresCloseConfirmation(status: TerminalUiStatus): boolean {
   return (
     status === "starting" || status === "creating" || status === "running" || status === "exiting"
   );
-}
-
-function parseUiTheme(value: string | null): UiThemePreference {
-  return value === "coder" || value === "gamer" || value === "classic" ? value : "default";
 }

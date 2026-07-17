@@ -13,6 +13,7 @@ export function SessionSidebarToggle({
       type="button"
       className={`session-sidebar-toggle${open ? " is-active" : ""}`}
       aria-label={label}
+      aria-controls="session-sidebar"
       aria-expanded={open}
       title={label}
       data-testid="session-sidebar-toggle"
