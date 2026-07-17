@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { createServer } from "node:http";
 
@@ -69,15 +69,11 @@ type ConnectionContext = {
 };
 
 const defaultHost = "127.0.0.1";
-const defaultTokenTtlMs = 15 * 60 * 1_000;
 
 export async function startAgentGateway(options: AgentGatewayOptions): Promise<AgentGateway> {
   const now = options.now ?? (() => new Date());
   const host = options.host ?? defaultHost;
-  const token = options.token ?? randomBytes(32).toString("base64url");
-  const tokenExpiresAt =
-    options.tokenExpiresAt ??
-    new Date(now().getTime() + (options.tokenTtlMs ?? defaultTokenTtlMs)).toISOString();
+  let accessKey = requireAccessKey(options.accessKey);
   const server = createServer();
   const wss = await createWebSocketServer(server);
   const connections = new Map<string, ConnectionContext>();
@@ -114,8 +110,6 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     }
     descriptor = {
       url: `ws://${host}:${address.port}`,
-      token,
-      tokenExpiresAt,
       pid: process.pid,
       protocolVersion: TERMINAL_PROTOCOL_VERSION,
     };
@@ -144,7 +138,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       const attached = attachments.list().find((control) => control.sessionId === sessionId);
       if (!changed && attached) return attached;
       const state = detachedControlState(sessionId);
-      if (changed) options.onControlChanged?.(state);
+      if (changed) notify("onControlChanged", options.onControlChanged, state);
       return state;
     },
     removeSessionControl(sessionId) {
@@ -153,6 +147,15 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     },
     removeOperationControl(operationId) {
       releaseOperation(operationId);
+    },
+    rotateAccessKey(nextAccessKey) {
+      accessKey = requireAccessKey(nextAccessKey);
+      const activeConnections = [...connections.values()];
+      for (const connection of activeConnections) connection.authenticated = false;
+      for (const connection of activeConnections) {
+        removeConnection(connection);
+        connection.socket.close(1008, "Agent access key changed.");
+      }
     },
     async stop() {
       if (stopped) return;
@@ -248,6 +251,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
         attach: (sessionId) => attachOrThrow(sessionId, connection),
         detach: (sessionId) => detach(sessionId, connection),
         rememberOperation: (operationId, sessionId) => {
+          assertConnectionActive(connection);
           operationSessions.set(operationId, sessionId);
         },
         releaseOperation,
@@ -290,15 +294,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     command: Extract<AgentCommand, { type: "agent.authenticate" }>,
     connection: ConnectionContext,
   ): void {
-    if (now().getTime() > Date.parse(tokenExpiresAt)) {
-      const error = createTerminalError("auth_failed", "Agent authentication token expired.", {
-        operation: command.type,
-      });
-      audit(connection, command, "failure", error);
-      sendResult(connection, createAgentCommandFailure(command.requestId, error));
-      return;
-    }
-    if (command.payload.token !== token) {
+    if (!accessKeysMatch(command.payload.token, accessKey)) {
       const error = createTerminalError("auth_failed", "Agent authentication failed.", {
         operation: command.type,
       });
@@ -309,7 +305,6 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     connection.authenticated = true;
     const value = {
       authenticatedAt: now().toISOString(),
-      tokenExpiresAt,
       protocolVersion: TERMINAL_PROTOCOL_VERSION,
     };
     audit(connection, command, "allow");
@@ -318,6 +313,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
   }
 
   function attachOrThrow(sessionId: SessionId, connection: ConnectionContext): void {
+    assertConnectionActive(connection);
     if (revokedSessionIds.has(sessionId)) {
       throw createTerminalError(
         "policy_denied",
@@ -338,7 +334,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       );
     }
     connection.attachedSessionIds.add(sessionId);
-    options.onControlChanged?.({
+    notify("onControlChanged", options.onControlChanged, {
       sessionId,
       state: "attached",
       attachedAt:
@@ -347,11 +343,25 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     });
   }
 
+  function assertConnectionActive(connection: ConnectionContext): void {
+    if (
+      !connection.authenticated ||
+      connection.abortController.signal.aborted ||
+      connections.get(connection.id) !== connection
+    ) {
+      throw createTerminalError("auth_required", "Agent connection is no longer authenticated.", {
+        cause: "auth_required",
+      });
+    }
+  }
+
   function detach(sessionId: SessionId, connection: ConnectionContext): void {
     const wasAttached = connection.attachedSessionIds.delete(sessionId);
     attachments.detach(sessionId, connection.id);
     connection.requests.abortSession(sessionId);
-    if (wasAttached) options.onControlChanged?.(detachedControlState(sessionId));
+    if (wasAttached) {
+      notify("onControlChanged", options.onControlChanged, detachedControlState(sessionId));
+    }
   }
 
   function releaseSession(
@@ -364,7 +374,9 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       connection.attachedSessionIds.delete(sessionId);
       connection.requests.abortSession(sessionId);
     }
-    if (connectionId || emitWhenUnattached) options.onControlChanged?.(nextState);
+    if (connectionId || emitWhenUnattached) {
+      notify("onControlChanged", options.onControlChanged, nextState);
+    }
   }
 
   function releaseOperation(operationId: OperationId): void {
@@ -386,7 +398,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     const detachedSessionIds = attachments.detachConnection(connection.id);
     connection.attachedSessionIds.clear();
     for (const sessionId of detachedSessionIds) {
-      options.onControlChanged?.(detachedControlState(sessionId));
+      notify("onControlChanged", options.onControlChanged, detachedControlState(sessionId));
     }
     emitActivity();
   }
@@ -414,7 +426,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
   }
 
   function emitActivity(): void {
-    options.onActivity?.({
+    notify("onActivity", options.onActivity, {
       activeConnections: connections.size,
       authenticatedConnections: [...connections.values()].filter(
         (connection) => connection.authenticated,
@@ -443,7 +455,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       sessionId,
       cause: "agent_control_revoked",
     });
-    options.onPolicyDenied?.({
+    notify("onPolicyDenied", options.onPolicyDenied, {
       decisionId,
       at: now().toISOString(),
       actor: "agent",
@@ -482,7 +494,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
       ...(commandSessionId(command) ? { sessionId: commandSessionId(command) } : {}),
       ...(commandOperationId(command) ? { operationId: commandOperationId(command) } : {}),
     });
-    options.onPolicyDenied?.({
+    notify("onPolicyDenied", options.onPolicyDenied, {
       decisionId,
       at: now().toISOString(),
       actor: "agent",
@@ -515,4 +527,31 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
     else await Promise.all(tasks);
     emitActivity();
   }
+
+  function notify<TValue>(
+    callbackName: "onActivity" | "onControlChanged" | "onPolicyDenied",
+    callback: ((value: TValue) => void) | undefined,
+    value: TValue,
+  ): void {
+    try {
+      callback?.(value);
+    } catch (error: unknown) {
+      try {
+        options.onCallbackError?.(callbackName, error);
+      } catch {
+        // Observer failures must not interrupt gateway state transitions.
+      }
+    }
+  }
+}
+
+function requireAccessKey(value: string): string {
+  if (value.length === 0) throw new Error("Agent access key must not be empty.");
+  return value;
+}
+
+function accessKeysMatch(candidate: string, expected: string): boolean {
+  const candidateDigest = createHash("sha256").update(candidate).digest();
+  const expectedDigest = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(candidateDigest, expectedDigest);
 }

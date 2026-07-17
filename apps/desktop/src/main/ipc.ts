@@ -3,6 +3,7 @@ import { BrowserWindow, ipcMain, type WebContents } from "electron";
 import type { TerminalPolicy } from "@terminal/policy-engine";
 import type {
   AgentSessionControlState,
+  AgentAccessKeyMetadata,
   AgentPermissionRequest,
   CloseTerminalRequest,
   CloseTerminalResult,
@@ -42,6 +43,9 @@ export function registerTerminalIpc({
   listAgentControls,
   revokeAgentControl,
   allowAgentControl,
+  getAgentAccessKeyMetadata,
+  copyAgentAccessKey,
+  regenerateAgentAccessKey,
   exportRecordingFile,
   openLink,
   listPermissions,
@@ -61,6 +65,9 @@ export function registerTerminalIpc({
   listAgentControls: () => AgentSessionControlState[];
   revokeAgentControl: (sessionId: SessionId) => AgentSessionControlState;
   allowAgentControl: (sessionId: SessionId) => AgentSessionControlState;
+  getAgentAccessKeyMetadata: () => AgentAccessKeyMetadata;
+  copyAgentAccessKey: () => void;
+  regenerateAgentAccessKey: () => Promise<AgentAccessKeyMetadata>;
   exportRecordingFile: (request: RecordingControlRequest) => Promise<RecordingExportFileResult>;
   openLink: (target: TerminalLinkTarget) => Promise<TerminalLinkOpenResult>;
   listPermissions: () => AgentPermissionRequest[];
@@ -91,6 +98,9 @@ export function registerTerminalIpc({
       listAgentControls,
       revokeAgentControl,
       allowAgentControl,
+      getAgentAccessKeyMetadata,
+      copyAgentAccessKey,
+      regenerateAgentAccessKey,
       exportRecordingFile,
       openLink,
       listPermissions,

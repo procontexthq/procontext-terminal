@@ -13,6 +13,7 @@ import {
   createRequestId,
   createSessionId,
   parseAgentCommandResult,
+  type AgentAuditEvent,
   type AgentCommandResult,
   type AgentGatewayDescriptor,
   type RunTerminalResult,
@@ -41,11 +42,17 @@ describe("agent gateway", () => {
 
     expect(descriptor.protocolVersion).toBe(TERMINAL_PROTOCOL_VERSION);
     expect(descriptor.url).toMatch(/^ws:\/\/127\.0\.0\.1:/);
+    expect(descriptor).toStrictEqual({
+      url: descriptor.url,
+      pid: process.pid,
+      protocolVersion: TERMINAL_PROTOCOL_VERSION,
+    });
+    expect(await readFile(runtime.descriptorPath, "utf8")).not.toContain("test-access-key");
 
     const client = await AgentClient.connect(descriptor.url);
     const result = await client.request(
       createAgentCommand("agent.authenticate", {
-        token: "test-token",
+        token: "test-access-key",
         protocolVersion: TERMINAL_PROTOCOL_VERSION,
       }),
     );
@@ -64,7 +71,10 @@ describe("agent gateway", () => {
       client.requestRaw({
         type: "agent.authenticate",
         requestId: createRequestId("request-unsupported-version"),
-        payload: { token: "test-token", protocolVersion: 2 },
+        payload: {
+          token: "test-access-key",
+          protocolVersion: TERMINAL_PROTOCOL_VERSION + 1,
+        },
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -75,6 +85,123 @@ describe("agent gateway", () => {
     });
 
     client.close();
+  });
+
+  it("keeps the configured access key valid until it is explicitly rotated", async () => {
+    let currentTime = new Date("2026-01-01T00:00:00.000Z");
+    const runtime = await createRuntime(createServices(), vi.fn(), {
+      now: () => currentTime,
+    });
+    currentTime = new Date("2126-01-01T00:00:00.000Z");
+
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+    await expect(client.request(createAgentCommand("terminal.list", {}))).resolves.toMatchObject({
+      ok: true,
+    });
+    client.close();
+  });
+
+  it("disconnects agents and releases control without closing PTYs when the key rotates", async () => {
+    const services = createServices();
+    let observedSignal: AbortSignal | undefined;
+    services.observe.mockImplementation((_request, signal) => {
+      observedSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("rotated")), { once: true });
+      });
+    });
+    const runtime = await createRuntime(services);
+    const sessionId = createSessionId("rotation-controlled-session");
+    const originalClient = await authenticatedClient(runtime.gateway.descriptor);
+    await originalClient.request(createAgentCommand("terminal.attach", { sessionId }));
+    void originalClient.request(
+      createAgentCommand("terminal.observe", { sessionId, timeoutMs: 10_000 }),
+    );
+    await waitFor(() => observedSignal !== undefined);
+
+    runtime.gateway.rotateAccessKey("replacement-access-key");
+
+    await originalClient.waitForClose();
+    await waitFor(() => observedSignal?.aborted === true);
+    expect(runtime.gateway.listSessionControls()).toEqual([]);
+    expect(services.close).not.toHaveBeenCalled();
+
+    const rejectedClient = await AgentClient.connect(runtime.gateway.descriptor.url);
+    await expect(authenticate(rejectedClient, "test-access-key")).resolves.toMatchObject({
+      ok: false,
+      error: { type: "auth_failed" },
+    });
+    rejectedClient.close();
+
+    const replacementClient = await AgentClient.connect(runtime.gateway.descriptor.url);
+    await expect(authenticate(replacementClient, "replacement-access-key")).resolves.toMatchObject({
+      ok: true,
+      value: { protocolVersion: TERMINAL_PROTOCOL_VERSION },
+    });
+    replacementClient.close();
+  });
+
+  it("does not attach a session that finishes creating after its connection was rotated out", async () => {
+    const services = createServices();
+    const createdSession = sessionSummary(createSessionId("created-during-rotation"));
+    const pendingCreate = deferred<TerminalSessionSummary>();
+    services.create.mockImplementation(() => pendingCreate.promise);
+    const audit = vi.fn<(event: AgentAuditEvent) => void>();
+    const runtime = await createRuntime(services, audit);
+    const originalClient = await authenticatedClient(runtime.gateway.descriptor);
+
+    void originalClient.request(createAgentCommand("terminal.create", {}));
+    await waitFor(() => services.create.mock.calls.length === 1);
+    runtime.gateway.rotateAccessKey("replacement-access-key");
+    await originalClient.waitForClose();
+    pendingCreate.resolve(createdSession);
+    await waitFor(() =>
+      audit.mock.calls.some(
+        ([event]) => event.action === "terminal.create" && event.outcome === "failure",
+      ),
+    );
+
+    const replacementClient = await AgentClient.connect(runtime.gateway.descriptor.url);
+    await authenticate(replacementClient, "replacement-access-key");
+    await expect(
+      replacementClient.request(
+        createAgentCommand("terminal.attach", { sessionId: createdSession.sessionId }),
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    expect(services.close).not.toHaveBeenCalled();
+    replacementClient.close();
+  });
+
+  it("keeps rotation atomic when renderer notification callbacks fail", async () => {
+    let throwFromCallbacks = false;
+    const onControlChanged = vi.fn(() => {
+      if (throwFromCallbacks) throw new Error("renderer control callback failed");
+    });
+    const onActivity = vi.fn(() => {
+      if (throwFromCallbacks) throw new Error("renderer activity callback failed");
+    });
+    const onCallbackError = vi.fn();
+    const runtime = await createRuntime(createServices(), vi.fn(), {
+      onActivity,
+      onCallbackError,
+      onControlChanged,
+    });
+    const sessionId = createSessionId("rotation-callback-failure");
+    const client = await authenticatedClient(runtime.gateway.descriptor);
+    await client.request(createAgentCommand("terminal.attach", { sessionId }));
+    throwFromCallbacks = true;
+
+    expect(() => runtime.gateway.rotateAccessKey("replacement-access-key")).not.toThrow();
+    await client.waitForClose();
+    expect(onCallbackError).toHaveBeenCalledWith("onControlChanged", expect.any(Error));
+    expect(onCallbackError).toHaveBeenCalledWith("onActivity", expect.any(Error));
+
+    throwFromCallbacks = false;
+    const replacementClient = await AgentClient.connect(runtime.gateway.descriptor.url);
+    await expect(authenticate(replacementClient, "replacement-access-key")).resolves.toMatchObject({
+      ok: true,
+    });
+    replacementClient.close();
   });
 
   it("rejects unauthenticated requests and removed command names", async () => {
@@ -619,7 +746,13 @@ async function createRuntime(
   callbacks: Partial<
     Pick<
       Parameters<typeof startAgentGateway>[0],
-      "onControlChanged" | "onPolicyDenied" | "requestPermission" | "policy"
+      | "now"
+      | "onActivity"
+      | "onCallbackError"
+      | "onControlChanged"
+      | "onPolicyDenied"
+      | "requestPermission"
+      | "policy"
     >
   > = {},
 ): Promise<{ gateway: AgentGateway; descriptorPath: string }> {
@@ -629,8 +762,7 @@ async function createRuntime(
     descriptorPath,
     services,
     policy: createDefaultAgentPolicy(),
-    token: "test-token",
-    tokenExpiresAt: "2099-01-01T00:00:00.000Z",
+    accessKey: "test-access-key",
     audit,
     ...callbacks,
   });
@@ -737,13 +869,17 @@ function sessionSummary(sessionId: ReturnType<typeof createSessionId>): Terminal
 
 async function authenticatedClient(descriptor: AgentGatewayDescriptor): Promise<AgentClient> {
   const client = await AgentClient.connect(descriptor.url);
-  await client.request(
+  await authenticate(client, "test-access-key");
+  return client;
+}
+
+function authenticate(client: AgentClient, accessKey: string): Promise<AgentCommandResult> {
+  return client.request(
     createAgentCommand("agent.authenticate", {
-      token: "test-token",
+      token: accessKey,
       protocolVersion: TERMINAL_PROTOCOL_VERSION,
     }),
   );
-  return client;
 }
 
 function successValue<T>(result: AgentCommandResult): T {
@@ -812,6 +948,11 @@ class AgentClient {
 
   close(): void {
     this.socket.close();
+  }
+
+  waitForClose(): Promise<void> {
+    if (this.socket.readyState === WebSocket.CLOSED) return Promise.resolve();
+    return new Promise((resolve) => this.socket.once("close", () => resolve()));
   }
 }
 

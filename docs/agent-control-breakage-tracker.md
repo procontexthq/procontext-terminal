@@ -61,14 +61,17 @@ Wait for:
 $RUN_ROOT/user-data/agent-gateway.json
 ```
 
-Then connect to the descriptor `url`, authenticate with the descriptor `token`,
-and send command envelopes like:
+Then connect to the descriptor `url`, authenticate with an access key copied by
+the human from the app's Settings surface, and send command envelopes like:
 
 ```json
 {
   "type": "agent.authenticate",
   "requestId": "repro-1",
-  "payload": { "token": "<descriptor token>" }
+  "payload": {
+    "token": "<human-provisioned access key>",
+    "protocolVersion": 2
+  }
 }
 ```
 

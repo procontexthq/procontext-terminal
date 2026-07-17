@@ -17,6 +17,7 @@ This directory contains the detailed component specs for the terminal architectu
 - [PTY Host](./pty-host.md)
 - [Shell Resolver](./shell-resolver.md)
 - [Shell Integration](./shell-integration.md)
+- [Agent Access Key Store](./agent-access-key-store.md)
 - [Agent Gateway](./agent-gateway.md)
 - [Policy Engine](./policy-engine.md)
 - [Screen Observer](./screen-observer.md)

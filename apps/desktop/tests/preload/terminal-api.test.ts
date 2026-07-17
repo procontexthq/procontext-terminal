@@ -38,6 +38,9 @@ describe("renderer terminal api", () => {
     await expect(api.listAgentControls()).resolves.toBe("agent.control.list");
     await expect(api.revokeAgentControl({ sessionId })).resolves.toBe("agent.control.revoke");
     await expect(api.allowAgentControl({ sessionId })).resolves.toBe("agent.control.allow");
+    await expect(api.getAgentAccessKeyMetadata()).resolves.toBe("agent.accessKey.getMetadata");
+    await expect(api.copyAgentAccessKey()).resolves.toBe("agent.accessKey.copy");
+    await expect(api.regenerateAgentAccessKey()).resolves.toBe("agent.accessKey.regenerate");
     await expect(api.listPermissions()).resolves.toBe("permission.list");
     await expect(
       api.resolvePermission({ permissionId: "decision-1", decision: "deny" }),
@@ -83,6 +86,10 @@ describe("renderer terminal api", () => {
         status: "completed",
       }),
     ).resolves.toBe("presentation.acknowledge");
+
+    expect(invoke).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "agent.accessKey.copy", payload: {} }),
+    );
 
     expect(Object.keys(api)).not.toEqual(
       expect.arrayContaining([

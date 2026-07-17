@@ -47,20 +47,17 @@ import {
   type TerminalInputRequest,
 } from "./sessions.js";
 
-export const TERMINAL_PROTOCOL_VERSION = 1 as const;
+export const TERMINAL_PROTOCOL_VERSION = 2 as const;
 export type TerminalProtocolVersion = typeof TERMINAL_PROTOCOL_VERSION;
 
 export type AgentGatewayDescriptor = {
   url: string;
-  token: string;
-  tokenExpiresAt: string;
   pid: number;
   protocolVersion: TerminalProtocolVersion;
 };
 
 export type AgentAuthenticationResult = {
   authenticatedAt: string;
-  tokenExpiresAt: string;
   protocolVersion: TerminalProtocolVersion;
 };
 
@@ -164,11 +161,10 @@ export type AgentAuditEvent = {
 export const agentGatewayDescriptorSchema = z
   .object({
     url: z.string().url(),
-    token: z.string().min(1),
-    tokenExpiresAt: z.string().min(1),
     pid: z.number().int().positive(),
     protocolVersion: z.literal(TERMINAL_PROTOCOL_VERSION),
   })
+  .strict()
   .refine((value) => isLoopbackWebSocketUrl(value.url), {
     message: "Agent gateway URL must use loopback WebSocket transport.",
   });

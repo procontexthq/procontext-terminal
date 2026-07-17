@@ -52,6 +52,12 @@ export function createRendererTerminalApi({
       invokeCommand(invoke, createRendererCommand("agent.control.revoke", request)),
     allowAgentControl: (request) =>
       invokeCommand(invoke, createRendererCommand("agent.control.allow", request)),
+    getAgentAccessKeyMetadata: () =>
+      invokeCommand(invoke, createRendererCommand("agent.accessKey.getMetadata", {})),
+    copyAgentAccessKey: () =>
+      invokeCommand(invoke, createRendererCommand("agent.accessKey.copy", {})),
+    regenerateAgentAccessKey: () =>
+      invokeCommand(invoke, createRendererCommand("agent.accessKey.regenerate", {})),
     listPermissions: () => invokeCommand(invoke, createRendererCommand("permission.list", {})),
     resolvePermission: (request) =>
       invokeCommand(invoke, createRendererCommand("permission.resolve", request)),

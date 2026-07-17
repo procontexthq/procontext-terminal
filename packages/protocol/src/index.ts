@@ -1,4 +1,5 @@
 export * from "./agent.js";
+export * from "./agent-access.js";
 export * from "./config.js";
 export * from "./errors.js";
 export * from "./ids.js";

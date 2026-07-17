@@ -3,12 +3,14 @@ import type { Dispatch, ReactElement, SetStateAction } from "react";
 
 import {
   focusedTerminalSettingsSchema,
+  type AgentAccessKeyMetadata,
   type FocusedTerminalSettings,
   type TerminalConfig,
   type TerminalPresentationMode,
 } from "@terminal/protocol";
 
 import { FocusedSettingsShellProfiles } from "./focused-settings-shell-profiles";
+import { AgentAccessSettings } from "./agent-access-settings";
 
 const SETTINGS_ERROR_ID = "focused-settings-error";
 const SYSTEM_MONOSPACE_FONT_STACK =
@@ -42,9 +44,16 @@ type TerminalFontChoice = (typeof TERMINAL_FONT_OPTIONS)[number]["id"] | typeof 
 export function FocusedSettings({
   config,
   onSave,
+  agentAccess,
 }: {
   config: TerminalConfig;
   onSave: (settings: FocusedTerminalSettings) => void;
+  agentAccess?: {
+    metadata: AgentAccessKeyMetadata;
+    onCopy: () => Promise<void>;
+    onRegenerate: () => Promise<AgentAccessKeyMetadata>;
+    onError: (error: unknown) => void;
+  };
 }): ReactElement {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() => focusedSettingsFromConfig(config));
@@ -119,7 +128,7 @@ export function FocusedSettings({
         <section className="focused-settings-panel" aria-label="Terminal settings">
           <header>
             <strong>Terminal settings</strong>
-            <p>Appearance, shells, accessibility, recording, and presentation.</p>
+            <p>Appearance, shells, agent access, accessibility, recording, and presentation.</p>
           </header>
 
           <fieldset>
@@ -241,6 +250,8 @@ export function FocusedSettings({
             invalidFields={invalidFields}
             errorId={SETTINGS_ERROR_ID}
           />
+
+          {agentAccess ? <AgentAccessSettings {...agentAccess} /> : null}
 
           <fieldset>
             <legend>Accessibility</legend>

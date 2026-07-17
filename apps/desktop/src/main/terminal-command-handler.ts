@@ -8,6 +8,7 @@ import {
   type CloseTerminalRequest,
   type CloseTerminalResult,
   type CreateTerminalRequest,
+  type AgentAccessKeyMetadata,
   type AgentSessionControlState,
   type AgentPermissionRequest,
   type PolicyDenialNotice,
@@ -56,6 +57,9 @@ export type TerminalCommandServices = {
   listAgentControls(): AgentSessionControlState[];
   revokeAgentControl(sessionId: AgentSessionControlState["sessionId"]): AgentSessionControlState;
   allowAgentControl(sessionId: AgentSessionControlState["sessionId"]): AgentSessionControlState;
+  getAgentAccessKeyMetadata(): AgentAccessKeyMetadata;
+  copyAgentAccessKey(): void;
+  regenerateAgentAccessKey(): Promise<AgentAccessKeyMetadata>;
   listPermissions(): AgentPermissionRequest[];
   resolvePermission(request: ResolvePermissionRequest): boolean;
   exportRecordingFile(request: RecordingControlRequest): Promise<RecordingExportFileResult>;
@@ -206,6 +210,15 @@ async function executeRendererCommand(
         command.requestId,
         services.allowAgentControl(command.payload.sessionId),
       );
+    case "agent.accessKey.getMetadata":
+      return executeAgentAccessKeyAction(command, () => services.getAgentAccessKeyMetadata());
+    case "agent.accessKey.copy":
+      return executeAgentAccessKeyAction(command, () => {
+        services.copyAgentAccessKey();
+        return null;
+      });
+    case "agent.accessKey.regenerate":
+      return executeAgentAccessKeyAction(command, () => services.regenerateAgentAccessKey());
     case "permission.list":
       return createRendererCommandSuccess(command.requestId, services.listPermissions());
     case "permission.resolve":
@@ -365,6 +378,10 @@ function policyOperation(command: RendererCommand): TerminalPolicyOperation {
       return { type: command.type, sessionId: command.payload.sessionId, inputKind: "close" };
     case "agent.control.allow":
       return { type: command.type, sessionId: command.payload.sessionId };
+    case "agent.accessKey.getMetadata":
+    case "agent.accessKey.copy":
+    case "agent.accessKey.regenerate":
+      return { type: command.type };
     case "permission.list":
       return { type: command.type, observationKind: "list" };
     case "permission.resolve":
@@ -377,6 +394,28 @@ function policyOperation(command: RendererCommand): TerminalPolicyOperation {
     case "presentation.ready":
     case "presentation.acknowledge":
       return { type: command.type };
+  }
+}
+
+async function executeAgentAccessKeyAction(
+  command: Extract<
+    RendererCommand,
+    {
+      type: "agent.accessKey.getMetadata" | "agent.accessKey.copy" | "agent.accessKey.regenerate";
+    }
+  >,
+  action: () => unknown,
+): Promise<RendererCommandResult<unknown>> {
+  try {
+    return createRendererCommandSuccess(command.requestId, await action());
+  } catch {
+    throw createTerminalError(
+      "agent_access_failed",
+      "Could not complete the agent access action.",
+      {
+        operation: command.type,
+      },
+    );
   }
 }
 

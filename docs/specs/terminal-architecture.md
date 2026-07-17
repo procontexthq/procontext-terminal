@@ -83,7 +83,8 @@ close, and retention. It imports neither Electron nor WebSocket.
 ### Electron main
 
 Composes services, authorizes renderer actions, owns IPC, tracks renderer views,
-and synchronizes canonical state with renderer projections.
+and synchronizes canonical state with renderer projections. It also owns the
+persistent agent access-key store and main-process clipboard operations.
 
 ### Renderer
 
@@ -95,7 +96,8 @@ buffer, lifecycle, or observation state.
 
 Owns loopback transport, authentication, fixed protocol-version validation,
 exclusive agent attachment, policy checks, audit metadata, request dispatch,
-and disconnect cleanup. It calls one narrow terminal service.
+and disconnect cleanup. It receives the active access key from Electron main
+and calls one narrow terminal service.
 
 ## Agent Contract Through Phase 4
 
@@ -219,17 +221,22 @@ is unchanged; keys intended for the application remain terminal input.
 ## Security
 
 - Agent transport binds loopback only by default.
-- Descriptor and token files use restrictive permissions.
+- Runtime descriptors and persistent access-key files use restrictive
+  permissions and remain separate from ordinary settings.
 - Every untrusted boundary is runtime-validated.
 - Every sensitive operation passes policy before side effects.
 - One authenticated agent connection controls a session at a time.
 - Humans retain concurrent control.
-- Raw terminal input, PTY output, command lines, environment values, tokens,
-  transcripts, and clipboard contents are not diagnostic logs or audit fields.
+- Raw terminal input, PTY output, command lines, environment values, access
+  keys, transcripts, and clipboard contents are not diagnostic logs or audit
+  fields.
 
 ## Persistence
 
 - Settings and recording formats remain versioned.
+- One versioned agent access key persists per Electron `userData` profile until
+  explicit human regeneration. The ephemeral gateway descriptor never contains
+  the key.
 - Full transcripts persist only when recording is explicitly enabled.
 - Session, operation, tab, and PTY runtime state is not restored after app
   restart. Phase 5 may restore validated window geometry only.

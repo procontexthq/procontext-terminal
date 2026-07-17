@@ -61,6 +61,7 @@ import {
   type TerminalSessionSummary,
 } from "./sessions.js";
 import type { PolicyDenialCode } from "./agent.js";
+import type { AgentAccessKeyMetadata } from "./agent-access.js";
 
 export type TerminalViewBootstrap = {
   session: TerminalSessionSummary;
@@ -201,6 +202,17 @@ export type RendererCommand =
       type: "agent.control.allow";
       requestId: RequestId;
       payload: AllowAgentControlRequest;
+    }
+  | {
+      type: "agent.accessKey.getMetadata";
+      requestId: RequestId;
+      payload: Record<string, never>;
+    }
+  | { type: "agent.accessKey.copy"; requestId: RequestId; payload: Record<string, never> }
+  | {
+      type: "agent.accessKey.regenerate";
+      requestId: RequestId;
+      payload: Record<string, never>;
     }
   | { type: "permission.list"; requestId: RequestId; payload: Record<string, never> }
   | {
@@ -388,6 +400,21 @@ export const rendererCommandSchema = z.discriminatedUnion("type", [
     payload: viewRequestSchema,
   }),
   z.object({
+    type: z.literal("agent.accessKey.getMetadata"),
+    requestId: requestIdSchema,
+    payload: z.object({}).strict(),
+  }),
+  z.object({
+    type: z.literal("agent.accessKey.copy"),
+    requestId: requestIdSchema,
+    payload: z.object({}).strict(),
+  }),
+  z.object({
+    type: z.literal("agent.accessKey.regenerate"),
+    requestId: requestIdSchema,
+    payload: z.object({}).strict(),
+  }),
+  z.object({
     type: z.literal("permission.list"),
     requestId: requestIdSchema,
     payload: z.object({}),
@@ -452,6 +479,9 @@ export type RendererTerminalApi = {
   listAgentControls(): Promise<AgentSessionControlState[]>;
   revokeAgentControl(request: RevokeAgentControlRequest): Promise<AgentSessionControlState>;
   allowAgentControl(request: AllowAgentControlRequest): Promise<AgentSessionControlState>;
+  getAgentAccessKeyMetadata(): Promise<AgentAccessKeyMetadata>;
+  copyAgentAccessKey(): Promise<void>;
+  regenerateAgentAccessKey(): Promise<AgentAccessKeyMetadata>;
   listPermissions(): Promise<AgentPermissionRequest[]>;
   resolvePermission(request: ResolvePermissionRequest): Promise<boolean>;
   getConfig(): Promise<TerminalConfig>;

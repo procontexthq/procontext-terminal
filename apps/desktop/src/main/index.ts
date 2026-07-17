@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog, Menu, nativeImage, screen, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, Menu, nativeImage, screen, shell } from "electron";
 
 import {
   resolveAgentGatewayDescriptorPath,
@@ -33,6 +33,11 @@ import {
 } from "./ipc";
 import { resolveAppShortcut, type AppShortcutPlatform } from "../shared/app-shortcuts";
 import { createAgentTerminalService } from "./agent-terminal-service";
+import {
+  createAgentAccessKeyStore,
+  resolveAgentAccessKeyPath,
+  type AgentAccessKeyStore,
+} from "./agent-access-key-store";
 import { PRODUCT_NAME, shouldSetDevelopmentDockIcon } from "./app-branding";
 import { createDesktopCollaborationServices } from "./collaboration-services";
 import { resolveDefaultTerminalCwd } from "./default-terminal-cwd";
@@ -45,6 +50,7 @@ import {
 } from "./terminal-config-persistence";
 import { createTerminalLinkOpener } from "./terminal-link-opener";
 import { waitForInitialHumanSessionSettled } from "./startup-session";
+import { configureSingleInstance } from "./single-instance";
 import {
   createApplicationMenuTemplate,
   dispatchApplicationMenuShortcut,
@@ -124,6 +130,7 @@ const presentationController = createTerminalPresentationController({
 const terminalPolicy = createDefaultTerminalPolicy();
 let unregisterIpc: (() => void) | null = null;
 let agentGateway: AgentGateway | null = null;
+let agentAccessKeyStore: AgentAccessKeyStore | null = null;
 const terminalConfigPersistence = createQueuedTerminalConfigPersistence({
   getConfig: () => terminalConfig,
   setConfig: (config) => {
@@ -304,128 +311,172 @@ process.on("unhandledRejection", (reason) => {
   });
 });
 
-void app
-  .whenReady()
-  .then(async () => {
-    applyDevelopmentDockIcon();
-    const logDirectory = app.getPath("logs");
-    logger = createAppLogger({
-      isDevelopment: !app.isPackaged,
-      logDirectory,
-      level: resolveLogLevel(),
-    });
-    logger.info("app", "startup", {
-      isPackaged: app.isPackaged,
-      logDirectory,
-      logFilePath: resolveMainLogPath(logDirectory),
-    });
+const isPrimaryAppInstance = configureSingleInstance({
+  requestLock: () => app.requestSingleInstanceLock(),
+  onSecondInstance: (handler) => app.on("second-instance", handler),
+  quit: () => app.quit(),
+  getWindows: () => BrowserWindow.getAllWindows(),
+});
 
-    const terminalConfigPath = resolveTerminalConfigPath(app.getPath("userData"));
-    logger.info("settings", "load_started", { settingsPath: terminalConfigPath });
-    const loadedConfig = await loadTerminalConfig(terminalConfigPath);
-    terminalConfig = loadedConfig.config;
-    for (const warning of loadedConfig.warnings) {
-      logger.warn("settings", "warning", { settingsPath: terminalConfigPath, warning });
-    }
-    logger.info("settings", "loaded", {
-      settingsPath: terminalConfigPath,
-      defaultProfileConfigured: Boolean(terminalConfig.shell.defaultProfile),
-    });
-    recorder = new FileTerminalRecorder({
-      directory: join(app.getPath("userData"), "recordings"),
-      redactors: [createPatternRedactor(terminalConfig.recording.redactedPatterns)],
-    });
-    const collaborationServices = createDesktopCollaborationServices({
-      getGateway: () => agentGateway,
-      sessions: sessionManager,
-      showSaveDialog: (options) => dialog.showSaveDialog(options),
-      broadcast: broadcastRendererEvent,
-      hasAvailableRenderer,
-    });
-    disposeCollaborationServices = () => collaborationServices.dispose();
+if (isPrimaryAppInstance) {
+  void app
+    .whenReady()
+    .then(async () => {
+      applyDevelopmentDockIcon();
+      const logDirectory = app.getPath("logs");
+      logger = createAppLogger({
+        isDevelopment: !app.isPackaged,
+        logDirectory,
+        level: resolveLogLevel(),
+      });
+      logger.info("app", "startup", {
+        isPackaged: app.isPackaged,
+        logDirectory,
+        logFilePath: resolveMainLogPath(logDirectory),
+      });
 
-    unregisterIpc = registerTerminalIpc({
-      sessionManager,
-      presentationRegistry,
-      presentationController,
-      policy: terminalPolicy,
-      logger,
-      closeSession: (request) => operationManager.close(request),
-      getConfig: () => terminalConfig,
-      saveConfig,
-      openLink: openTerminalLink,
-      ...collaborationServices.renderer,
-    });
-    installApplicationMenu();
-    let startupWindowCreated = false;
-    await createMainWindow()
-      .then(() => {
-        startupWindowCreated = true;
-      })
-      .catch((error: unknown) => {
-        logger.warn("window", "startup_create_failed", {
+      const agentAccessKeyPath = resolveAgentAccessKeyPath(app.getPath("userData"));
+      try {
+        agentAccessKeyStore = await createAgentAccessKeyStore({
+          credentialPath: agentAccessKeyPath,
+          activateAccessKey: (accessKey) => agentGateway?.rotateAccessKey(accessKey),
+          writeClipboard: (accessKey) => clipboard.writeText(accessKey),
+          onWarning: (warning) => {
+            logger.warn("agent", warning.type, { credentialPath: warning.credentialPath });
+          },
+        });
+      } catch (error: unknown) {
+        logger.error("agent", "access_key_unavailable", {
+          credentialPath: agentAccessKeyPath,
           cause: error instanceof Error ? error.message : String(error),
         });
-      });
-    if (startupWindowCreated) {
-      const startupSession = await waitForInitialHumanSessionSettled(sessionManager, 5000);
-      if (startupSession.status === "settled") {
-        logger.info("agent", "gateway_startup_session_ready", {
-          sessionId: startupSession.session.sessionId,
-          sessionState: startupSession.session.lifecycle,
-        });
-      } else {
-        logger.warn("agent", "gateway_startup_session_timeout", {
-          timeoutMs: startupSession.timeoutMs,
-        });
       }
-    }
-    agentGateway = await startAgentGateway({
-      descriptorPath: resolveAgentGatewayDescriptorPath(app.getPath("userData")),
-      services: createAgentTerminalService(
-        sessionManager,
-        operationManager,
-        presentationController,
-      ),
-      policy: createDefaultAgentPolicy({
-        getPermissionMode: (category) => terminalConfig.agentPolicy[category],
-      }),
-      audit: (event) => {
-        logger.info("agent", "audit", {
-          connectionId: event.connectionId,
-          action: event.action,
-          outcome: event.outcome,
-          requestId: event.requestId,
-          sessionId: event.sessionId,
-          operationId: event.operationId,
-          errorType: event.errorType,
-          denialCode: event.denialCode,
-        });
-      },
-      ...collaborationServices.gateway,
-    });
-    logger.info("agent", "gateway_started", {
-      descriptorPath: agentGateway.descriptorPath,
-      url: sanitizeUrlForLog(agentGateway.descriptor.url),
-      tokenExpiresAt: agentGateway.descriptor.tokenExpiresAt,
-    });
-    logger.info("app", "ready");
 
-    app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        void createMainWindow().catch((error: unknown) => {
-          logger.warn("window", "activate_create_failed", {
+      const terminalConfigPath = resolveTerminalConfigPath(app.getPath("userData"));
+      logger.info("settings", "load_started", { settingsPath: terminalConfigPath });
+      const loadedConfig = await loadTerminalConfig(terminalConfigPath);
+      terminalConfig = loadedConfig.config;
+      for (const warning of loadedConfig.warnings) {
+        logger.warn("settings", "warning", { settingsPath: terminalConfigPath, warning });
+      }
+      logger.info("settings", "loaded", {
+        settingsPath: terminalConfigPath,
+        defaultProfileConfigured: Boolean(terminalConfig.shell.defaultProfile),
+      });
+      recorder = new FileTerminalRecorder({
+        directory: join(app.getPath("userData"), "recordings"),
+        redactors: [createPatternRedactor(terminalConfig.recording.redactedPatterns)],
+      });
+      const collaborationServices = createDesktopCollaborationServices({
+        getGateway: () => agentGateway,
+        sessions: sessionManager,
+        showSaveDialog: (options) => dialog.showSaveDialog(options),
+        broadcast: broadcastRendererEvent,
+        hasAvailableRenderer,
+      });
+      disposeCollaborationServices = () => collaborationServices.dispose();
+
+      unregisterIpc = registerTerminalIpc({
+        sessionManager,
+        presentationRegistry,
+        presentationController,
+        policy: terminalPolicy,
+        logger,
+        closeSession: (request) => operationManager.close(request),
+        getConfig: () => terminalConfig,
+        saveConfig,
+        getAgentAccessKeyMetadata: () => requireAgentAccessKeyStore().getMetadata(),
+        copyAgentAccessKey: () => requireAgentAccessKeyStore().copy(),
+        regenerateAgentAccessKey: () => requireAgentAccessKeyStore().regenerate(),
+        openLink: openTerminalLink,
+        ...collaborationServices.renderer,
+      });
+      installApplicationMenu();
+      let startupWindowCreated = false;
+      await createMainWindow()
+        .then(() => {
+          startupWindowCreated = true;
+        })
+        .catch((error: unknown) => {
+          logger.warn("window", "startup_create_failed", {
             cause: error instanceof Error ? error.message : String(error),
           });
         });
+      if (startupWindowCreated) {
+        const startupSession = await waitForInitialHumanSessionSettled(sessionManager, 5000);
+        if (startupSession.status === "settled") {
+          logger.info("agent", "gateway_startup_session_ready", {
+            sessionId: startupSession.session.sessionId,
+            sessionState: startupSession.session.lifecycle,
+          });
+        } else {
+          logger.warn("agent", "gateway_startup_session_timeout", {
+            timeoutMs: startupSession.timeoutMs,
+          });
+        }
       }
+      if (agentAccessKeyStore) {
+        try {
+          agentGateway = await startAgentGateway({
+            descriptorPath: resolveAgentGatewayDescriptorPath(app.getPath("userData")),
+            accessKey: agentAccessKeyStore.getAccessKey(),
+            services: createAgentTerminalService(
+              sessionManager,
+              operationManager,
+              presentationController,
+            ),
+            policy: createDefaultAgentPolicy({
+              getPermissionMode: (category) => terminalConfig.agentPolicy[category],
+            }),
+            audit: (event) => {
+              logger.info("agent", "audit", {
+                connectionId: event.connectionId,
+                action: event.action,
+                outcome: event.outcome,
+                requestId: event.requestId,
+                sessionId: event.sessionId,
+                operationId: event.operationId,
+                errorType: event.errorType,
+                denialCode: event.denialCode,
+              });
+            },
+            onCallbackError: (callback, error) => {
+              logger.warn("agent", "gateway_callback_failed", {
+                callback,
+                errorName: error instanceof Error ? error.name : typeof error,
+              });
+            },
+            ...collaborationServices.gateway,
+          });
+          logger.info("agent", "gateway_started", {
+            descriptorPath: agentGateway.descriptorPath,
+            url: sanitizeUrlForLog(agentGateway.descriptor.url),
+            protocolVersion: agentGateway.descriptor.protocolVersion,
+          });
+        } catch (error: unknown) {
+          logger.error("agent", "gateway_start_failed", {
+            cause: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      logger.info("app", "ready");
+
+      app.on("activate", () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+          void createMainWindow().catch((error: unknown) => {
+            logger.warn("window", "activate_create_failed", {
+              cause: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
+      });
+    })
+    .catch((error: unknown) => {
+      logger.error("app", "startup_failed", {
+        cause: error instanceof Error ? error.message : String(error),
+      });
     });
-  })
-  .catch((error: unknown) => {
-    logger.error("app", "startup_failed", {
-      cause: error instanceof Error ? error.message : String(error),
-    });
-  });
+}
 
 app.on("window-all-closed", () => {
   if (suppressNextWindowAllClosedQuit) {
@@ -518,6 +569,11 @@ function isAppShortcutPlatform(value: NodeJS.Platform): value is AppShortcutPlat
 
 async function saveConfig(mutation: TerminalConfigMutation): Promise<TerminalConfig> {
   return terminalConfigPersistence.save(mutation);
+}
+
+function requireAgentAccessKeyStore(): AgentAccessKeyStore {
+  if (!agentAccessKeyStore) throw new Error("Agent access is unavailable.");
+  return agentAccessKeyStore;
 }
 
 async function saveWindowGeometry(geometry: WindowGeometry): Promise<void> {

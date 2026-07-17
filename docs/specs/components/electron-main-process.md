@@ -31,6 +31,11 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
   when the visible native title is hidden.
 - Register typed IPC handlers.
 - Start and stop the local agent gateway.
+- Enforce one main-process instance per `userData` profile and focus the
+  existing window when the human launches the same profile again.
+- Load or create the persistent agent access key before starting the gateway.
+- Copy and regenerate the access key through narrow human-triggered IPC without
+  returning the raw key to the renderer.
 - Own Electron app lifecycle events.
 - Own settings, logs, transcripts, recordings, and app data path resolution.
 - Coordinate shutdown so active PTY sessions are terminated or retained for
@@ -75,6 +80,8 @@ The main process must not:
 - [Terminal Session Manager](./terminal-session-manager.md) for canonical terminal lifecycle.
 - [PTY Host](./pty-host.md) for real pseudoterminal operations.
 - [Agent Gateway](./agent-gateway.md) for external agent control.
+- [Agent Access Key Store](./agent-access-key-store.md) for the persistent local
+  gateway credential.
 - [Settings Store](./settings-store.md) for persisted configuration.
 - [App Logger](./app-logger.md) for diagnostics.
 
@@ -84,6 +91,9 @@ The main process must not:
 - IPC handlers validate request payloads and return typed domain errors.
 - IPC recording start, stop, and export handlers deny cleanly without recorder
   side effects when policy denies the request.
+- Agent access-key IPC returns only non-secret metadata or operation outcomes;
+  copy writes through the main-process clipboard and regeneration disconnects
+  agents without terminating their sessions.
 - Renderer destruction removes renderer ownership and leaves preserved running
   sessions headless without terminating their PTYs.
 - Phase 1 app shutdown terminates active sessions with a bounded timeout; later
