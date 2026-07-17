@@ -175,6 +175,14 @@ The first multi-session milestone supports tabs only.
 - Agent-policy settings use coarse observation, execution, interaction,
   presentation, recording, and termination categories with `allow`, `ask`, and
   `deny` modes.
+- The focused Settings surface includes an Agent access section with a static
+  masked value, a non-secret fingerprint, creation time, and explicit Copy and
+  Generate new key actions.
+- Copy delegates directly to Electron main and reports only success or failure.
+  The renderer never receives the raw key or clipboard contents.
+- Generate new key requires confirmation that connected agents will be
+  disconnected while terminal sessions continue running. The action disables
+  duplicate submission and reports an accessible result.
 - Recording export uses a main-process native save dialog so transcript data is
   not used as renderer-controlled file contents.
 - Recording redaction status exposes only the configured pattern count, never
@@ -229,6 +237,8 @@ palette are explicitly out of scope.
 - Closing a tab follows the configured detach or terminate behavior.
 - Renderer settings and window geometry persistence never include tabs,
   sessions, PTYs, or terminal output.
+- Agent access-key controls never render or retain the raw credential, and
+  cancellation cannot regenerate or disconnect an agent.
 - The titlebar exposes a draggable region, every interactive descendant is
   non-draggable, and the active tab plus all persistent header actions remain
   reachable inside the native-controls safe area at the minimum window width.

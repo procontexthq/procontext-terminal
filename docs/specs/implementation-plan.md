@@ -240,6 +240,19 @@ Status: implemented.
 - Add a focused agent-policy settings panel without introducing a general
   command palette or broad settings framework.
 
+### Phase 5C: Persistent Agent Access Key
+
+Status: implemented.
+
+- Replace the process-lifetime expiring token with one persistent 256-bit
+  access key per Electron `userData` profile.
+- Keep the gateway descriptor secret-free and leave client-side key injection
+  outside the server contract.
+- Add main-process-only Copy and serialized Generate new key actions to the
+  focused Settings surface without returning the raw key through IPC.
+- Disconnect authenticated agents when the key changes while preserving every
+  terminal session and PTY.
+
 ### Human-agent collaboration
 
 - Add a session list that includes visible and headless sessions without

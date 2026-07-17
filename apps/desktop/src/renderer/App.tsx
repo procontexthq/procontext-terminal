@@ -4,6 +4,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import type {
   AppShortcutAction,
+  AgentAccessKeyMetadata,
   AgentPolicyConfig,
   RendererPresentationAcknowledgement,
   RendererPresentationCommand,
@@ -55,6 +56,9 @@ export function App(): ReactElement {
   const [tabsState, setTabsState] = useState<TerminalTabsState | null>(null);
   const [focusRequestVersion, setFocusRequestVersion] = useState(0);
   const [agentActive, setAgentActive] = useState(false);
+  const [agentAccessMetadata, setAgentAccessMetadata] = useState<AgentAccessKeyMetadata | null>(
+    null,
+  );
   const [uiTheme, setUiTheme] = useState<UiThemePreference>("default");
   const controllers = useRef(new Map<string, TerminalController>());
   const tabsStateRef = useRef<TerminalTabsState | null>(null);
@@ -84,6 +88,19 @@ export function App(): ReactElement {
         reportError(error);
       });
 
+    return () => {
+      disposed = true;
+    };
+  }, [reportError]);
+
+  useEffect(() => {
+    let disposed = false;
+    void window.terminalApi
+      .getAgentAccessKeyMetadata()
+      .then((metadata) => {
+        if (!disposed) setAgentAccessMetadata(metadata);
+      })
+      .catch(reportError);
     return () => {
       disposed = true;
     };
@@ -352,6 +369,20 @@ export function App(): ReactElement {
             {config ? (
               <FocusedSettings
                 config={config}
+                agentAccess={
+                  agentAccessMetadata
+                    ? {
+                        metadata: agentAccessMetadata,
+                        onCopy: () => window.terminalApi.copyAgentAccessKey(),
+                        onRegenerate: async () => {
+                          const metadata = await window.terminalApi.regenerateAgentAccessKey();
+                          setAgentAccessMetadata(metadata);
+                          return metadata;
+                        },
+                        onError: reportError,
+                      }
+                    : undefined
+                }
                 onSave={(settings) => {
                   void window.terminalApi
                     .saveFocusedSettings(settings)

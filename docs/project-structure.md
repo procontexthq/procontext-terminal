@@ -90,6 +90,8 @@ The architecture specs describe components. The repository structure groups some
 | Shell resolver | `packages/pty-host` |
 | Shell integration | `packages/shell-integration` |
 | Agent gateway | `packages/agent-gateway` |
+| Agent access key store | `apps/desktop/src/main/agent-access-key-store.ts` |
+| Single-instance coordination | `apps/desktop/src/main/single-instance.ts` |
 | Policy engine | `packages/policy-engine` |
 | Interactive permission broker | `apps/desktop/src/main/permission-broker.ts` |
 | Canonical observation | Headless xterm model in `packages/session-core`; renderer xterm is a projection |
@@ -199,6 +201,10 @@ Responsibilities:
   recording export in focused main-process services.
 - Broker time-bounded, allow-once agent permission requests without exposing
   terminal content or connection credentials to the renderer.
+- Persist, copy, and rotate the single local agent access key without placing
+  credential material in ordinary settings or renderer state.
+- Keep each application-data profile owned by one main process and redirect
+  repeated launches to its existing window.
 - Correlate renderer presentation commands and acknowledgements while keeping
   view state independent from PTY lifecycle.
 - Own app lifecycle and graceful shutdown.

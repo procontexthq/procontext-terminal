@@ -21,6 +21,7 @@ import {
 } from "@terminal/protocol";
 
 import { alternateScreenCommand } from "../e2e/e2e-commands";
+import { TEST_AGENT_ACCESS_KEY, preseedAgentAccessKey } from "../shared/agent-access-key-fixture";
 
 const desktopRoot = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -50,6 +51,7 @@ describe("packaged desktop terminal smoke", () => {
     browser = await launchPackagedApp(executable, userDataDir);
     const page = await firstPage(browser);
     await page.waitForSelector("[data-testid='terminal-ready']");
+    await assertAgentAccessKeyNotExposed(page);
     const sessionId = await activeSessionId(page);
     const initialSession = await getSession(page, sessionId);
     if (initialSession.cwd !== homedir()) {
@@ -67,7 +69,7 @@ describe("packaged desktop terminal smoke", () => {
       await expectAgentOk(
         agent.request(
           createAgentCommand("agent.authenticate", {
-            token: descriptor.token,
+            token: TEST_AGENT_ACCESS_KEY,
             protocolVersion: TERMINAL_PROTOCOL_VERSION,
           }),
         ),
@@ -107,8 +109,8 @@ describe("packaged desktop terminal smoke", () => {
       agent.close();
     }
 
-    if (appOutput.includes(descriptor.token)) {
-      throw new Error("Packaged app diagnostics must not write the agent token to stdio.");
+    if (appOutput.includes(TEST_AGENT_ACCESS_KEY)) {
+      throw new Error("Packaged app diagnostics must not write the agent access key to stdio.");
     }
   });
 
@@ -147,7 +149,7 @@ describe("packaged desktop terminal smoke", () => {
       await expectAgentOk(
         agent.request(
           createAgentCommand("agent.authenticate", {
-            token: descriptor.token,
+            token: TEST_AGENT_ACCESS_KEY,
             protocolVersion: TERMINAL_PROTOCOL_VERSION,
           }),
         ),
@@ -378,10 +380,18 @@ async function waitForAgentDescriptor(userDataDir: string): Promise<AgentGateway
   const descriptorPath = join(userDataDir, "agent-gateway.json");
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
+    let contents: string;
     try {
-      return parseAgentGatewayDescriptor(
-        JSON.parse(await readFile(descriptorPath, "utf8")) as unknown,
-      );
+      contents = await readFile(descriptorPath, "utf8");
+    } catch {
+      await delay(100);
+      continue;
+    }
+    if (contents.includes(TEST_AGENT_ACCESS_KEY)) {
+      throw new Error("Packaged agent gateway descriptor exposed the agent access key.");
+    }
+    try {
+      return parseAgentGatewayDescriptor(JSON.parse(contents) as unknown);
     } catch {
       await delay(100);
     }
@@ -392,7 +402,14 @@ async function waitForAgentDescriptor(userDataDir: string): Promise<AgentGateway
 async function createTempUserDataDir(): Promise<string> {
   const userDataDir = await mkdtemp(join(tmpdir(), "terminal-packaged-e2e-user-data-"));
   tempUserDataDirs.push(userDataDir);
+  await preseedAgentAccessKey(userDataDir);
   return userDataDir;
+}
+
+async function assertAgentAccessKeyNotExposed(page: Page): Promise<void> {
+  if (((await page.locator("body").textContent()) ?? "").includes(TEST_AGENT_ACCESS_KEY)) {
+    throw new Error("Packaged desktop UI exposed the agent access key.");
+  }
 }
 
 async function stopPackagedApp(): Promise<void> {

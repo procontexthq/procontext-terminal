@@ -16,7 +16,6 @@ This component is part of the [Terminal Architecture Spec](../terminal-architect
 - Store theme, font, cursor, scrollback, and accessibility settings.
 - Supply the same validated scrollback value to canonical terminal models and
   renderer projections when their sessions and views are created.
-- Store agent gateway settings.
 - Store policy settings.
 - Store recording defaults.
 - Migrate settings between schema versions.
@@ -112,7 +111,8 @@ The settings store can persist:
 
 It must not persist:
 
-- Expired agent tokens.
+- Agent access keys or gateway authentication material. Those belong to the
+  dedicated [Agent Access Key Store](./agent-access-key-store.md).
 - Secrets from terminal output.
 - Full transcripts.
 - Tab order, active tabs, session IDs, PTY processes, operations, or workspace

@@ -603,6 +603,42 @@ body {
   font-size: 11px;
 }
 
+.focused-settings-panel .agent-access-settings {
+  grid-template-columns: 1fr;
+}
+
+.agent-access-key-summary {
+  display: grid;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.agent-access-key-mask {
+  color: var(--text);
+  font-family: var(--terminal-font);
+  font-size: 13px;
+  letter-spacing: 2px;
+}
+
+.agent-access-warning,
+.agent-access-feedback {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.agent-access-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-access-actions button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .agent-policy-toggle {
   height: 26px;
   padding: 0 8px;

@@ -249,6 +249,52 @@ describe("terminal command handler", () => {
     expect(base.allowAgentControl).toHaveBeenCalledWith(sessionId);
   });
 
+  it("routes access-key actions without returning the raw credential", async () => {
+    const base = createServices();
+    const metadata = {
+      fingerprint: "0123456789ab",
+      createdAt: "2026-07-16T08:00:00.000Z",
+    };
+    base.getAgentAccessKeyMetadata = vi.fn(() => metadata);
+    base.regenerateAgentAccessKey = vi.fn(() => Promise.resolve(metadata));
+
+    const loaded = await handleRendererCommandPayload(
+      createRendererCommand("agent.accessKey.getMetadata", {}),
+      base,
+    );
+    const copied = await handleRendererCommandPayload(
+      createRendererCommand("agent.accessKey.copy", {}),
+      base,
+    );
+    const regenerated = await handleRendererCommandPayload(
+      createRendererCommand("agent.accessKey.regenerate", {}),
+      base,
+    );
+
+    expect(loaded).toMatchObject({ ok: true, value: metadata });
+    expect(copied).toMatchObject({ ok: true, value: null });
+    expect(regenerated).toMatchObject({ ok: true, value: metadata });
+    expect(base.getAgentAccessKeyMetadata).toHaveBeenCalledOnce();
+    expect(base.copyAgentAccessKey).toHaveBeenCalledOnce();
+    expect(base.regenerateAgentAccessKey).toHaveBeenCalledOnce();
+    expect(JSON.stringify([loaded, copied, regenerated])).not.toContain("accessKey");
+  });
+
+  it("returns a key-free error when an access-key action fails", async () => {
+    const base = createServices();
+    base.regenerateAgentAccessKey = vi.fn(() =>
+      Promise.reject(new Error("SECRET_ACCESS_KEY_MUST_NOT_ESCAPE")),
+    );
+
+    const result = await handleRendererCommandPayload(
+      createRendererCommand("agent.accessKey.regenerate", {}),
+      base,
+    );
+
+    expect(result).toMatchObject({ ok: false, error: { type: "agent_access_failed" } });
+    expect(JSON.stringify(result)).not.toContain("SECRET_ACCESS_KEY_MUST_NOT_ESCAPE");
+  });
+
   it("validates session existence before changing agent control state", async () => {
     const base = createServices();
     vi.mocked(base.sessionManager.getSession).mockImplementation(() => {
@@ -546,6 +592,17 @@ function createServices(overrides: { policy?: TerminalPolicy } = {}): TerminalCo
       state: "detached" as const,
       attachedAt: null,
     })),
+    getAgentAccessKeyMetadata: vi.fn(() => ({
+      fingerprint: "0123456789ab",
+      createdAt: "2026-07-16T08:00:00.000Z",
+    })),
+    copyAgentAccessKey: vi.fn(),
+    regenerateAgentAccessKey: vi.fn(() =>
+      Promise.resolve({
+        fingerprint: "fedcba987654",
+        createdAt: "2026-07-16T08:05:00.000Z",
+      }),
+    ),
     listPermissions: vi.fn(() => [
       {
         permissionId: "decision-permission",

@@ -15,11 +15,27 @@ second competing state channel.
 
 - Bind a WebSocket server to loopback only.
 - Publish an ephemeral descriptor under Electron `userData`.
-- The descriptor contains `url`, token metadata, process ID, and the single
-  supported protocol version.
+- The descriptor contains only the loopback `url`, process ID, and the single
+  supported protocol version. It never contains the access key or an expiry.
 - Authentication supplies the same fixed protocol version. Unsupported
   versions fail before terminal operations are accepted.
 - Remove the descriptor during orderly shutdown.
+
+## Authentication Credential
+
+- The [Agent Access Key Store](./agent-access-key-store.md) supplies one
+  persistent 256-bit access key for each Electron `userData` profile.
+- The gateway does not generate, persist, publish, expire, or refresh access
+  keys. A client supplies the human-provisioned key when authenticating.
+- The key remains valid until the human regenerates it from Settings or removes
+  the app profile.
+- Regeneration persists and activates one replacement key, then immediately
+  disconnects all agent connections so an already authenticated connection
+  cannot retain authority from the old key.
+- Connection cleanup after regeneration releases attachments and cancels
+  pending requests without closing terminal sessions or PTYs.
+- How an external client stores or injects the copied key is client-specific
+  and outside the gateway contract.
 
 ## API Through Phase 2
 
@@ -82,8 +98,8 @@ bytes, title updates, screen snapshots, or lifecycle events independently of
 Every request, including authentication, is authorized before side effects.
 Policy and audit metadata may include operation kind, operation ID, session ID,
 cwd, shell, dimensions, and coarse recording or observation categories. It
-must not include tokens, terminal input, PTY output, run input, command lines,
-clipboard data, environment values, or recording payloads.
+must not include access keys, terminal input, PTY output, run input, command
+lines, clipboard data, environment values, or recording payloads.
 
 ## Boundaries
 
@@ -93,6 +109,11 @@ Electron windows, interpret terminal content, or bypass the terminal service.
 ## Testing Expectations
 
 - Authentication and protocol-version failures fail closed.
+- Authentication remains available after arbitrary app uptime and does not
+  depend on a time-limited token.
+- The runtime descriptor contains no access key or expiry metadata.
+- Regeneration rejects the old key, accepts the new key, disconnects existing
+  clients, and leaves terminal sessions running.
 - Invalid requests never reach services.
 - Attachment is exclusive between agent connections.
 - Disconnect releases attachment without closing sessions.

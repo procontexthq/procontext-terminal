@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   invalid or off-screen geometry from making the application inaccessible.
 - Added credentialed production release validation for native installers,
   signing and notarization, packaged PTY behavior, and artifact provenance.
+- Added a persistent agent access key in Settings with explicit Copy and
+  Generate new key actions that preserve running terminal sessions.
 
 ### Fixed
 
@@ -47,3 +49,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Enforced human revocation during in-flight agent session creation and
   temporary PTY startup so automatic attachment cannot restore revoked control.
+- Removed authentication secrets from the runtime gateway descriptor and kept
+  access-key material out of renderer state, settings, diagnostics, and audits.

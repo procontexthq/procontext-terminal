@@ -16,6 +16,7 @@ import {
   isRendererSessionEvent,
   parseAgentCommand,
   parseAgentCommandResult,
+  parseAgentAccessKeyMetadata,
   parseAgentGatewayDescriptor,
   parseCreateTerminalRequest,
   parseObserveTerminalRequest,
@@ -158,7 +159,7 @@ describe("terminal protocol", () => {
       parseAgentCommand({
         type: "agent.authenticate",
         requestId,
-        payload: { token: "token", protocolVersion: 2 },
+        payload: { token: "token", protocolVersion: TERMINAL_PROTOCOL_VERSION + 1 },
       }),
     ).toThrow();
     expect(() =>
@@ -265,13 +266,17 @@ describe("terminal protocol", () => {
     const requestId = createRequestId("request-result");
     const descriptor = {
       url: "ws://127.0.0.1:34567",
-      token: "short-lived-token",
-      tokenExpiresAt: "2026-05-11T00:05:00.000Z",
       pid: 1234,
       protocolVersion: TERMINAL_PROTOCOL_VERSION,
     };
 
     expect(parseAgentGatewayDescriptor(descriptor)).toEqual(descriptor);
+    expect(() =>
+      parseAgentGatewayDescriptor({ ...descriptor, token: "must-not-be-published" }),
+    ).toThrow();
+    expect(() =>
+      parseAgentGatewayDescriptor({ ...descriptor, tokenExpiresAt: "2099-01-01T00:00:00.000Z" }),
+    ).toThrow();
     expect(() =>
       parseAgentGatewayDescriptor({ ...descriptor, url: "ws://0.0.0.0:34567" }),
     ).toThrow();
@@ -290,6 +295,21 @@ describe("terminal protocol", () => {
         ),
       ),
     ).toMatchObject({ ok: false, error: { type: "auth_required" } });
+  });
+
+  it("validates privacy-safe agent access key metadata", () => {
+    const metadata = {
+      fingerprint: "0123456789ab",
+      createdAt: "2026-07-16T08:00:00.000Z",
+    };
+
+    expect(parseAgentAccessKeyMetadata(metadata)).toEqual(metadata);
+    expect(() =>
+      parseAgentAccessKeyMetadata({ ...metadata, accessKey: "must-stay-in-main" }),
+    ).toThrow();
+    expect(() =>
+      parseAgentAccessKeyMetadata({ ...metadata, fingerprint: "not-a-fingerprint" }),
+    ).toThrow();
   });
 
   it("validates renderer bootstrap and sequenced events", () => {
@@ -385,6 +405,22 @@ describe("terminal protocol", () => {
     expect(createRendererCommand("agent.control.allow", { sessionId }, requestId)).toMatchObject({
       type: "agent.control.allow",
     });
+    expect(createRendererCommand("agent.accessKey.getMetadata", {}, requestId)).toMatchObject({
+      type: "agent.accessKey.getMetadata",
+    });
+    expect(createRendererCommand("agent.accessKey.copy", {}, requestId)).toMatchObject({
+      type: "agent.accessKey.copy",
+    });
+    expect(createRendererCommand("agent.accessKey.regenerate", {}, requestId)).toMatchObject({
+      type: "agent.accessKey.regenerate",
+    });
+    expect(() =>
+      parseRendererCommand({
+        type: "agent.accessKey.copy",
+        requestId,
+        payload: { accessKey: "must-not-cross-ipc" },
+      }),
+    ).toThrow();
     expect(createRendererCommand("recording.exportFile", { sessionId }, requestId)).toMatchObject({
       type: "recording.exportFile",
     });

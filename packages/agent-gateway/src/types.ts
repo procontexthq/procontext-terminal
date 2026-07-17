@@ -58,16 +58,18 @@ export type AgentGatewayOptions = {
   descriptorPath: string;
   services: AgentTerminalService;
   policy: AgentPolicy;
+  accessKey: string;
   host?: string;
   port?: number;
-  token?: string;
-  tokenTtlMs?: number;
-  tokenExpiresAt?: string;
   now?: () => Date;
   audit?: (event: AgentAuditEvent) => void;
   onActivity?: (state: AgentActivityState) => void;
   onControlChanged?: (state: AgentSessionControlState) => void;
   onPolicyDenied?: (notice: PolicyDenialNotice) => void;
+  onCallbackError?: (
+    callback: "onActivity" | "onControlChanged" | "onPolicyDenied",
+    error: unknown,
+  ) => void;
   requestPermission?: (
     prompt: PolicyPrompt,
     signal: AbortSignal,
@@ -82,6 +84,7 @@ export type AgentGateway = {
   allowSessionControl(sessionId: SessionId): AgentSessionControlState;
   removeSessionControl(sessionId: SessionId): void;
   removeOperationControl(operationId: OperationId): void;
+  rotateAccessKey(accessKey: string): void;
   stop(): Promise<void>;
 };
 

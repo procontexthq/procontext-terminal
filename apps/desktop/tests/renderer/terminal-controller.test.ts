@@ -446,6 +446,19 @@ function createApi(): {
         attachedAt: null,
       }),
     ),
+    getAgentAccessKeyMetadata: vi.fn(() =>
+      Promise.resolve({
+        fingerprint: "0123456789ab",
+        createdAt: "2026-07-16T08:00:00.000Z",
+      }),
+    ),
+    copyAgentAccessKey: vi.fn(() => Promise.resolve()),
+    regenerateAgentAccessKey: vi.fn(() =>
+      Promise.resolve({
+        fingerprint: "fedcba987654",
+        createdAt: "2026-07-16T08:05:00.000Z",
+      }),
+    ),
     listPermissions: vi.fn(() => Promise.resolve([])),
     resolvePermission: vi.fn(() => Promise.resolve(false)),
     getConfig: vi.fn(),

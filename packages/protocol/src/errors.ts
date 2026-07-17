@@ -13,6 +13,7 @@ export const terminalErrorTypes = [
   "invalid_request",
   "auth_required",
   "auth_failed",
+  "agent_access_failed",
   "protocol_version_unsupported",
   "policy_denied",
   "gateway_failed",

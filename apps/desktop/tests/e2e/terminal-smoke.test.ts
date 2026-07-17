@@ -32,6 +32,11 @@ import {
   nodeEvalCommand,
 } from "./e2e-commands";
 import { terminalUiTimeoutMs } from "./e2e-timeouts";
+import {
+  TEST_AGENT_ACCESS_KEY,
+  preseedAgentAccessKey,
+  readPersistedAgentAccessKey,
+} from "../shared/agent-access-key-fixture";
 
 const require = createRequire(import.meta.url);
 const electronPath = require("electron") as string;
@@ -751,6 +756,7 @@ describe("desktop terminal smoke", () => {
     browser = await launchApp(userDataDir);
     const page = await firstPage(browser);
     await waitForTerminalReady(page);
+    await assertAgentAccessKeyNotExposed(page, TEST_AGENT_ACCESS_KEY);
     const descriptor = await waitForAgentDescriptor(userDataDir);
     const first = await authenticatedAgent(descriptor);
     const second = await authenticatedAgent(descriptor);
@@ -787,6 +793,84 @@ describe("desktop terminal smoke", () => {
     } finally {
       first.close();
       second.close();
+    }
+
+    assertAgentAccessKeyNotInText(
+      `${electronOutput}\n${rendererOutput}`,
+      TEST_AGENT_ACCESS_KEY,
+      "Electron and renderer diagnostics",
+    );
+  });
+
+  it("rotates the agent access key without terminating existing terminal sessions", async () => {
+    const userDataDir = await createTempUserDataDir();
+    browser = await launchApp(userDataDir);
+    const page = await firstPage(browser);
+    await waitForTerminalReady(page);
+    const sessionId = await activeSessionId(page);
+    const descriptor = await waitForAgentDescriptor(userDataDir);
+    const agent = await authenticatedAgent(descriptor);
+    let replacementAgent: E2EAgentClient | null = null;
+
+    try {
+      await page.getByTestId("focused-settings-toggle").click();
+      await page.getByRole("region", { name: "Terminal settings" }).waitFor({
+        state: "visible",
+        timeout: e2eUiTimeoutMs,
+      });
+
+      const disconnected = agent.waitForDisconnect();
+      page.once("dialog", (dialog) => {
+        void dialog.accept();
+      });
+      await page.getByTestId("agent-access-regenerate").click();
+      await page
+        .getByTestId("agent-access-feedback")
+        .filter({ hasText: "New agent access key generated." })
+        .waitFor({ state: "visible", timeout: e2eUiTimeoutMs });
+      await disconnected;
+
+      const replacementAccessKey = await readPersistedAgentAccessKey(userDataDir);
+      if (replacementAccessKey === TEST_AGENT_ACCESS_KEY) {
+        throw new Error("Expected regeneration to persist a replacement agent access key.");
+      }
+      await assertAgentAccessKeyNotExposed(page, TEST_AGENT_ACCESS_KEY);
+      await assertAgentAccessKeyNotExposed(page, replacementAccessKey);
+      assertAgentAccessKeyNotInText(
+        `${electronOutput}\n${rendererOutput}`,
+        replacementAccessKey,
+        "Electron and renderer diagnostics",
+      );
+
+      replacementAgent = await authenticatedAgent(descriptor, replacementAccessKey);
+      const existingSession = (await expectAgentOk(
+        replacementAgent.request(createAgentCommand("terminal.get", { sessionId })),
+      )) as TerminalSessionSummary;
+      if (existingSession.sessionId !== sessionId) {
+        throw new Error("Expected the terminal session to survive agent access key regeneration.");
+      }
+      if (existingSession.lifecycle !== "running") {
+        throw new Error(
+          `Expected the terminal session to remain running after regeneration, got ${existingSession.lifecycle}.`,
+        );
+      }
+      await expectAgentOk(
+        replacementAgent.request(createAgentCommand("terminal.attach", { sessionId })),
+      );
+      await expectAgentOk(
+        replacementAgent.request(
+          createAgentCommand("terminal.input", {
+            sessionId,
+            input: `${platformPrintCommand("ROTATED_AGENT_OK")}\r`,
+          }),
+        ),
+      );
+      await waitForObservation(replacementAgent, sessionId, (observation) =>
+        observation.viewport.rows.some((row) => row.text.includes("ROTATED_AGENT_OK")),
+      );
+    } finally {
+      agent.close();
+      replacementAgent?.close();
     }
   });
 
@@ -1319,12 +1403,15 @@ describe("desktop terminal smoke", () => {
   });
 });
 
-async function authenticatedAgent(descriptor: AgentGatewayDescriptor): Promise<E2EAgentClient> {
+async function authenticatedAgent(
+  descriptor: AgentGatewayDescriptor,
+  accessKey = TEST_AGENT_ACCESS_KEY,
+): Promise<E2EAgentClient> {
   const agent = await E2EAgentClient.connect(descriptor.url);
   await expectAgentOk(
     agent.request(
       createAgentCommand("agent.authenticate", {
-        token: descriptor.token,
+        token: accessKey,
         protocolVersion: TERMINAL_PROTOCOL_VERSION,
       }),
     ),
@@ -1399,6 +1486,7 @@ async function attachEventually(agent: E2EAgentClient, sessionId: SessionId): Pr
 async function createTempUserDataDir(): Promise<string> {
   const userDataDir = await mkdtemp(join(tmpdir(), "terminal-e2e-user-data-"));
   tempUserDataDirs.push(userDataDir);
+  await preseedAgentAccessKey(userDataDir);
   return userDataDir;
 }
 
@@ -1661,15 +1749,35 @@ async function waitForAgentDescriptor(userDataDir: string): Promise<AgentGateway
   const descriptorPath = join(userDataDir, "agent-gateway.json");
   const deadline = Date.now() + e2eUiTimeoutMs;
   while (Date.now() < deadline) {
+    let contents: string;
     try {
-      return parseAgentGatewayDescriptor(
-        JSON.parse(await readFile(descriptorPath, "utf8")) as unknown,
-      );
+      contents = await readFile(descriptorPath, "utf8");
+    } catch {
+      await delay(50);
+      continue;
+    }
+    assertAgentAccessKeyNotInText(contents, TEST_AGENT_ACCESS_KEY, "Agent gateway descriptor");
+    try {
+      return parseAgentGatewayDescriptor(JSON.parse(contents) as unknown);
     } catch {
       await delay(50);
     }
   }
   throw new Error("Timed out waiting for agent gateway descriptor.");
+}
+
+async function assertAgentAccessKeyNotExposed(page: Page, accessKey: string): Promise<void> {
+  assertAgentAccessKeyNotInText(
+    (await page.locator("body").textContent()) ?? "",
+    accessKey,
+    "Desktop UI",
+  );
+}
+
+function assertAgentAccessKeyNotInText(contents: string, accessKey: string, source: string): void {
+  if (contents.includes(accessKey)) {
+    throw new Error(`${source} exposed the agent access key.`);
+  }
 }
 
 async function waitForFileText(path: string, expected: string): Promise<void> {
@@ -1813,6 +1921,21 @@ class E2EAgentClient {
     const response = this.waitForResult(agentCommandLabel(command));
     this.socket.send(JSON.stringify(command));
     return response;
+  }
+
+  waitForDisconnect(timeoutMs = e2eUiTimeoutMs): Promise<void> {
+    if (this.socket.readyState === NodeWebSocket.CLOSED) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.socket.off("close", onClose);
+        reject(new Error("Timed out waiting for the agent WebSocket to disconnect."));
+      }, timeoutMs);
+      const onClose = (): void => {
+        clearTimeout(timeout);
+        resolve();
+      };
+      this.socket.once("close", onClose);
+    });
   }
 
   close(): void {
