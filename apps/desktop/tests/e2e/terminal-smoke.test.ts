@@ -6,7 +6,12 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { _electron as electron, type ElectronApplication, type Page } from "playwright";
+import {
+  _electron as electron,
+  type ElectronApplication,
+  type Locator,
+  type Page,
+} from "playwright";
 import { afterEach, describe, it } from "vitest";
 import { WebSocket as NodeWebSocket } from "ws";
 
@@ -104,13 +109,12 @@ describe("desktop terminal smoke", () => {
       const content = titlebar?.querySelector<HTMLElement>(".titlebar-content");
       const tabStrip = titlebar?.querySelector<HTMLElement>('[data-testid="terminal-tab-strip"]');
       const activeTab = tabStrip?.querySelector<HTMLElement>(".tab-item.is-active");
+      const finalTab = tabStrip?.querySelector<HTMLElement>(".tab-item:last-child");
       const controlSelectors = [
         ["sidebar", '[data-testid="session-sidebar-toggle"]'],
         ["new-tab", '[data-testid="new-tab-button"]'],
-        ["theme", '[data-testid="theme-select"]'],
         ["settings", '[data-testid="focused-settings-toggle"]'],
-        ["policy", '[data-testid="agent-policy-toggle"]'],
-        ["agent-status", '[data-testid="agent-activity"]'],
+        ["agent", '[data-testid="agent-policy-toggle"]'],
       ] as const;
       const controls = controlSelectors.map(([name, selector]) => ({
         name,
@@ -121,6 +125,7 @@ describe("desktop terminal smoke", () => {
         !content ||
         !tabStrip ||
         !activeTab ||
+        !finalTab ||
         controls.some((item) => !item.element)
       ) {
         return null;
@@ -179,8 +184,13 @@ describe("desktop terminal smoke", () => {
         content: bounds(content),
         tabStrip: bounds(tabStrip),
         activeTab: bounds(activeTab),
+        finalTab: bounds(finalTab),
         controls: inspectedControls,
         overlaps,
+        themeInTitlebar: Boolean(titlebar.querySelector('[data-testid="theme-select"]')),
+        tabToNewTabGap:
+          bounds(controls.find(({ name }) => name === "new-tab")!.element!).left -
+          bounds(finalTab).right,
         dragRegion: getComputedStyle(titlebar).getPropertyValue("app-region").trim(),
         tabStripRegion: getComputedStyle(tabStrip).getPropertyValue("app-region").trim(),
         controlRegions: controls.map(({ element }) =>
@@ -211,6 +221,9 @@ describe("desktop terminal smoke", () => {
     if (
       chrome.activeTab.left < chrome.tabStrip.left - 1 ||
       chrome.activeTab.right > chrome.tabStrip.right + 1 ||
+      chrome.themeInTitlebar ||
+      chrome.tabToNewTabGap < -1 ||
+      chrome.tabToNewTabGap > 8 ||
       chrome.content.right > chrome.titlebar.right + 1 ||
       chrome.content.right > chrome.viewportWidth + 1 ||
       chrome.controls.some(
@@ -275,17 +288,33 @@ describe("desktop terminal smoke", () => {
     const page = await firstPage(browser);
     await waitForTerminalReady(page);
     await setNativeWindowSize(page, 640, 560);
-    await page.getByTestId("theme-select").selectOption("gamer");
+    await page.getByTestId("focused-settings-toggle").click();
+    const settings = page.getByRole("region", { name: "Terminal settings" });
+    await settings.waitFor({ timeout: e2eUiTimeoutMs });
+    await page.getByTestId("setting-font-size").fill("15");
+    await settings.getByTestId("theme-select").selectOption("gamer");
     await page.waitForFunction(
-      () => document.querySelector<HTMLElement>(".app-shell")?.dataset.theme === "gamer",
+      () => {
+        const shell = document.querySelector<HTMLElement>(".app-shell");
+        if (shell?.dataset.theme !== "gamer") return false;
+        const style = getComputedStyle(shell);
+        return (
+          style.getPropertyValue("--terminal-bg").trim() === "#07100d" &&
+          style.getPropertyValue("--terminal-font").includes("Share Tech Mono")
+        );
+      },
       undefined,
       { timeout: e2eUiTimeoutMs },
     );
-
-    await page.getByTestId("focused-settings-toggle").click();
-    await page.getByRole("region", { name: "Terminal settings" }).waitFor({
-      timeout: e2eUiTimeoutMs,
-    });
+    if ((await page.getByTestId("setting-font-size").inputValue()) !== "15") {
+      throw new Error("Expected Theme changes to preserve unsaved focused settings.");
+    }
+    if (
+      (await page.getByTestId("setting-font-family").inputValue()) !== "share-tech-mono" ||
+      (await page.getByTestId("setting-color-background").inputValue()) !== "#07100d"
+    ) {
+      throw new Error("Expected Theme changes to reconcile their terminal appearance preset.");
+    }
     await page.getByRole("button", { name: "Add profile" }).click();
     const settingsLayout = await page.evaluate(() => {
       const panel = document.querySelector<HTMLElement>(".focused-settings-panel");
@@ -531,6 +560,7 @@ describe("desktop terminal smoke", () => {
     await waitForActiveSession(page, sessionId);
 
     page.once("dialog", (dialog) => dialog.accept());
+    await openSessionSecondaryActions(card);
     await card.getByRole("button", { name: "Terminate" }).click();
     await card.waitFor({ state: "detached", timeout: e2eUiTimeoutMs });
     await expectTabCount(page, 0);
@@ -697,12 +727,16 @@ describe("desktop terminal smoke", () => {
     await setNativeWindowSize(page, 720, 640);
 
     for (const theme of ["classic", "gamer"]) {
-      await page.getByTestId("theme-select").selectOption(theme);
+      await page.getByTestId("focused-settings-toggle").click();
+      const settings = page.getByRole("region", { name: "Terminal settings" });
+      await settings.waitFor({ state: "visible" });
+      await settings.getByTestId("theme-select").selectOption(theme);
       await page.waitForFunction(
         (expectedTheme) =>
           document.querySelector(".app-shell")?.getAttribute("data-theme") === expectedTheme,
         theme,
       );
+      await page.getByTestId("focused-settings-toggle").click();
       await page.getByTestId("agent-policy-toggle").click();
       const popover = page.getByRole("region", { name: "Agent policy settings" });
       await popover.waitFor({ state: "visible" });
@@ -908,6 +942,7 @@ describe("desktop terminal smoke", () => {
       await card.getByRole("button", { name: "Reveal" }).click();
       await waitForActiveSession(page, created.sessionId);
       await card.getByText("foreground", { exact: true }).waitFor({ timeout: e2eUiTimeoutMs });
+      await openSessionSecondaryActions(card);
       await card.getByRole("button", { name: "Revoke agent" }).click();
       await card.getByText("Agent blocked").waitFor({ timeout: e2eUiTimeoutMs });
 
@@ -931,12 +966,17 @@ describe("desktop terminal smoke", () => {
         throw new Error(`Expected revoked attachment denial: ${JSON.stringify(blockedAttach)}`);
       }
 
+      await openSessionSecondaryActions(card);
       await card.getByRole("button", { name: "Allow agent control" }).click();
-      await card.getByText("No agent").waitFor({ timeout: e2eUiTimeoutMs });
+      await card.getByText("Agent blocked").waitFor({
+        state: "detached",
+        timeout: e2eUiTimeoutMs,
+      });
       await expectAgentOk(
         agent.request(createAgentCommand("terminal.attach", { sessionId: created.sessionId })),
       );
       await card.getByText("Agent attached").waitFor({ timeout: e2eUiTimeoutMs });
+      await openSessionSecondaryActions(card);
       await card.getByRole("button", { name: "Revoke agent" }).click();
       await card.getByText("Agent blocked").waitFor({ timeout: e2eUiTimeoutMs });
 
@@ -948,6 +988,7 @@ describe("desktop terminal smoke", () => {
       await waitForTerminalText(page, "HUMAN_AFTER_REVOKE");
 
       page.once("dialog", (dialog) => dialog.accept());
+      await openSessionSecondaryActions(card);
       await card.getByRole("button", { name: "Terminate" }).click();
       await card.waitFor({ state: "detached", timeout: e2eUiTimeoutMs });
     } finally {
@@ -1733,6 +1774,14 @@ async function expectTabCount(page: Page, count: number): Promise<void> {
     count,
     { timeout: e2eUiTimeoutMs },
   );
+}
+
+async function openSessionSecondaryActions(card: Locator): Promise<void> {
+  await card.getByRole("button", { name: /More actions for/u }).click();
+  await card.getByRole("group", { name: /More actions for/u }).waitFor({
+    state: "visible",
+    timeout: e2eUiTimeoutMs,
+  });
 }
 
 async function waitForActiveSession(page: Page, sessionId: SessionId): Promise<void> {

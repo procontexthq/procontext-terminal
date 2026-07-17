@@ -285,7 +285,9 @@ Responsibilities:
 - Manage tabs, session-list and collaboration status UI, local search, and
   focused settings. Session-list state composes canonical summaries with
   renderer-only agent-control metadata instead of creating another terminal
-  model.
+  model. Focused-settings configuration transforms and the immediate theme
+  selector stay in small renderer modules rather than expanding the app-shell
+  coordinator.
 - Present a bounded, non-persisted queue of privacy-safe agent permission
   requests and focused coarse policy controls.
 - Capture keyboard, paste, selection, focus, resize, and mouse interactions.

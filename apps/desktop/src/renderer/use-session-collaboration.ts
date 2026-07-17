@@ -184,7 +184,7 @@ export function useSessionCollaboration({
     (session: TerminalSessionSummary) => {
       const verb =
         session.lifecycle === "exited" || session.lifecycle === "failed" ? "Remove" : "Terminate";
-      if (!window.confirm(`${verb} ${session.title || session.cwd}?`)) return;
+      if (!window.confirm(`${verb} ${session.title || session.cwd}?`)) return false;
       const current = tabsStateRef.current;
       const tab = current?.tabs.find((candidate) => candidate.sessionId === session.sessionId);
       const controller = tab ? controllers.current.get(tab.id) : undefined;
@@ -199,6 +199,7 @@ export function useSessionCollaboration({
           setTabsState((state) => (state ? closeTerminalTab(state, tab.id) : state));
         })
         .catch(reportError);
+      return true;
     },
     [controllers, reportError, setTabsState, tabsStateRef],
   );

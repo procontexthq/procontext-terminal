@@ -5,13 +5,14 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { defaultTerminalConfig } from "@terminal/config";
-import type { FocusedTerminalSettings } from "@terminal/protocol";
+import type { FocusedTerminalSettings, TerminalConfig } from "@terminal/protocol";
 
 import { FocusedSettings } from "../../src/renderer/focused-settings";
 
 const SYSTEM_MONOSPACE_STACK =
   'ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace';
 const SHARE_TECH_MONO_STACK = `"Share Tech Mono", ${SYSTEM_MONOSPACE_STACK}`;
+const IBM_PLEX_MONO_STACK = `"IBM Plex Mono", ${SYSTEM_MONOSPACE_STACK}`;
 
 describe("FocusedSettings", () => {
   beforeEach(() => {
@@ -47,7 +48,14 @@ describe("FocusedSettings", () => {
     };
 
     act(() => {
-      root.render(createElement(FocusedSettings, { config, onSave }));
+      root.render(
+        createElement(FocusedSettings, {
+          config,
+          uiTheme: config.ui.theme,
+          onSave,
+          onUiThemeChange: vi.fn(),
+        }),
+      );
     });
     click(container, "focused-settings-toggle");
 
@@ -100,6 +108,178 @@ describe("FocusedSettings", () => {
     act(() => root.unmount());
   });
 
+  it("keeps UI theme selection inside Settings and applies it immediately", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const config = {
+      ...defaultTerminalConfig(),
+      ui: { theme: "coder" as const },
+    };
+    const savedThemeConfig = {
+      ...config,
+      ui: { theme: "classic" as const },
+      terminal: {
+        ...config.terminal,
+        fontFamily: IBM_PLEX_MONO_STACK,
+        theme: { ...config.terminal.theme, background: "#15130f" },
+      },
+    };
+    const onUiThemeChange = vi.fn(() => Promise.resolve(savedThemeConfig));
+    const onSave = vi.fn<(settings: FocusedTerminalSettings) => void>();
+
+    act(() => {
+      root.render(
+        createElement(FocusedSettings, {
+          config,
+          uiTheme: config.ui.theme,
+          onSave,
+          onUiThemeChange,
+        }),
+      );
+    });
+    expect(container.querySelector('[data-testid="theme-select"]')).toBeNull();
+
+    click(container, "focused-settings-toggle");
+    const theme = getControl<HTMLSelectElement>(container, "theme-select");
+    expect(theme.value).toBe("coder");
+    changeValue(container, "setting-font-size", "15");
+    changeValue(container, "setting-color-background", "#abcdef");
+    changeValue(container, "theme-select", "classic");
+    await act(async () => Promise.resolve());
+
+    expect(onUiThemeChange).toHaveBeenCalledWith("classic");
+    act(() => {
+      root.render(
+        createElement(FocusedSettings, {
+          config: savedThemeConfig,
+          uiTheme: savedThemeConfig.ui.theme,
+          onSave,
+          onUiThemeChange,
+        }),
+      );
+    });
+
+    expect(getControl<HTMLInputElement>(container, "setting-font-size").value).toBe("15");
+    expect(getControl<HTMLSelectElement>(container, "setting-font-family").value).toBe(
+      "ibm-plex-mono",
+    );
+    expect(getControl<HTMLInputElement>(container, "setting-color-background").value).toBe(
+      "#15130f",
+    );
+    click(container, "focused-settings-save");
+    expect(onSave.mock.calls[0]![0].terminal).toMatchObject({
+      fontFamily: IBM_PLEX_MONO_STACK,
+      fontSize: 15,
+      theme: { background: "#15130f" },
+    });
+    act(() => root.unmount());
+  });
+
+  it("waits for theme persistence before allowing the focused settings draft to save", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const config = defaultTerminalConfig();
+    const savedThemeConfig: TerminalConfig = {
+      ...config,
+      ui: { theme: "classic" },
+      terminal: {
+        ...config.terminal,
+        fontFamily: IBM_PLEX_MONO_STACK,
+        theme: { ...config.terminal.theme, background: "#15130f" },
+      },
+    };
+    let resolveTheme!: (config: TerminalConfig) => void;
+    const themeSave = new Promise<TerminalConfig>((resolve) => {
+      resolveTheme = resolve;
+    });
+    const onSave = vi.fn<(settings: FocusedTerminalSettings) => void>();
+
+    act(() => {
+      root.render(
+        createElement(FocusedSettings, {
+          config,
+          uiTheme: config.ui.theme,
+          onSave,
+          onUiThemeChange: vi.fn(() => themeSave),
+        }),
+      );
+    });
+    click(container, "focused-settings-toggle");
+    changeValue(container, "setting-font-size", "15");
+    const theme = getControl<HTMLSelectElement>(container, "theme-select");
+    theme.focus();
+    changeValue(container, "theme-select", "classic");
+
+    const save = getControl<HTMLButtonElement>(container, "focused-settings-save");
+    expect(save.disabled).toBe(true);
+    expect(theme.disabled).toBe(true);
+    document.body.tabIndex = -1;
+    document.body.focus();
+    click(container, "focused-settings-save");
+    expect(onSave).not.toHaveBeenCalled();
+
+    await act(() => {
+      resolveTheme(savedThemeConfig);
+      return themeSave;
+    });
+    expect(save.disabled).toBe(false);
+    expect(document.activeElement).toBe(theme);
+    click(container, "focused-settings-save");
+    expect(onSave.mock.calls[0]![0].terminal).toMatchObject({
+      fontFamily: IBM_PLEX_MONO_STACK,
+      fontSize: 15,
+      theme: { background: "#15130f" },
+    });
+
+    act(() => root.unmount());
+  });
+
+  it("does not steal focus when the user moves on while a theme save is pending", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const config = defaultTerminalConfig();
+    let resolveTheme!: (config: TerminalConfig) => void;
+    const themeSave = new Promise<TerminalConfig>((resolve) => {
+      resolveTheme = resolve;
+    });
+
+    act(() => {
+      root.render(
+        createElement(FocusedSettings, {
+          config,
+          uiTheme: config.ui.theme,
+          onSave: vi.fn(),
+          onUiThemeChange: vi.fn(() => themeSave),
+        }),
+      );
+    });
+    click(container, "focused-settings-toggle");
+    const theme = getControl<HTMLSelectElement>(container, "theme-select");
+    const fontSize = getControl<HTMLInputElement>(container, "setting-font-size");
+    theme.focus();
+    changeValue(container, "theme-select", "classic");
+    fontSize.focus();
+
+    await act(() => {
+      resolveTheme({
+        ...config,
+        ui: { theme: "classic" },
+        terminal: {
+          ...config.terminal,
+          fontFamily: IBM_PLEX_MONO_STACK,
+          theme: { ...config.terminal.theme, background: "#15130f" },
+        },
+      });
+      return themeSave;
+    });
+    expect(document.activeElement).toBe(fontSize);
+
+    act(() => root.unmount());
+  });
+
   it("rejects invalid focused settings before invoking the save callback", () => {
     const container = document.createElement("div");
     document.body.append(container);
@@ -107,7 +287,14 @@ describe("FocusedSettings", () => {
     const onSave = vi.fn();
 
     act(() => {
-      root.render(createElement(FocusedSettings, { config: defaultTerminalConfig(), onSave }));
+      root.render(
+        createElement(FocusedSettings, {
+          config: defaultTerminalConfig(),
+          uiTheme: "default",
+          onSave,
+          onUiThemeChange: vi.fn(),
+        }),
+      );
     });
     click(container, "focused-settings-toggle");
     changeValue(container, "accessibility-minimum-contrast", "30");
@@ -135,7 +322,14 @@ describe("FocusedSettings", () => {
     const onSave = vi.fn<(settings: FocusedTerminalSettings) => void>();
 
     act(() => {
-      root.render(createElement(FocusedSettings, { config: defaultTerminalConfig(), onSave }));
+      root.render(
+        createElement(FocusedSettings, {
+          config: defaultTerminalConfig(),
+          uiTheme: "default",
+          onSave,
+          onUiThemeChange: vi.fn(),
+        }),
+      );
     });
     click(container, "focused-settings-toggle");
 
@@ -173,7 +367,14 @@ describe("FocusedSettings", () => {
     };
 
     act(() => {
-      root.render(createElement(FocusedSettings, { config, onSave }));
+      root.render(
+        createElement(FocusedSettings, {
+          config,
+          uiTheme: config.ui.theme,
+          onSave,
+          onUiThemeChange: vi.fn(),
+        }),
+      );
     });
     click(container, "focused-settings-toggle");
 
@@ -203,7 +404,9 @@ describe("FocusedSettings", () => {
       root.render(
         createElement(FocusedSettings, {
           config: defaultTerminalConfig(),
+          uiTheme: "default",
           onSave: vi.fn(),
+          onUiThemeChange: vi.fn(),
         }),
       );
     });
@@ -241,7 +444,14 @@ describe("FocusedSettings", () => {
     };
 
     act(() => {
-      root.render(createElement(FocusedSettings, { config, onSave }));
+      root.render(
+        createElement(FocusedSettings, {
+          config,
+          uiTheme: config.ui.theme,
+          onSave,
+          onUiThemeChange: vi.fn(),
+        }),
+      );
     });
     click(container, "focused-settings-toggle");
 

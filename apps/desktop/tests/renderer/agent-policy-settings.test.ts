@@ -28,6 +28,7 @@ describe("AgentPolicySettings", () => {
     act(() => {
       root.render(
         createElement(AgentPolicySettings, {
+          active: false,
           policy: defaultTerminalConfig().agentPolicy,
           onSave,
         }),
@@ -52,6 +53,38 @@ describe("AgentPolicySettings", () => {
       expect.objectContaining({ termination: "ask", observation: "allow" }),
     );
     expect(container.textContent).not.toContain("command line");
+    act(() => root.unmount());
+  });
+
+  it("combines agent activity and policy access in one titlebar control", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const render = (active: boolean) =>
+      createElement(AgentPolicySettings, {
+        active,
+        policy: defaultTerminalConfig().agentPolicy,
+        onSave: vi.fn(),
+      });
+
+    act(() => root.render(render(false)));
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-policy-toggle"]',
+    );
+    expect(toggle?.textContent).toContain("Agent idle");
+    expect(toggle?.getAttribute("aria-label")).toContain("Agent idle");
+    expect(container.querySelectorAll('[data-testid="agent-policy-toggle"]')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="agent-activity"]')?.textContent).toBe(
+      "Agent idle",
+    );
+
+    act(() => root.render(render(true)));
+    expect(toggle?.textContent).toContain("Agent active");
+    expect(toggle?.getAttribute("aria-label")).toContain("Agent active");
+    expect(container.querySelector('[data-testid="agent-activity"]')?.textContent).toBe(
+      "Agent active",
+    );
+
     act(() => root.unmount());
   });
 });

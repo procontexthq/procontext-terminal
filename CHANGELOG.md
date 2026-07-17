@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added a persistent agent access key in Settings with explicit Copy and
   Generate new key actions that preserve running terminal sessions.
 
+### Changed
+
+- Consolidated terminal controls by moving theme selection into Settings,
+  combining agent activity with policy access, and keeping session cards
+  focused on contextual actions with keyboard-safe secondary menus.
+
 ### Fixed
 
 - Made focused terminal settings easier to use with named font choices that

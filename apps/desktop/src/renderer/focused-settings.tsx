@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, ReactElement, SetStateAction } from "react";
 
 import {
@@ -7,10 +7,13 @@ import {
   type FocusedTerminalSettings,
   type TerminalConfig,
   type TerminalPresentationMode,
+  type UiThemePreference,
 } from "@terminal/protocol";
 
 import { FocusedSettingsShellProfiles } from "./focused-settings-shell-profiles";
 import { AgentAccessSettings } from "./agent-access-settings";
+import { applyUiThemePreset, focusedSettingsFromConfig } from "./focused-settings-model";
+import { FocusedSettingsThemeSelect } from "./focused-settings-theme";
 
 const SETTINGS_ERROR_ID = "focused-settings-error";
 const SYSTEM_MONOSPACE_FONT_STACK =
@@ -43,11 +46,15 @@ type TerminalFontChoice = (typeof TERMINAL_FONT_OPTIONS)[number]["id"] | typeof 
 
 export function FocusedSettings({
   config,
+  uiTheme,
   onSave,
+  onUiThemeChange,
   agentAccess,
 }: {
   config: TerminalConfig;
+  uiTheme: UiThemePreference;
   onSave: (settings: FocusedTerminalSettings) => void;
+  onUiThemeChange: (theme: UiThemePreference) => Promise<TerminalConfig | null>;
   agentAccess?: {
     metadata: AgentAccessKeyMetadata;
     onCopy: () => Promise<void>;
@@ -65,8 +72,18 @@ export function FocusedSettings({
   );
   const [error, setError] = useState<string | null>(null);
   const [invalidFields, setInvalidFields] = useState<string[]>([]);
+  const [themeSavePending, setThemeSavePending] = useState(false);
+  const previousUiTheme = useRef(config.ui.theme);
 
   useEffect(() => {
+    const uiThemeChanged = previousUiTheme.current !== config.ui.theme;
+    previousUiTheme.current = config.ui.theme;
+    if (uiThemeChanged) {
+      setDraft((current) => applyUiThemePreset(current, config));
+      setFontChoice(terminalFontChoice(config.terminal.fontFamily));
+      return;
+    }
+
     setDraft(focusedSettingsFromConfig(config));
     setRedactionPatterns(config.recording.redactedPatterns.join("\n"));
     setFontChoice(terminalFontChoice(config.terminal.fontFamily));
@@ -126,9 +143,25 @@ export function FocusedSettings({
       </button>
       {open ? (
         <section className="focused-settings-panel" aria-label="Terminal settings">
-          <header>
-            <strong>Terminal settings</strong>
-            <p>Appearance, shells, agent access, accessibility, recording, and presentation.</p>
+          <header className="focused-settings-header">
+            <div>
+              <strong>Terminal settings</strong>
+              <p>Appearance, shells, agent access, accessibility, recording, and presentation.</p>
+            </div>
+            <FocusedSettingsThemeSelect
+              theme={uiTheme}
+              pending={themeSavePending}
+              onChange={(theme) => {
+                setThemeSavePending(true);
+                void onUiThemeChange(theme)
+                  .then((savedConfig) => {
+                    if (!savedConfig) return;
+                    setDraft((current) => applyUiThemePreset(current, savedConfig));
+                    setFontChoice(terminalFontChoice(savedConfig.terminal.fontFamily));
+                  })
+                  .finally(() => setThemeSavePending(false));
+              }}
+            />
           </header>
 
           <fieldset>
@@ -374,23 +407,18 @@ export function FocusedSettings({
               {error}
             </p>
           ) : null}
-          <button type="button" data-testid="focused-settings-save" onClick={save}>
+          <button
+            type="button"
+            data-testid="focused-settings-save"
+            disabled={themeSavePending}
+            onClick={save}
+          >
             Save settings
           </button>
         </section>
       ) : null}
     </div>
   );
-}
-
-function focusedSettingsFromConfig(config: TerminalConfig): FocusedTerminalSettings {
-  return {
-    terminal: config.terminal,
-    shell: config.shell,
-    accessibility: config.accessibility,
-    recording: config.recording,
-    defaultPresentation: config.defaultPresentation,
-  };
 }
 
 function parsePresentation(value: string): TerminalPresentationMode {
