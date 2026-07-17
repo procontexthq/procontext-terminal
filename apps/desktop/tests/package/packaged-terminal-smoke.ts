@@ -1,11 +1,19 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { chromium, type Browser, type Page } from "playwright";
+import type { BrowserWindow } from "electron";
+import {
+  _electron as electron,
+  chromium,
+  type Browser,
+  type ElectronApplication,
+  type JSHandle,
+  type Page,
+} from "playwright";
 import { afterEach, describe, it } from "vitest";
 import { WebSocket as NodeWebSocket } from "ws";
 
@@ -25,16 +33,22 @@ import { TEST_AGENT_ACCESS_KEY, preseedAgentAccessKey } from "../shared/agent-ac
 
 const desktopRoot = fileURLToPath(new URL("../../", import.meta.url));
 
-let appProcess: ChildProcessWithoutNullStreams | null = null;
+let appProcess: ChildProcess | null = null;
 let browser: Browser | null = null;
+let electronApplication: ElectronApplication | null = null;
 let appOutput = "";
 const tempUserDataDirs: string[] = [];
 
 describe("packaged desktop terminal smoke", () => {
   afterEach(async () => {
     const connectedBrowser = browser;
+    const launchedElectronApplication = electronApplication;
     browser = null;
+    electronApplication = null;
 
+    if (launchedElectronApplication) {
+      await settleWithin(launchedElectronApplication.close(), 5000);
+    }
     await stopPackagedApp();
     if (connectedBrowser) {
       await settleWithin(connectedBrowser.close(), 5000);
@@ -136,11 +150,11 @@ describe("packaged desktop terminal smoke", () => {
     }
   });
 
-  it("keeps the shared PTY agent-operable after the packaged renderer crashes", async () => {
+  it("keeps the shared PTY agent-operable after the packaged renderer is killed", async () => {
     const executable = await resolvePackagedExecutable();
     const userDataDir = await createTempUserDataDir();
-    browser = await launchPackagedApp(executable, userDataDir);
-    const page = await firstPage(browser);
+    electronApplication = await launchPackagedElectronApp(executable, userDataDir);
+    const page = await electronApplication.firstWindow({ timeout: 10000 });
     await page.waitForSelector("[data-testid='terminal-ready']");
     const sessionId = await activeSessionId(page);
     const descriptor = await waitForAgentDescriptor(userDataDir);
@@ -156,20 +170,16 @@ describe("packaged desktop terminal smoke", () => {
       );
       await expectAgentOk(agent.request(createAgentCommand("terminal.attach", { sessionId })));
 
-      const cdpSession = await page.context().newCDPSession(page);
-      const crashed = page.waitForEvent("crash", { timeout: 10000 });
-      const crashCommand = cdpSession.send("Page.crash").catch(() => undefined);
-      await crashed;
-      await settleWithin(crashCommand, 1000);
-
-      const summary = (await expectAgentOk(
+      const initialSummary = (await expectAgentOk(
         agent.request(createAgentCommand("terminal.get", { sessionId })),
       )) as TerminalSessionSummary;
-      if (summary.presentation.state !== "headless") {
-        throw new Error(
-          `Expected renderer loss to preserve a headless PTY, got ${summary.presentation.state}.`,
-        );
+      if (initialSummary.presentation.state === "headless") {
+        throw new Error("Expected the packaged session to have a renderer before terminating it.");
       }
+
+      await terminateRendererProcess(electronApplication, page);
+      await waitForHeadlessSession(agent, sessionId);
+
       await expectAgentOk(
         agent.request(
           createAgentCommand("terminal.input", {
@@ -245,10 +255,59 @@ async function launchPackagedApp(executable: string, userDataDir: string): Promi
       detached: process.platform !== "win32",
     },
   );
-  appProcess.stdout.on("data", (chunk: Buffer) => appendAppOutput("stdout", chunk));
-  appProcess.stderr.on("data", (chunk: Buffer) => appendAppOutput("stderr", chunk));
+  appProcess.stdout?.on("data", (chunk: Buffer) => appendAppOutput("stdout", chunk));
+  appProcess.stderr?.on("data", (chunk: Buffer) => appendAppOutput("stderr", chunk));
 
   return connectToPackagedApp(port);
+}
+
+async function launchPackagedElectronApp(
+  executable: string,
+  userDataDir: string,
+): Promise<ElectronApplication> {
+  appOutput = "";
+  const application = await electron.launch({
+    executablePath: executable,
+    args: [`--user-data-dir=${userDataDir}`, ...platformElectronFlags()],
+    cwd: desktopRoot,
+    env: e2eEnvironment(),
+  });
+  appProcess = application.process();
+  appProcess.stdout?.on("data", (chunk: Buffer) => appendAppOutput("stdout", chunk));
+  appProcess.stderr?.on("data", (chunk: Buffer) => appendAppOutput("stderr", chunk));
+  return application;
+}
+
+async function terminateRendererProcess(
+  application: ElectronApplication,
+  page: Page,
+): Promise<void> {
+  const browserWindow = (await application.browserWindow(page)) as JSHandle<BrowserWindow | null>;
+  const applicationProcessId = application.process().pid;
+  try {
+    const rendererProcessId = await browserWindow.evaluate((window) => {
+      if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
+        return null;
+      }
+      return window.webContents.getOSProcessId();
+    });
+
+    if (
+      rendererProcessId === null ||
+      !Number.isSafeInteger(rendererProcessId) ||
+      rendererProcessId <= 0 ||
+      !applicationProcessId ||
+      rendererProcessId === applicationProcessId ||
+      rendererProcessId === process.pid
+    ) {
+      throw new Error(
+        `Refusing to terminate invalid packaged renderer process ${String(rendererProcessId)}.`,
+      );
+    }
+    process.kill(rendererProcessId, "SIGKILL");
+  } finally {
+    await browserWindow.dispose();
+  }
 }
 
 async function getFreePort(): Promise<number> {
@@ -376,6 +435,24 @@ async function waitForAgentObservation(
   throw new Error(`Timed out waiting for packaged observation text ${expectedText}.`);
 }
 
+async function waitForHeadlessSession(agent: E2EAgentClient, sessionId: SessionId): Promise<void> {
+  const deadline = Date.now() + 10000;
+  let lastPresentation = "unknown";
+  while (Date.now() < deadline) {
+    const summary = (await expectAgentOk(
+      agent.request(createAgentCommand("terminal.get", { sessionId })),
+    )) as TerminalSessionSummary;
+    lastPresentation = summary.presentation.state;
+    if (lastPresentation === "headless") {
+      return;
+    }
+    await delay(100);
+  }
+  throw new Error(
+    `Timed out waiting for renderer loss to preserve a headless packaged session; last presentation was ${lastPresentation}.`,
+  );
+}
+
 async function waitForAgentDescriptor(userDataDir: string): Promise<AgentGatewayDescriptor> {
   const descriptorPath = join(userDataDir, "agent-gateway.json");
   const deadline = Date.now() + 10000;
@@ -484,8 +561,13 @@ async function firstAccessiblePath(paths: string[]): Promise<string> {
   throw new Error(`Could not find an accessible packaged executable. Tried: ${paths.join(", ")}`);
 }
 
-function e2eEnvironment(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+function e2eEnvironment(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined) {
+      env[name] = value;
+    }
+  }
   if (process.platform === "win32") {
     env.ComSpec ??= "C:\\Windows\\System32\\cmd.exe";
   } else {
@@ -502,7 +584,7 @@ function platformPrintCommand(text: string): string {
   return process.platform === "win32" ? `echo ${text}` : `printf '${text}\\n'`;
 }
 
-function terminateProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+function terminateProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (process.platform === "win32" && child.pid) {
     spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
     return;
